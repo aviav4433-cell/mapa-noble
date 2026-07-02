@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>MAPA·NOBLE — מערכת ניהול</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --linen:#F7F6F2; --ink:#1C2B36; --navy:#16324F; --navy2:#1F4468;
+  --teal:#0E9594; --teal-d:#0B7A79; --amber:#E8A33D; --danger:#C44536;
+  --ok:#2E8B57; --line:#E3E0D8; --card:#FFFFFF; --muted:#6B7A86;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Heebo',sans-serif;background:var(--linen);color:var(--ink);min-height:100vh}
+button{font-family:inherit;cursor:pointer;border:none}
+input,select{font-family:inherit;font-size:15px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
+input:focus,select:focus{outline:2px solid var(--teal);outline-offset:1px}
+h1,h2,h3{font-weight:800}
+#login{position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:100}
+#login .box{background:var(--card);border-radius:16px;padding:34px 28px;width:min(360px,90vw);text-align:center}
+#login .logo{font-size:26px;font-weight:800;color:var(--navy);letter-spacing:1px}
+#login .logo span{color:var(--teal)}
+#login p{color:var(--muted);font-size:13px;margin:6px 0 20px}
+#login input{margin-bottom:12px;text-align:center}
+#login button{width:100%;background:var(--teal);color:#fff;padding:12px;border-radius:8px;font-size:16px;font-weight:600}
+#loginErr{color:var(--danger);font-size:13px;min-height:18px;margin-top:8px}
+#app{display:none}
+header{background:var(--navy);color:#fff;padding:12px 18px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:20}
+header .logo{font-weight:800;font-size:18px;letter-spacing:.5px}
+header .logo span{color:#7BD8D7}
+header .who{margin-inline-start:auto;font-size:12px;color:#9FB3C4}
+nav{display:flex;background:#fff;border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:48px;z-index:19;-webkit-overflow-scrolling:touch}
+nav button{background:none;padding:12px 14px;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;white-space:nowrap}
+nav button.on{color:var(--navy);border-bottom-color:var(--teal)}
+main{padding:16px;max-width:1080px;margin:0 auto;padding-bottom:40px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.grow{flex:1}
+.chip{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;color:#fff;background:#8C9BA5}
+.chip.טיוטה{background:#8C9BA5}.chip.מאושרת{background:var(--teal)}.chip.סופקה{background:var(--amber)}
+.chip.הוחזרה{background:var(--navy2)}.chip.הושלמה{background:var(--ok)}.chip.בוטלה,.chip.בוטל{background:var(--danger)}
+.chip.פתוחה{background:var(--amber)}.chip.שולמה{background:var(--ok)}.chip.מתוכנן{background:var(--navy2)}.chip.בוצע{background:var(--ok)}
+.chip.התקבלה{background:var(--ok)}
+.muted{color:var(--muted);font-size:13px}
+.big{font-size:20px;font-weight:800}
+.btn{background:var(--teal);color:#fff;padding:9px 16px;border-radius:8px;font-size:14px;font-weight:600}
+.btn:hover{background:var(--teal-d)}
+.btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)}
+.btn.warn{background:var(--amber)}
+.btn.danger{background:var(--danger)}
+.btn.sm{padding:5px 12px;font-size:13px}
+.section-title{display:flex;align-items:center;justify-content:space-between;margin:18px 0 10px;flex-wrap:wrap;gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media(max-width:640px){.grid3{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center}
+.kpi .v{font-size:24px;font-weight:800;color:var(--navy)}
+.kpi .l{font-size:12px;color:var(--muted)}
+.kpi.alert .v{color:var(--danger)}
+.kanban{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px}
+.kcol{min-width:230px;flex:1;background:#EFEDE7;border-radius:12px;padding:10px}
+.kcol h3{font-size:14px;color:var(--navy);margin-bottom:8px;display:flex;justify-content:space-between}
+.kcol h3 .cnt{background:var(--navy);color:#fff;border-radius:12px;padding:0 8px;font-size:12px}
+.ktask{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;font-size:13px}
+.ktask .t{font-weight:600}
+#modalBg{position:fixed;inset:0;background:rgba(22,50,79,.55);display:none;align-items:flex-end;justify-content:center;z-index:50}
+@media(min-width:641px){#modalBg{align-items:center}}
+#modal{background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;padding:20px}
+@media(min-width:641px){#modal{border-radius:16px}}
+#modal h2{margin-bottom:14px;color:var(--navy)}
+.frow{margin-bottom:10px}
+.frow label{display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:var(--navy)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:right;color:var(--muted);font-weight:600;padding:6px 4px;border-bottom:1px solid var(--line)}
+td{padding:7px 4px;border-bottom:1px solid #F0EEE8}
+#toast{position:fixed;bottom:20px;right:50%;transform:translateX(50%);background:var(--navy);color:#fff;padding:11px 20px;border-radius:10px;font-size:14px;display:none;z-index:99;max-width:90vw}
+#toast.err{background:var(--danger)}
+.empty{text-align:center;color:var(--muted);padding:28px;font-size:14px}
+.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{background:#fff;border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--muted)}
+.tabs button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.scanbox{font-size:22px;text-align:center;letter-spacing:2px}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="box">
+    <div class="logo">MAPA<span>·</span>NOBLE</div>
+    <p>מערכת ניהול השכרה, כביסה וכספים</p>
+    <input id="pw" type="password" placeholder="סיסמת מערכת">
+    <input id="pin" type="password" inputmode="numeric" placeholder="קוד עובד (אם הוגדר)" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">כניסה</button>
+    <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
+    <div id="loginErr"></div>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <div class="logo">MAPA<span>·</span>NOBLE</div>
+    <div class="who" id="whoLbl"></div>
+    <button class="btn sm ghost" onclick="refresh()">רענון</button>
+  </header>
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+
+<div id="modalBg" onclick="if(event.target===this)closeModal()"><div id="modal"></div></div>
+<div id="toast"></div>
+
+<script>
+/* ================= הגדרות ================= */
+var API_URL = 'https://script.google.com/macros/s/AKfycbyAFqEJrLLbRT-o5D7slN9lieaIjR8YKFiToy20iHgjS5F4QbDptfD-7al2Ywhs6WA1Hg/exec';
+var PASS = '', USER = '', ROLE = '', CAN_EDIT = true, USER_VIEWS = '';
+var DB = null, VIEW = 'dash', FIN_TAB = 'invoices';
+var STAGES = ['התקבל','בכביסה','בייבוש','בגיהוץ וקיפול','מוכן'];
+
+/* ================= API ================= */
+async function api(action, payload){
+  var res = await fetch(API_URL, { method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ password: PASS, user: USER, action: action, payload: payload||{} })});
+  return res.json();
+}
+async function doLogin(){
+  PASS = el('pw').value;
+  el('loginErr').textContent = 'מתחבר...';
+  try{
+    var lg = await api('login', { pin: el('pin').value });
+    if(!lg.ok){ el('loginErr').textContent = lg.error; return; }
+    USER = lg.user; ROLE = lg.role; CAN_EDIT = lg.can_edit !== false; USER_VIEWS = lg.views || '';
+    var r = await api('getAll');
+    if(!r.ok){ el('loginErr').textContent = r.error; return; }
+    DB = r.db;
+    el('login').style.display='none';
+    el('app').style.display='block';
+    el('whoLbl').textContent = USER + ' · ' + ROLE;
+    render();
+  }catch(e){ el('loginErr').textContent = 'שגיאת חיבור — בדוק את כתובת השרת'; }
+}
+async function refresh(){ var r = await api('getAll'); if(r.ok){ DB=r.db; render(); toast('עודכן'); } }
+async function act(action, payload, okMsg){
+  if(!CAN_EDIT && !['clock'].includes(action)) { toast('למשתמש זה הרשאת צפייה בלבד', true); return null; }
+  var r = await api(action, payload);
+  if(!r.ok){ toast(r.error, true); return null; }
+  var g = await api('getAll'); if(g.ok) DB=g.db;
+  render(); if(okMsg) toast(okMsg);
+  return r;
+}
+
+/* ================= helpers ================= */
+function el(id){ return document.getElementById(id); }
+function toast(msg, err){
+  var t = el('toast'); t.textContent = msg; t.className = err?'err':''; t.style.display='block';
+  clearTimeout(t._h); t._h=setTimeout(function(){ t.style.display='none'; }, 3500);
+}
+function esc(s){ return String(s==null?'':s).replace(/</g,'&lt;'); }
+function cust(id){ var c=DB.customers.find(x=>x.id===id); return c?c.name:(id||''); }
+function item(id){ var i=DB.items.find(x=>x.id===id); return i?i.name:id; }
+function supp(id){ var s=DB.suppliers.find(x=>x.id===id); return s?s.name:(id||''); }
+function ils(n){ return '₪' + Number(n||0).toLocaleString('he-IL',{maximumFractionDigits:2}); }
+function orderTotal(oid){ return DB.orderLines.filter(l=>l.order_id===oid).reduce((s,l)=>s+Number(l.qty)*Number(l.unit_price),0); }
+function orderPaid(oid){ return DB.payments.filter(p=>p.order_id===oid).reduce((s,p)=>s+Number(p.amount),0); }
+function orderBalance(oid){
+  var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
+  return (inv? Number(inv.total) : orderTotal(oid)) - orderPaid(oid);
+}
+function closeModal(){ el('modalBg').style.display='none'; }
+function openModal(html){ el('modal').innerHTML = html; el('modalBg').style.display='flex'; }
+function sel(id, arr, labelFn, valFn){
+  return '<select id="'+id+'">'+arr.map(x=>'<option value="'+(valFn?valFn(x):x.id)+'">'+esc(labelFn(x))+'</option>').join('')+'</select>';
+}
+
+function setting(k){ var s=(DB.settings||[]).find(x=>x.key===k); return s?String(s.value):''; }
+
+/* ===== ברקוד Code128 — עבר בדיקות תקן ===== */
+// Code128-B — מחולל תקני
+var C128 = ('212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 '+
+'221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 '+
+'221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 '+
+'212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 '+
+'231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 '+
+'231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 '+
+'314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 '+
+'112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 '+
+'111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 '+
+'214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 '+
+'114131 311141 411131 211412 211214 211232').split(' ');
+var C128_STOP = '2331112';
+
+function code128Widths(text) {
+  var vals = [104]; // Start-B
+  for (var i = 0; i < text.length; i++) {
+    var v = text.charCodeAt(i) - 32;
+    if (v < 0 || v > 94) throw new Error('תו לא נתמך בברקוד: ' + text[i]);
+    vals.push(v);
+  }
+  var sum = vals[0];
+  for (var j = 1; j < vals.length; j++) sum += vals[j] * j;
+  vals.push(sum % 103); // checksum
+  var widths = '';
+  vals.forEach(function(v){ widths += C128[v]; });
+  return widths + C128_STOP;
+}
+
+function code128Svg(text, h) {
+  h = h || 46;
+  var w = code128Widths(text);
+  var scale = 2, x = 0, bars = '';
+  for (var i = 0; i < w.length; i++) {
+    var ww = Number(w[i]) * scale;
+    if (i % 2 === 0) bars += '<rect x="'+x+'" y="0" width="'+ww+'" height="'+h+'" fill="#000"/>';
+    x += ww;
+  }
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+x+'" height="'+(h+16)+'" viewBox="0 0 '+x+' '+(h+16)+'">'+bars+
+    '<text x="'+(x/2)+'" y="'+(h+13)+'" text-anchor="middle" font-family="monospace" font-size="12">'+text+'</text></svg>';
+}
+
+
+
+/* ===== מנוע הדפסת מסמכים רשמיים ===== */
+function docHeader(title, num, date){
+  var logo = setting('logo_url');
+  return '<div class="dhead"><div>'+
+    (logo?'<img src="'+esc(logo)+'" style="max-height:60px;max-width:180px">':'')+
+    '<div class="bname">'+esc(setting('business_name'))+'</div>'+
+    '<div class="bsub">'+esc(setting('business_address'))+(setting('business_phone')?' · טל׳ '+esc(setting('business_phone')):'')+(setting('business_vat')?' · ע.מ/ח.פ '+esc(setting('business_vat')):'')+'</div>'+
+    '</div><div style="text-align:left"><div class="dtitle">'+esc(title)+(num?' מס׳ '+num:'')+'</div><div class="bsub">תאריך: '+esc(date||new Date().toISOString().slice(0,10))+'</div></div></div>';
+}
+function printDoc(title, num, bodyHtml, opts){
+  opts = opts||{};
+  var w = window.open('', '_blank');
+  w.document.write('<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="UTF-8"><title>'+esc(title)+'</title><style>'+
+  'body{font-family:Arial,sans-serif;color:#1C2B36;padding:24px;max-width:760px;margin:0 auto;font-size:14px}'+
+  '.dhead{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #16324F;padding-bottom:12px;margin-bottom:18px}'+
+  '.bname{font-size:22px;font-weight:800;color:#16324F}.bsub{font-size:12px;color:#666}.dtitle{font-size:18px;font-weight:800}'+
+  'table{width:100%;border-collapse:collapse;margin:10px 0}th{background:#16324F;color:#fff;padding:7px;text-align:right;font-size:13px}'+
+  'td{padding:7px;border-bottom:1px solid #ddd}.tot{font-weight:800;font-size:15px}'+
+  '.sig{display:flex;justify-content:space-between;margin-top:50px}.sig div{width:40%;border-top:1px solid #333;padding-top:6px;text-align:center;font-size:13px}'+
+  '.foot{margin-top:30px;text-align:center;font-size:12px;color:#888;border-top:1px solid #ddd;padding-top:10px}'+
+  'pre{white-space:pre-wrap;font-family:inherit;line-height:1.7}@media print{body{padding:0}}'+
+  '</style></head><body>'+docHeader(title, opts.num, opts.date)+bodyHtml+
+  (opts.signatures?'<div class="sig"><div>חתימת הלקוח</div><div>חתימת נציג '+esc(setting('business_name'))+'</div></div>':'')+
+  '<div class="foot">'+esc(setting('doc_footer'))+'</div>'+
+  '<script>window.onload=function(){window.print();}<\/script></body></html>');
+  w.document.close();
+}
+function linesTable(lines, withReturned){
+  return '<table><tr><th>פריט</th><th>כמות</th><th>מחיר יח׳</th><th>סה"כ</th>'+(withReturned?'<th>הוחזר</th>':'')+'</tr>'+
+    lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+ils(Number(l.qty)*Number(l.unit_price))+'</td>'+(withReturned?'<td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td>':'')+'</tr>').join('')+'</table>';
+}
+function custBlock(cid){
+  var c = DB.customers.find(x=>x.id===cid)||{};
+  var k = DB.contacts.find(x=>x.customer_id===cid&&x.is_primary==='כן')||DB.contacts.find(x=>x.customer_id===cid)||{};
+  return '<p><b>לקוח:</b> '+esc(c.name)+(c.vat_id?' · ח.פ '+esc(c.vat_id):'')+(c.address?' · '+esc(c.address):'')+
+    (k.name?'<br><b>איש קשר:</b> '+esc(k.name)+(k.phone?' · '+esc(k.phone):''):'')+'</p>';
+}
+function printDeliveryNote(did){
+  var d = DB.deliveries.find(x=>x.id===did); if(!d) return;
+  var o = DB.orders.find(x=>x.id===d.order_id)||{};
+  var lines = DB.orderLines.filter(l=>l.order_id===d.order_id);
+  printDoc('תעודת משלוח — '+d.kind, d.note_number,
+    custBlock(o.customer_id)+
+    '<p><b>תאריך '+(d.kind==='אספקה'?'אספקה':'איסוף')+':</b> '+esc(d.date)+(d.driver?' · <b>נהג:</b> '+esc(d.driver):'')+' · <b>הזמנה:</b> '+esc(o.start_date)+' — '+esc(o.end_date)+'</p>'+
+    linesTable(lines, d.kind==='איסוף'), {num:d.note_number, date:d.date, signatures:true});
+}
+function printOrderForm(oid){
+  var o = DB.orders.find(x=>x.id===oid); if(!o) return;
+  var lines = DB.orderLines.filter(l=>l.order_id===oid);
+  var total = orderTotal(oid);
+  printDoc(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה', null,
+    custBlock(o.customer_id)+
+    '<p><b>סוג:</b> '+esc(o.type)+' · <b>מתאריך:</b> '+esc(o.start_date)+' · <b>עד:</b> '+esc(o.end_date)+(o.notes?'<br><b>הערות:</b> '+esc(o.notes):'')+'</p>'+
+    linesTable(lines)+
+    '<p class="tot">סה"כ (לפני מע"מ): '+ils(total)+' · מע"מ 18%: '+ils(total*0.18)+' · <u>סה"כ לתשלום: '+ils(total*1.18)+'</u></p>',
+    {date:o.created_at, signatures:true});
+}
+function printInvoice(vid){
+  var v = DB.invoices.find(x=>x.id===vid); if(!v) return;
+  var lines = DB.orderLines.filter(l=>l.order_id===v.order_id);
+  printDoc('חשבונית עסקה', v.number,
+    custBlock(v.customer_id)+linesTable(lines)+
+    '<p class="tot">סכום: '+ils(v.subtotal)+' · מע"מ '+(Number(v.vat_rate)*100)+'%: '+ils(v.vat)+' · <u>סה"כ: '+ils(v.total)+'</u></p>'+
+    (v.status==='בוטלה'?'<p style="color:#C44536;font-weight:800">— מבוטלת —</p>':''),
+    {num:v.number, date:v.date});
+}
+function printReceipt(pid){
+  var p = DB.payments.find(x=>x.id===pid); if(!p) return;
+  var o = DB.orders.find(x=>x.id===p.order_id)||{};
+  printDoc('קבלה', p.receipt_number,
+    custBlock(o.customer_id)+
+    '<table><tr><th>תאריך</th><th>אמצעי תשלום</th><th>סכום</th></tr><tr><td>'+esc(p.date)+'</td><td>'+esc(p.method)+'</td><td class="tot">'+ils(p.amount)+'</td></tr></table>',
+    {num:p.receipt_number, date:p.date});
+}
+function printAgreement(cid){
+  printDoc('הסכם שירות', null,
+    custBlock(cid)+'<pre>'+esc(setting('agreement_text'))+'</pre>', {signatures:true});
+}
+function printStatement(cid){
+  var orders = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','הצעת מחיר'].includes(o.status));
+  var tot=0, paid=0;
+  var rows = orders.map(function(o){ var t=orderBalance(o.id)+orderPaid(o.id), p=orderPaid(o.id); tot+=t; paid+=p;
+    return '<tr><td>'+esc(o.start_date)+'</td><td>'+esc(o.type)+'</td><td>'+esc(o.status)+'</td><td>'+ils(t)+'</td><td>'+ils(p)+'</td><td>'+ils(t-p)+'</td></tr>'; }).join('');
+  printDoc('דו"ח לקוח — מצב חשבון', null,
+    custBlock(cid)+'<table><tr><th>תאריך</th><th>סוג</th><th>סטטוס</th><th>סכום</th><th>שולם</th><th>יתרה</th></tr>'+rows+'</table>'+
+    '<p class="tot">סה"כ: '+ils(tot)+' · שולם: '+ils(paid)+' · <u>יתרה לתשלום: '+ils(tot-paid)+'</u></p>', {});
+}
+
+/* ================= ניווט ================= */
+var VIEWS = [['dash','לוח בקרה'],['orders','הזמנות'],['tasks','משימות'],['calendar','יומן'],['meetings','פגישות'],
+  ['laundry','כביסה'],['deliveries','משלוחים'],['finance','כספים'],
+  ['customers','לקוחות'],['items','פריטים ומלאי'],['purchasing','רכש וספקים'],['scan','סריקה'],['barcodes','ברקודים'],
+  ['reports','דוחות'],['assets','עגלות ומכונות'],['staff','עובדים'],['attendance','נוכחות'],['payroll','שכר'],['settings','מיתוג והגדרות']];
+function render(){
+  var views = VIEWS.filter(function(v){
+    if(USER_VIEWS) return USER_VIEWS.split(',').map(s=>s.trim()).includes(v[0]);
+    if(ROLE==='מכבסה') return ['dash','laundry','scan','assets','attendance','tasks'].includes(v[0]);
+    if(ROLE==='נהג') return ['dash','deliveries','scan','attendance','tasks'].includes(v[0]);
+    if(ROLE==='משרד' && ['payroll','settings'].includes(v[0])) return false;
+    return true;
+  });
+  if(!views.some(v=>v[0]===VIEW)) VIEW = views[0][0];
+  el('nav').innerHTML = views.map(v=>'<button class="'+(VIEW===v[0]?'on':'')+'" onclick="go(\''+v[0]+'\')">'+v[1]+'</button>').join('');
+  ({dash:rDash,orders:rOrders,tasks:rTasks,calendar:rCalendar,meetings:rMeetings,laundry:rLaundry,deliveries:rDeliveries,finance:rFinance,customers:rCustomers,
+    items:rItems,purchasing:rPurchasing,scan:rScan,barcodes:rBarcodes,reports:rReports,assets:rAssets,
+    staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings})[VIEW]();
+}
+function go(v){ VIEW=v; render(); window.scrollTo(0,0); }
+
+/* ================= לוח בקרה ================= */
+function rDash(){
+  var today = new Date().toISOString().slice(0,10);
+  var week = new Date(Date.now()+6*864e5).toISOString().slice(0,10);
+  var upcoming = DB.orders.filter(o=>o.type==='השכרה' && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);
+  var out = DB.orders.filter(o=>o.status==='סופקה');
+  var inWash = DB.laundryTasks.filter(t=>t.stage!=='מוכן');
+  var debt = DB.customers.reduce((s,c)=>s+custBalance(c.id),0);
+  var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today);
+  var openInv = DB.invoices.filter(v=>v.status==='פתוחה').length;
+  el('main').innerHTML =
+    '<div class="grid3">'+
+    kpi(delToday.length,'משלוחים להיום', delToday.length>0)+
+    kpi(upcoming.length,'אספקות השבוע')+
+    kpi(out.length,'הזמנות בחוץ')+
+    kpi(inWash.reduce((s,t)=>s+Number(t.qty),0),'פריטים בכביסה')+
+    kpi(ils(debt),'יתרות לגבייה', debt>0)+
+    kpi(openInv,'חשבוניות פתוחות', openInv>0)+
+    '</div>'+
+    (delToday.length?'<div class="section-title"><h2>משלוחים להיום</h2></div>'+delToday.map(delivCard).join(''):'')+
+    '<div class="section-title"><h2>אספקות קרובות</h2></div>'+
+    (upcoming.length? upcoming.sort((a,b)=>a.start_date>b.start_date?1:-1).map(orderCard).join('') : '<div class="card empty">אין אספקות מתוכננות השבוע</div>');
+}
+function kpi(v,l,alert){ return '<div class="kpi'+(alert?' alert':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
+function custBalance(cid){
+  return DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).reduce((s,o)=>s+orderBalance(o.id),0);
+}
+
+/* ================= הזמנות ================= */
+function orderCard(o){
+  var bal = orderBalance(o.id);
+  return '<div class="card" onclick="openOrder(\''+o.id+'\')" style="cursor:pointer"><div class="row">'+
+    '<div class="grow"><div style="font-weight:600">'+esc(cust(o.customer_id))+' <span class="muted">· '+esc(o.type)+'</span></div>'+
+    '<div class="muted">'+esc(o.start_date)+' ← '+esc(o.end_date)+'</div></div>'+
+    (bal>0.01?'<div class="muted">יתרה '+ils(bal)+'</div>':'')+
+    '<span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div></div>';
+}
+function rOrders(){
+  el('main').innerHTML =
+    '<div class="section-title"><h2>הזמנות</h2><div><button class="btn ghost" onclick="newOrderForm(true)">+ הצעת מחיר</button> <button class="btn" onclick="newOrderForm(false)">+ הזמנה</button></div></div>'+
+    (DB.orders.length? DB.orders.slice().sort((a,b)=>a.start_date<b.start_date?1:-1).map(orderCard).join('') : '<div class="card empty">אין הזמנות עדיין</div>');
+}
+function newOrderForm(isQuote){
+  if(!DB.customers.length) return toast('קודם צור לקוח במסך לקוחות', true);
+  openModal('<h2>'+(isQuote?'הצעת מחיר חדשה':'הזמנה חדשה')+'</h2>'+
+    '<div class="frow"><label>לקוח</label>'+sel('f_cust',DB.customers.filter(c=>c.active!=='לא'),c=>c.name)+'</div>'+
+    '<div class="frow"><label>סוג</label><select id="f_type"><option>השכרה</option><option>כביסה</option></select></div>'+
+    '<div class="grid2"><div class="frow"><label>תאריך אירוע / איסוף</label><input id="f_start" type="date"></div>'+
+    '<div class="frow"><label>תאריך החזרה</label><input id="f_end" type="date"></div></div>'+
+    '<div class="frow"><label>הערות</label><input id="f_notes"></div>'+
+    '<button class="btn" onclick="createOrder('+(isQuote?'true':'false')+')">שמור</button>');
+}
+async function createOrder(isQuote){
+  var r = await act('create',{table:'orders',row:{type:el('f_type').value,customer_id:el('f_cust').value,
+    start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,status:isQuote?'הצעת מחיר':'טיוטה'}},'נשמר — הוסף פריטים');
+  if(r){ closeModal(); openOrder(r.row.id); }
+}
+function openOrder(oid){
+  var o = DB.orders.find(x=>x.id===oid); if(!o) return;
+  var lines = DB.orderLines.filter(l=>l.order_id===oid);
+  var pays = DB.payments.filter(p=>p.order_id===oid);
+  var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
+  var delivs = DB.deliveries.filter(d=>d.order_id===oid);
+  var total = orderTotal(oid), bal = orderBalance(oid);
+  var editable = (o.status==='טיוטה'||o.status==='הצעת מחיר');
+  var actions = '';
+  if(o.status==='הצעת מחיר') actions = '<button class="btn" onclick="doAct(\'convertQuote\',\''+oid+'\',\'הומרה להזמנה\')">המר להזמנה</button> <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
+  if(o.status==='טיוטה') actions = '<button class="btn" onclick="doAct(\'approveOrder\',\''+oid+'\',\'אושרה — המלאי שוריין ונוצרו משלוחים\')">אשר (בדיקת מלאי)</button> <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
+  if(o.status==='מאושרת') actions = '<button class="btn warn" onclick="doAct(\'deliverOrder\',\''+oid+'\',\'סומנה כסופקה\')">סמן כסופקה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoice(\''+oid+'\')">הפק חשבונית</button>')+' <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
+  if(o.status==='סופקה') actions = '<button class="btn" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoice(\''+oid+'\')">הפק חשבונית</button>');
+  if((o.status==='הוחזרה'||o.status==='הושלמה')&&!inv) actions = '<button class="btn ghost" onclick="doInvoice(\''+oid+'\')">הפק חשבונית</button>';
+  openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
+    '<div class="muted" style="margin-bottom:12px">'+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(o.notes?' · '+esc(o.notes):'')+'</div>'+
+    '<h3>פריטים</h3><table><tr><th>פריט</th><th>כמות</th><th>מחיר</th><th>הוחזר</th></tr>'+
+    lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
+    '</table>'+
+    (editable?'<div style="margin:10px 0"><button class="btn ghost sm" onclick="addLineForm(\''+oid+'\')">+ הוסף פריט</button></div>':'')+
+    '<h3 style="margin-top:14px">כספים</h3>'+
+    '<div class="row" style="margin:6px 0"><div class="grow">סה"כ: <b>'+ils(total)+'</b>'+
+    (inv?' · חשבונית '+inv.number+' (כולל מע"מ '+ils(inv.total)+') <span class="chip '+esc(inv.status)+'">'+esc(inv.status)+'</span>':'')+
+    ' · יתרה: <b style="color:'+(bal>0.01?'var(--danger)':'var(--ok)')+'">'+ils(bal)+'</b></div>'+
+    (bal>0.01 && !editable?'<button class="btn ghost sm" onclick="payForm(\''+oid+'\')">+ תשלום</button>':'')+'</div>'+
+    (pays.length?'<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th></tr>'+pays.map(p=>'<tr><td>'+p.receipt_number+'</td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+'</td></tr>').join('')+'</table>':'')+
+    (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
+    '<div style="margin-top:16px" class="row">'+actions+' <button class="btn ghost sm" onclick="printOrderForm(\''+oid+'\')">🖨 '+(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה')+'</button></div>');
+}
+async function doAct(action, oid, msg){ var r=await act(action,{order_id:oid},msg); if(r) openOrder(oid); }
+async function doCancel(oid){ if(confirm('לבטל את ההזמנה?')){ var r=await act('cancelOrder',{order_id:oid},'בוטלה'); if(r) closeModal(); } }
+async function doInvoice(oid){
+  if(!confirm('להפיק חשבונית? המספר נצרב ולא ניתן לעריכה.')) return;
+  var r = await act('createInvoice',{order_id:oid});
+  if(r){ toast('חשבונית מספר '+r.invoice.number+' הופקה · סה"כ '+ils(r.invoice.total)); openOrder(oid); }
+}
+function addLineForm(oid){
+  if(!DB.items.length) return toast('קודם צור פריט במסך פריטים', true);
+  openModal('<h2>הוספת פריט</h2>'+
+    '<div class="frow"><label>פריט</label><select id="f_item" onchange="checkAvail(\''+oid+'\')">'+DB.items.filter(i=>i.active!=='לא').map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')+'</select></div>'+
+    '<div class="grid2"><div class="frow"><label>כמות</label><input id="f_qty" type="number" min="1" value="1"></div>'+
+    '<div class="frow"><label>מחיר ליחידה (ריק = לפי מחירון)</label><input id="f_price" type="number" min="0" step="0.5" placeholder="אוטומטי"></div></div>'+
+    '<div class="muted" id="availLbl" style="margin-bottom:10px">בודק זמינות...</div>'+
+    '<button class="btn" onclick="addLine(\''+oid+'\')">הוסף</button>');
+  checkAvail(oid);
+}
+async function checkAvail(oid){
+  var o = DB.orders.find(x=>x.id===oid);
+  var r = await api('availability',{item_id:el('f_item').value,start_date:o.start_date,end_date:o.end_date});
+  if(r.ok) el('availLbl').innerHTML = 'פנוי לתאריכים אלה: <b>'+r.available+'</b> (מלאי '+r.total+', משוריין '+r.reserved+', בכביסה '+r.inLaundry+')';
+}
+async function addLine(oid){
+  var row = {order_id:oid,item_id:el('f_item').value,qty:Number(el('f_qty').value)};
+  if(el('f_price').value!=='') row.unit_price = Number(el('f_price').value);
+  var r = await act('create',{table:'order_lines',row:row},'הפריט נוסף');
+  if(r) openOrder(oid);
+}
+function returnForm(oid){
+  var lines = DB.orderLines.filter(l=>l.order_id===oid);
+  openModal('<h2>קבלת החזרה</h2><p class="muted" style="margin-bottom:12px">עדכן כמה חזר בפועל. חוסרים יירשמו כגריעת מלאי, והכמות שחזרה תיכנס לכביסה.</p>'+
+    lines.map(l=>'<div class="frow"><label>'+esc(item(l.item_id))+' (יצאו '+l.qty+')</label><input type="number" id="ret_'+l.id+'" value="'+l.qty+'" min="0" max="'+l.qty+'"></div>').join('')+
+    '<button class="btn" onclick="doReturn(\''+oid+'\')">קלוט החזרה</button>');
+}
+async function doReturn(oid){
+  var returns = {};
+  DB.orderLines.filter(l=>l.order_id===oid).forEach(l=>{ returns[l.id]=Number(el('ret_'+l.id).value); });
+  var r = await act('receiveReturn',{order_id:oid,returns:returns});
+  if(r){ closeModal(); toast(r.shortages&&r.shortages.length?'נקלט. חוסרים נגרעו מהמלאי אוטומטית':'נקלט. הפריטים נכנסו לכביסה'); go('laundry'); }
+}
+function payForm(oid){
+  openModal('<h2>רישום תשלום (תופק קבלה)</h2>'+
+    '<div class="grid2"><div class="frow"><label>סכום (יתרה: '+ils(orderBalance(oid))+')</label><input id="f_amt" type="number" min="1" step="0.1"></div>'+
+    '<div class="frow"><label>אמצעי</label><select id="f_method"><option>העברה</option><option>מזומן</option><option>צ׳ק</option><option>אשראי</option></select></div></div>'+
+    '<button class="btn" onclick="doPay(\''+oid+'\')">שמור</button>');
+}
+async function doPay(oid){
+  var r = await act('addPayment',{order_id:oid,amount:Number(el('f_amt').value),method:el('f_method').value});
+  if(r){ toast('קבלה מספר '+r.row.receipt_number+' · יתרה '+ils(r.balance)); openOrder(oid); }
+}
+
+/* ================= כביסה ================= */
+function rLaundry(){
+  var cols = STAGES.map(function(st){
+    var tasks = DB.laundryTasks.filter(t=>t.stage===st && (st!=='מוכן' || t.done_date>=new Date(Date.now()-3*864e5).toISOString().slice(0,10)));
+    return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tasks.length+'</span></h3>'+
+      tasks.map(function(t){
+        var freeCarts = DB.carts.filter(c=>c.status==='פנויה');
+        return '<div class="ktask"><div class="t">'+esc(item(t.item_id))+' × '+t.qty+'</div>'+
+        '<div class="muted">'+esc(cust((DB.orders.find(o=>o.id===t.order_id)||{}).customer_id))+(t.cart_id?' · עגלה '+esc(t.cart_id):'')+'</div>'+
+        (st!=='מוכן'?'<div class="row" style="margin-top:8px">'+
+          '<button class="btn sm" onclick="doAdvance(\''+t.id+'\')">קדם ←</button>'+
+          (!t.cart_id&&freeCarts.length?'<select id="cart_'+t.id+'" style="width:auto;font-size:12px;padding:5px">'+freeCarts.map(c=>'<option>'+c.id+'</option>').join('')+'</select><button class="btn ghost sm" onclick="doAssignCart(\''+t.id+'\')">שייך עגלה</button>':'')+
+        '</div>':'')+'</div>';
+      }).join('')+'</div>';
+  }).join('');
+  el('main').innerHTML = '<div class="section-title"><h2>לוח כביסה</h2><span class="muted">"מוכן" מציג 3 ימים אחרונים</span></div><div class="kanban">'+cols+'</div>';
+}
+async function doAdvance(tid){ await act('advanceLaundry',{task_id:tid},'קודם לשלב הבא'); }
+async function doAssignCart(tid){ await act('assignCart',{task_id:tid,cart_id:el('cart_'+tid).value},'העגלה שויכה'); }
+
+/* ================= משלוחים ================= */
+function rDeliveries(){
+  var open = DB.deliveries.filter(d=>d.status==='מתוכנן').sort((a,b)=>a.date>b.date?1:-1);
+  var done = DB.deliveries.filter(d=>d.status!=='מתוכנן').slice(-15).reverse();
+  el('main').innerHTML = '<div class="section-title"><h2>משלוחים</h2><span class="muted">נוצרים אוטומטית באישור הזמנה</span></div>'+
+    (open.length? open.map(delivCard).join(''):'<div class="card empty">אין משלוחים פתוחים</div>')+
+    (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
+}
+function delivCard(d){
+  var o = DB.orders.find(x=>x.id===d.order_id)||{};
+  return '<div class="card"><div class="row"><div class="grow"><b>'+esc(d.kind)+'</b> · '+esc(cust(o.customer_id))+
+    '<div class="muted">'+esc(d.date)+(d.driver?' · נהג: '+esc(d.driver):'')+'</div></div>'+
+    '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
+    (d.status==='מתוכנן'?'<button class="btn ghost sm" onclick="driverForm(\''+d.id+'\')">שבץ נהג</button>':'')+
+    (d.status==='בוצע'&&d.note_number?'<button class="btn ghost sm" onclick="printDeliveryNote(\''+d.id+'\')">🖨 תעודה '+d.note_number+'</button>':'')+
+    '</div></div>';
+}
+function driverForm(did){
+  var drivers = DB.employees.filter(e=>e.role==='נהג'&&e.active!=='לא');
+  openModal('<h2>שיבוץ נהג</h2><div class="frow"><label>נהג</label>'+
+    (drivers.length? sel('f_driver',drivers,e=>e.name,e=>e.name) : '<input id="f_driver" placeholder="שם הנהג">')+
+    '</div><button class="btn" onclick="saveDriver(\''+did+'\')">שמור</button>');
+}
+async function saveDriver(did){
+  var r = await act('update',{table:'deliveries',id:did,row:{driver:el('f_driver').value}},'הנהג שובץ');
+  if(r) closeModal();
+}
+
+/* ================= כספים ================= */
+function rFinance(){
+  var tabs = [['invoices','חשבוניות'],['receipts','קבלות'],['expenses','הוצאות']];
+  var html = '<div class="section-title"><h2>כספים</h2>'+(FIN_TAB==='expenses'?'<button class="btn" onclick="expForm()">+ הוצאה</button>':'')+'</div>'+
+    '<div class="tabs">'+tabs.map(t=>'<button class="'+(FIN_TAB===t[0]?'on':'')+'" onclick="FIN_TAB=\''+t[0]+'\';render()">'+t[1]+'</button>').join('')+'</div>';
+  if(FIN_TAB==='invoices'){
+    html += DB.invoices.length? '<div class="card"><table><tr><th>מס\'</th><th>תאריך</th><th>לקוח</th><th>לפני מע"מ</th><th>סה"כ</th><th>סטטוס</th><th></th></tr>'+
+      DB.invoices.slice().reverse().map(v=>'<tr><td><b>'+v.number+'</b></td><td>'+esc(v.date)+'</td><td>'+esc(cust(v.customer_id))+'</td><td>'+ils(v.subtotal)+'</td><td>'+ils(v.total)+'</td><td><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></td>'+
+      '<td><button class="btn ghost sm" onclick="printInvoice(\''+v.id+'\')">🖨</button> '+(v.status==='פתוחה'&&ROLE==='מנהל'?'<button class="btn danger sm" onclick="cancelInv(\''+v.id+'\')">בטל</button>':'')+'</td></tr>').join('')+'</table></div>' : '<div class="card empty">אין חשבוניות — מפיקים מתוך מסך ההזמנה</div>';
+  } else if(FIN_TAB==='receipts'){
+    html += DB.payments.length? '<div class="card"><table><tr><th>קבלה</th><th>תאריך</th><th>לקוח</th><th>סכום</th><th>אמצעי</th></tr>'+
+      DB.payments.slice().reverse().map(p=>{var o=DB.orders.find(x=>x.id===p.order_id)||{};return '<tr><td><b>'+p.receipt_number+'</b></td><td>'+esc(p.date)+'</td><td>'+esc(cust(o.customer_id))+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+' <button class="btn ghost sm" onclick="printReceipt(\''+p.id+'\')">🖨</button></td></tr>';}).join('')+'</table></div>' : '<div class="card empty">אין קבלות עדיין</div>';
+  } else {
+    html += DB.expenses.length? '<div class="card"><table><tr><th>תאריך</th><th>קטגוריה</th><th>ספק</th><th>סכום</th></tr>'+
+      DB.expenses.slice().reverse().map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.category)+'</td><td>'+esc(supp(x.supplier_id))+'</td><td>'+ils(x.amount)+(x.attachment_url?' <a href="'+esc(x.attachment_url)+'" target="_blank">📎</a>':'')+'</td></tr>').join('')+'</table></div>' : '<div class="card empty">אין הוצאות עדיין</div>';
+  }
+  el('main').innerHTML = html;
+}
+async function cancelInv(vid){ if(confirm('לבטל את החשבונית?')) await act('cancelInvoice',{invoice_id:vid},'החשבונית בוטלה'); }
+function expForm(){
+  openModal('<h2>הוצאה חדשה</h2>'+
+    '<div class="grid2"><div class="frow"><label>קטגוריה</label><select id="f_ecat"><option>רכש מלאי</option><option>כימיקלים</option><option>דלק ורכב</option><option>שכירות</option><option>חשמל ומים</option><option>תחזוקה</option><option>שכר</option><option>אחר</option></select></div>'+
+    '<div class="frow"><label>סכום</label><input id="f_eamt" type="number" min="0" step="0.1"></div></div>'+
+    '<div class="frow"><label>ספק (רשות)</label><select id="f_esup"><option value="">—</option>'+DB.suppliers.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>הערה</label><input id="f_enote"></div>'+
+    '<div class="frow"><label>צרף קבלה / חשבונית (תמונה או PDF)</label><input id="f_efile" type="file" accept="image/*,.pdf"></div>'+
+    '<button class="btn" onclick="saveExp()">שמור</button>');
+}
+async function saveExp(){
+  var amt = Number(el('f_eamt').value);
+  if(!(amt>0)) return toast('סכום חובה', true);
+  var r = await act('create',{table:'expenses',row:{date:new Date().toISOString().slice(0,10),category:el('f_ecat').value,supplier_id:el('f_esup').value,amount:amt,vat:Math.round(amt*0.18*100)/100,note:el('f_enote').value}},'ההוצאה נרשמה');
+  if(!r) return;
+  var f = el('f_efile').files[0];
+  if(f){
+    if(f.size > 4*1024*1024) toast('הקובץ גדול מ-4MB — ההוצאה נשמרה בלי צרופה', true);
+    else {
+      toast('מעלה קבלה...');
+      var b64 = await new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(rd.result.split(',')[1]);}; rd.readAsDataURL(f); });
+      var u = await api('uploadReceipt',{expense_id:r.row.id,base64:b64,mime:f.type,name:f.name});
+      if(u.ok){ toast('הקבלה צורפה'); var g=await api('getAll'); if(g.ok){DB=g.db;render();} }
+      else toast(u.error, true);
+    }
+  }
+  closeModal();
+}
+
+/* ================= לקוחות ================= */
+function rCustomers(){
+  el('main').innerHTML = '<div class="section-title"><h2>לקוחות</h2><button class="btn" onclick="custForm()">+ לקוח</button></div>'+
+    (DB.customers.length? DB.customers.map(function(c){
+      var bal = custBalance(c.id);
+      var primary = DB.contacts.find(x=>x.customer_id===c.id && x.is_primary==='כן') || DB.contacts.find(x=>x.customer_id===c.id);
+      return '<div class="card" style="cursor:pointer" onclick="openCust(\''+c.id+'\')"><div class="row">'+
+        '<div class="grow"><b>'+esc(c.name)+'</b> <span class="muted">· '+esc(c.type)+'</span>'+
+        '<div class="muted">'+(primary?esc(primary.name)+' '+esc(primary.phone):'אין איש קשר')+'</div></div>'+
+        (bal>0.01?'<div style="color:var(--danger);font-weight:600">'+ils(bal)+'</div>':'')+
+        '</div></div>';
+    }).join(''):'<div class="card empty">אין לקוחות עדיין</div>');
+}
+function custForm(c){
+  c = c||{};
+  openModal('<h2>'+(c.id?'עריכת לקוח':'לקוח חדש')+'</h2>'+
+    '<div class="frow"><label>שם</label><input id="f_name" value="'+esc(c.name||'')+'"></div>'+
+    '<div class="grid2"><div class="frow"><label>סוג</label><select id="f_ctype">'+['אירועים','מכבסה','משולב'].map(t=>'<option'+(c.type===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>ח.פ / עוסק</label><input id="f_vatid" value="'+esc(c.vat_id||'')+'"></div>'+
+    '<div class="frow"><label>תנאי תשלום</label><input id="f_terms" value="'+esc(c.payment_terms||'')+'" placeholder="שוטף+30"></div>'+
+    '<div class="frow"><label>כתובת</label><input id="f_addr" value="'+esc(c.address||'')+'"></div></div>'+
+    '<button class="btn" onclick="saveCust(\''+(c.id||'')+'\')">שמור</button>');
+}
+async function saveCust(id){
+  var row = {name:el('f_name').value,type:el('f_ctype').value,vat_id:el('f_vatid').value,payment_terms:el('f_terms').value,address:el('f_addr').value,active:'כן'};
+  if(!row.name) return toast('שם חובה', true);
+  var r = id? await act('update',{table:'customers',id:id,row:row},'עודכן') : await act('create',{table:'customers',row:row},'הלקוח נוסף');
+  if(r){ closeModal(); if(!id) openCust(r.row.id); }
+}
+function openCust(cid){
+  var c = DB.customers.find(x=>x.id===cid); if(!c) return;
+  var contacts = DB.contacts.filter(x=>x.customer_id===cid);
+  var prices = DB.customerPrices ? DB.customerPrices.filter(x=>x.customer_id===cid) : (DB.customer_prices||[]).filter(x=>x.customer_id===cid);
+  var orders = DB.orders.filter(o=>o.customer_id===cid);
+  openModal('<h2>'+esc(c.name)+' <button class="btn ghost sm" onclick=\'custForm('+JSON.stringify(c).replace(/'/g,'&#39;')+')\'>ערוך</button></h2>'+
+    '<div class="muted" style="margin-bottom:10px">'+esc(c.type)+(c.payment_terms?' · '+esc(c.payment_terms):'')+(c.vat_id?' · ח.פ '+esc(c.vat_id):'')+
+    (c.portal_code?' · קוד פורטל: <b>'+esc(c.portal_code)+'</b>':'')+'</div>'+
+    '<div class="section-title" style="margin-top:6px"><h3>אנשי קשר</h3><button class="btn ghost sm" onclick="contactForm(\''+cid+'\')">+ איש קשר</button></div>'+
+    (contacts.length?'<table><tr><th>שם</th><th>תפקיד</th><th>טלפון</th><th>ראשי</th></tr>'+
+      contacts.map(k=>'<tr><td>'+esc(k.name)+'</td><td>'+esc(k.role)+'</td><td><a href="tel:'+esc(k.phone)+'">'+esc(k.phone)+'</a></td><td>'+(k.is_primary==='כן'?'★':'')+'</td></tr>').join('')+'</table>'
+      :'<div class="muted">אין אנשי קשר</div>')+
+    '<div class="section-title"><h3>מחירון מיוחד</h3><button class="btn ghost sm" onclick="priceForm(\''+cid+'\')">+ מחיר</button></div>'+
+    (prices.length?'<table><tr><th>פריט</th><th>סוג</th><th>מחיר</th></tr>'+prices.map(p=>'<tr><td>'+esc(item(p.item_id))+'</td><td>'+esc(p.price_type)+'</td><td>'+ils(p.price)+'</td></tr>').join('')+'</table>':'<div class="muted">אין — יחול מחיר הפריט הרגיל</div>')+
+    '<div class="section-title"><h3>הזמנות</h3></div>'+
+    (orders.length? orders.map(o=>'<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div class="grow">'+esc(o.start_date)+' · '+esc(o.type)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>').join(''):'<div class="muted">אין הזמנות</div>')+
+    '<div style="margin-top:14px" class="row"><button class="btn ghost sm" onclick="printAgreement(\''+cid+'\')">🖨 הסכם שירות</button><button class="btn ghost sm" onclick="printStatement(\''+cid+'\')">🖨 דו"ח לקוח</button></div>');
+}
+function contactForm(cid){
+  openModal('<h2>איש קשר חדש</h2>'+
+    '<div class="frow"><label>שם</label><input id="f_kname"></div>'+
+    '<div class="grid2"><div class="frow"><label>תפקיד</label><input id="f_krole"></div>'+
+    '<div class="frow"><label>טלפון</label><input id="f_kphone" type="tel"></div></div>'+
+    '<div class="frow"><label>אימייל</label><input id="f_kmail" type="email"></div>'+
+    '<div class="frow"><label><input type="checkbox" id="f_kprim" style="width:auto"> איש קשר ראשי</label></div>'+
+    '<button class="btn" onclick="saveContact(\''+cid+'\')">שמור</button>');
+}
+async function saveContact(cid){
+  if(!el('f_kname').value) return toast('שם חובה', true);
+  var r = await act('create',{table:'contacts',row:{customer_id:cid,name:el('f_kname').value,role:el('f_krole').value,phone:el('f_kphone').value,email:el('f_kmail').value,is_primary:el('f_kprim').checked?'כן':''}},'איש הקשר נוסף');
+  if(r) openCust(cid);
+}
+function priceForm(cid){
+  openModal('<h2>מחיר מיוחד ללקוח</h2>'+
+    '<div class="frow"><label>פריט</label>'+sel('f_pitem',DB.items,i=>i.name)+'</div>'+
+    '<div class="grid2"><div class="frow"><label>סוג</label><select id="f_ptype"><option>השכרה</option><option>כביסה</option></select></div>'+
+    '<div class="frow"><label>מחיר</label><input id="f_pprice" type="number" min="0" step="0.1"></div></div>'+
+    '<button class="btn" onclick="savePrice(\''+cid+'\')">שמור</button>');
+}
+async function savePrice(cid){
+  var r = await act('create',{table:'customer_prices',row:{customer_id:cid,item_id:el('f_pitem').value,price_type:el('f_ptype').value,price:Number(el('f_pprice').value)}},'המחיר נשמר');
+  if(r) openCust(cid);
+}
+
+/* ================= פריטים ומלאי ================= */
+function rItems(){
+  el('main').innerHTML = '<div class="section-title"><h2>פריטים ומלאי</h2><div><button class="btn ghost sm" onclick="moveForm()">+ תנועת מלאי</button> <button class="btn" onclick="itemForm()">+ פריט</button></div></div>'+
+    (DB.items.length? DB.items.map(function(i){
+      var total = DB.stockMoves.filter(m=>m.item_id===i.id).reduce((s,m)=>s+Number(m.qty),0);
+      var wash = DB.laundryTasks.filter(t=>t.item_id===i.id&&t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty),0);
+      var low = i.min_stock!=='' && (total-wash)<Number(i.min_stock);
+      return '<div class="card"'+(low?' style="border-color:var(--danger)"':'')+'><div class="row">'+
+        '<div class="grow"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+(i.barcode?' · ⎘'+esc(i.barcode):'')+'</span>'+
+        '<div class="muted">השכרה '+ils(i.rent_price)+' · כביסה '+ils(i.wash_price)+(low?' · <b style="color:var(--danger)">מתחת למינימום!</b>':'')+'</div></div>'+
+        '<div style="text-align:center"><div class="big">'+total+'</div><div class="muted">מלאי כולל</div></div>'+
+        (wash?'<div style="text-align:center"><div class="big" style="color:var(--amber)">'+wash+'</div><div class="muted">בכביסה</div></div>':'')+
+        '<button class="btn ghost sm" onclick="availForm(\''+i.id+'\')">זמינות</button>'+
+        '<button class="btn ghost sm" onclick="unitsModal(\''+i.id+'\')">יחידות ('+DB.units.filter(u=>u.item_id===i.id&&u.status!=='גרוט').length+')</button></div></div>';
+    }).join(''):'<div class="card empty">אין פריטים עדיין</div>');
+}
+function itemForm(){
+  openModal('<h2>פריט חדש</h2>'+
+    '<div class="frow"><label>שם</label><input id="f_iname"></div>'+
+    '<div class="grid2"><div class="frow"><label>מידה</label><input id="f_isize"></div><div class="frow"><label>צבע</label><input id="f_icolor"></div>'+
+    '<div class="frow"><label>מחיר השכרה</label><input id="f_irent" type="number" value="0"></div>'+
+    '<div class="frow"><label>מחיר כביסה</label><input id="f_iwash" type="number" value="0"></div>'+
+    '<div class="frow"><label>ברקוד</label><input id="f_ibar"></div>'+
+    '<div class="frow"><label>מלאי מינימום</label><input id="f_imin" type="number"></div>'+
+    '<div class="frow"><label>קידומת ליחידות (למשל MAPA)</label><input id="f_iprefix" style="text-transform:uppercase" placeholder="באנגלית בלבד"></div></div>'+
+    '<button class="btn" onclick="saveItem()">שמור</button>');
+}
+async function saveItem(){
+  if(!el('f_iname').value) return toast('שם חובה', true);
+  var r = await act('create',{table:'items',row:{name:el('f_iname').value,size:el('f_isize').value,color:el('f_icolor').value,
+    rent_price:Number(el('f_irent').value)||0,wash_price:Number(el('f_iwash').value)||0,barcode:el('f_ibar').value,min_stock:el('f_imin').value,prefix:el('f_iprefix').value.toUpperCase().replace(/[^A-Z0-9]/g,''),active:'כן'}},'הפריט נוסף');
+  if(r) closeModal();
+}
+function moveForm(){
+  if(!DB.items.length) return toast('קודם צור פריט', true);
+  openModal('<h2>תנועת מלאי</h2>'+
+    '<div class="frow"><label>פריט</label>'+sel('f_mitem',DB.items,i=>i.name)+'</div>'+
+    '<div class="grid2"><div class="frow"><label>סוג</label><select id="f_mtype"><option>קניה</option><option>גריעה</option><option>תיקון</option></select></div>'+
+    '<div class="frow"><label>כמות</label><input id="f_mqty" type="number"></div></div>'+
+    '<div class="frow"><label>הערה</label><input id="f_mnote"></div>'+
+    '<p class="muted" style="margin-bottom:10px">גריעה — הזן מספר חיובי, יירשם כמינוס. קניה מסודרת עדיף דרך מסך הרכש.</p>'+
+    '<button class="btn" onclick="saveMove()">שמור</button>');
+}
+async function saveMove(){
+  var q = Number(el('f_mqty').value);
+  if(!q) return toast('כמות חובה', true);
+  var type = el('f_mtype').value;
+  if(type==='גריעה') q = -Math.abs(q);
+  var r = await act('create',{table:'stock_moves',row:{date:new Date().toISOString().slice(0,10),item_id:el('f_mitem').value,type:type,qty:q,note:el('f_mnote').value}},'התנועה נרשמה');
+  if(r) closeModal();
+}
+function availForm(iid){
+  openModal('<h2>בדיקת זמינות — '+esc(item(iid))+'</h2>'+
+    '<div class="grid2"><div class="frow"><label>מתאריך</label><input id="f_as" type="date"></div>'+
+    '<div class="frow"><label>עד תאריך</label><input id="f_ae" type="date"></div></div>'+
+    '<button class="btn" onclick="runAvail(\''+iid+'\')">בדוק</button>'+
+    '<div id="availRes" style="margin-top:14px"></div>');
+}
+async function runAvail(iid){
+  var s=el('f_as').value, e=el('f_ae').value;
+  if(!s||!e) return toast('בחר שני תאריכים', true);
+  el('availRes').innerHTML = '<span class="muted">בודק...</span>';
+  var r = await api('availability',{item_id:iid,start_date:s,end_date:e});
+  if(r.ok) el('availRes').innerHTML = '<div class="kpi"><div class="v" style="color:'+(r.available>0?'var(--ok)':'var(--danger)')+'">'+r.available+'</div><div class="l">פנוי לתאריכים · מלאי '+r.total+' · משוריין '+r.reserved+' · בכביסה '+r.inLaundry+'</div></div>';
+  else el('availRes').innerHTML = '<span style="color:var(--danger)">'+esc(r.error)+'</span>';
+}
+
+/* ================= רכש וספקים ================= */
+function rPurchasing(){
+  el('main').innerHTML = '<div class="section-title"><h2>ספקים</h2><button class="btn ghost sm" onclick="supForm()">+ ספק</button></div>'+
+    (DB.suppliers.length? DB.suppliers.map(s=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(s.name)+'</b><div class="muted">'+esc(s.phone||'')+'</div></div></div></div>').join(''):'<div class="card empty">אין ספקים</div>')+
+    '<div class="section-title"><h2>הזמנות רכש</h2><button class="btn" onclick="purForm()">+ רכש</button></div>'+
+    (DB.purchases.length? DB.purchases.slice().reverse().map(function(p){
+      var lines = DB.purchaseLines.filter(l=>l.purchase_id===p.id);
+      var total = lines.reduce((s,l)=>s+Number(l.qty)*Number(l.unit_cost),0);
+      return '<div class="card"><div class="row"><div class="grow"><b>'+esc(supp(p.supplier_id))+'</b> · '+esc(p.date)+
+        '<div class="muted">'+lines.map(l=>esc(item(l.item_id))+'×'+l.qty).join(', ')+' · '+ils(total)+'</div></div>'+
+        '<span class="chip '+esc(p.status)+'">'+esc(p.status)+'</span>'+
+        (p.status==='טיוטה'?'<button class="btn ghost sm" onclick="purLineForm(\''+p.id+'\')">+ שורה</button><button class="btn sm" onclick="doReceivePur(\''+p.id+'\')">קבל למלאי</button>':'')+
+        '</div></div>';
+    }).join(''):'<div class="card empty">אין הזמנות רכש</div>');
+}
+function supForm(){
+  openModal('<h2>ספק חדש</h2><div class="frow"><label>שם</label><input id="f_sname"></div>'+
+    '<div class="grid2"><div class="frow"><label>טלפון</label><input id="f_sphone"></div><div class="frow"><label>ח.פ</label><input id="f_svat"></div></div>'+
+    '<button class="btn" onclick="saveSup()">שמור</button>');
+}
+async function saveSup(){
+  if(!el('f_sname').value) return toast('שם חובה', true);
+  var r = await act('create',{table:'suppliers',row:{name:el('f_sname').value,phone:el('f_sphone').value,vat_id:el('f_svat').value,active:'כן'}},'הספק נוסף');
+  if(r) closeModal();
+}
+function purForm(){
+  if(!DB.suppliers.length) return toast('קודם צור ספק', true);
+  openModal('<h2>הזמנת רכש</h2><div class="frow"><label>ספק</label>'+sel('f_psup',DB.suppliers,s=>s.name)+'</div>'+
+    '<button class="btn" onclick="savePur()">צור טיוטה</button>');
+}
+async function savePur(){
+  var r = await act('create',{table:'purchases',row:{supplier_id:el('f_psup').value,date:new Date().toISOString().slice(0,10)}},'נוצר — הוסף שורות');
+  if(r){ closeModal(); purLineForm(r.row.id); }
+}
+function purLineForm(pid){
+  if(!DB.items.length) return toast('קודם צור פריט', true);
+  openModal('<h2>שורת רכש</h2><div class="frow"><label>פריט</label>'+sel('f_plitem',DB.items,i=>i.name)+'</div>'+
+    '<div class="grid2"><div class="frow"><label>כמות</label><input id="f_plqty" type="number" min="1"></div>'+
+    '<div class="frow"><label>עלות ליחידה</label><input id="f_plcost" type="number" min="0" step="0.1"></div></div>'+
+    '<button class="btn" onclick="savePurLine(\''+pid+'\')">הוסף</button>');
+}
+async function savePurLine(pid){
+  var q = Number(el('f_plqty').value);
+  if(!(q>0)) return toast('כמות חובה', true);
+  var r = await act('create',{table:'purchase_lines',row:{purchase_id:pid,item_id:el('f_plitem').value,qty:q,unit_cost:Number(el('f_plcost').value)||0}},'נוסף');
+  if(r) closeModal();
+}
+async function doReceivePur(pid){
+  if(confirm('לקבל את הרכש? המלאי יגדל ותירשם הוצאה.'))
+    await act('receivePurchase',{purchase_id:pid},'הרכש נקלט — המלאי עודכן וההוצאה נרשמה');
+}
+
+/* ================= סריקה ================= */
+function rScan(){
+  el('main').innerHTML = '<div class="section-title"><h2>סריקת ברקוד</h2></div>'+
+    '<div class="card"><div class="frow"><input id="scanIn" class="scanbox" inputmode="numeric" placeholder="סרוק או הקלד ברקוד" onkeydown="if(event.key===\'Enter\')doScan()"></div>'+
+    '<button class="btn" style="width:100%" onclick="doScan()">חפש</button></div>'+
+    '<div id="scanRes"></div>'+
+    '<p class="muted">עובד עם כל אקדח ברקוד או מקלדת. סורק פריטים ועגלות.</p>';
+  setTimeout(function(){ el('scanIn').focus(); },100);
+}
+async function doUnitStatus(uid, st){
+  var r = await act('setUnitStatus',{unit_id:uid,status:st},'עודכן ל'+st);
+  if(r && VIEW==='scan'){ el('scanIn').value=uid; doScan(); }
+}
+async function doScan(){
+  var r = await api('scan',{barcode:el('scanIn').value});
+  if(!r.ok){ el('scanRes').innerHTML='<div class="card empty">'+esc(r.error)+'</div>'; return; }
+  if(r.kind==='item'){
+    el('scanRes').innerHTML = '<div class="card"><b>'+esc(r.entity.name)+'</b><div class="muted">'+esc(r.entity.size||'')+' '+esc(r.entity.color||'')+'</div>'+
+      '<div class="grid2" style="margin-top:10px">'+kpi(r.stock,'מלאי כולל')+kpi(r.inLaundry,'בכביסה')+'</div></div>';
+  } else if(r.kind==='unit'){
+    el('scanRes').innerHTML = '<div class="card"><b>יחידה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנוי'?'var(--ok)':r.entity.status==='גרוט'?'var(--danger)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
+      '<div class="muted" style="margin:6px 0">'+esc(r.item?r.item.name:'')+'</div>'+
+      (r.entity.status!=='גרוט'?'<div class="row">'+['פנוי','אצל לקוח','בכביסה'].filter(s=>s!==r.entity.status).map(s=>'<button class="btn ghost sm" onclick="doUnitStatus(\''+r.entity.id+'\',\''+s+'\')">'+s+'</button>').join('')+
+      '<button class="btn danger sm" onclick="if(confirm(\'לגרוט? נגרע מהמלאי — סופי\'))doUnitStatus(\''+r.entity.id+'\',\'גרוט\')">גרוט</button></div>':'')+'</div>';
+  } else {
+    el('scanRes').innerHTML = '<div class="card"><b>עגלה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
+      (r.task?'<div class="muted" style="margin-top:6px">משימה עליה: '+esc(item(r.task.item_id))+' × '+r.task.qty+' · שלב: '+esc(r.task.stage)+'</div>'+
+      '<button class="btn sm" style="margin-top:8px" onclick="doAdvance(\''+r.task.id+'\');setTimeout(doScan,600)">קדם שלב ←</button>':'')+'</div>';
+  }
+  el('scanIn').value=''; el('scanIn').focus();
+}
+
+/* ================= דוחות ================= */
+var LAST_REPORT = null;
+function rReports(){
+  el('main').innerHTML = '<div class="section-title"><h2>דוחות</h2></div>'+
+    '<div class="card"><div class="grid3">'+
+    '<div class="frow"><label>מתאריך</label><input id="rf_from" type="date"></div>'+
+    '<div class="frow"><label>עד תאריך</label><input id="rf_to" type="date"></div>'+
+    '<div class="frow"><label>לקוח</label><select id="rf_cust"><option value="">כל הלקוחות</option>'+DB.customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>סטטוס</label><select id="rf_status"><option value="">הכל</option>'+['הצעת מחיר','טיוטה','מאושרת','סופקה','הוחזרה','הושלמה','בוטלה'].map(s=>'<option>'+s+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>סוג</label><select id="rf_type"><option value="">הכל</option><option>השכרה</option><option>כביסה</option></select></div>'+
+    '<div class="frow"><label>&nbsp;</label><button class="btn" style="width:100%" onclick="runOrdersReport()">הפק דוח</button></div>'+
+    '</div></div>'+
+    '<div id="repRes"></div>'+
+    '<div id="repSummary"></div>';
+  loadSummary();
+}
+async function loadSummary(){
+  var r = await api('reports',{});
+  if(!r.ok) return;
+  var months = Object.keys(Object.assign({},r.revenueByMonth,r.expensesByMonth)).sort();
+  el('repSummary').innerHTML =
+    '<h3 style="margin:16px 0 8px">הכנסות מול הוצאות (לפני מע"מ)</h3><div class="card"><table><tr><th>חודש</th><th>הכנסות</th><th>הוצאות</th><th>רווח גולמי</th></tr>'+
+    (months.length? months.map(function(m){ var rev=r.revenueByMonth[m]||0, ex=r.expensesByMonth[m]||0;
+      return '<tr><td>'+m+'</td><td>'+ils(rev)+'</td><td>'+ils(ex)+'</td><td style="color:'+((rev-ex)>=0?'var(--ok)':'var(--danger)')+';font-weight:600">'+ils(rev-ex)+'</td></tr>'; }).join(''):'<tr><td colspan="4" class="empty">אין נתונים</td></tr>')+'</table></div>'+
+    '<h3 style="margin:16px 0 8px">יתרות לקוחות (גבייה)</h3><div class="card">'+
+    (r.aging.length?'<table><tr><th>לקוח</th><th>יתרה</th></tr>'+r.aging.map(a=>'<tr><td>'+esc(a.customer)+'</td><td style="color:var(--danger);font-weight:600">'+ils(a.balance)+'</td></tr>').join('')+'</table>':'<div class="empty">אין חובות פתוחים 🎉</div>')+'</div>'+
+    '<h3 style="margin:16px 0 8px">מלאי מתחת למינימום</h3><div class="card">'+
+    (r.lowStock.length?'<table><tr><th>פריט</th><th>זמין</th><th>מינימום</th></tr>'+r.lowStock.map(l=>'<tr><td>'+esc(l.item)+'</td><td style="color:var(--danger)">'+l.available+'</td><td>'+l.min+'</td></tr>').join('')+'</table>':'<div class="empty">הכל מעל המינימום ✓</div>')+'</div>';
+}
+async function runOrdersReport(){
+  var f = {from:el('rf_from').value,to:el('rf_to').value,customer_id:el('rf_cust').value,status:el('rf_status').value,type:el('rf_type').value};
+  Object.keys(f).forEach(k=>{ if(!f[k]) delete f[k]; });
+  el('repRes').innerHTML = '<div class="card empty">מפיק...</div>';
+  var r = await api('ordersReport', f);
+  if(!r.ok) return el('repRes').innerHTML = '<div class="card empty">'+esc(r.error)+'</div>';
+  LAST_REPORT = {filters:f, data:r};
+  el('repRes').innerHTML = '<div class="card"><div class="row" style="margin-bottom:8px"><b class="grow">תוצאות: '+r.rows.length+' הזמנות · '+ils(r.total)+'</b>'+
+    '<button class="btn ghost sm" onclick="printReport()">🖨 הדפס דוח רשמי</button></div>'+
+    (r.rows.length?'<table><tr><th>תאריך</th><th>לקוח</th><th>סוג</th><th>סטטוס</th><th>סכום</th><th>שולם</th><th>יתרה</th></tr>'+
+    r.rows.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.customer)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.status)+'</td><td>'+ils(x.total)+'</td><td>'+ils(x.paid)+'</td><td>'+ils(x.balance)+'</td></tr>').join('')+'</table>':'<div class="empty">אין תוצאות לפילטר זה</div>')+'</div>';
+}
+function printReport(){
+  if(!LAST_REPORT) return;
+  var f = LAST_REPORT.filters, r = LAST_REPORT.data;
+  var fdesc = [];
+  if(f.from) fdesc.push('מ-'+f.from); if(f.to) fdesc.push('עד '+f.to);
+  if(f.customer_id) fdesc.push('לקוח: '+cust(f.customer_id));
+  if(f.status) fdesc.push('סטטוס: '+f.status); if(f.type) fdesc.push('סוג: '+f.type);
+  printDoc('דוח הזמנות', null,
+    '<p><b>פילטרים:</b> '+(fdesc.length?esc(fdesc.join(' · ')):'ללא — כל ההזמנות')+'</p>'+
+    '<table><tr><th>תאריך</th><th>לקוח</th><th>סוג</th><th>סטטוס</th><th>סכום</th><th>שולם</th><th>יתרה</th></tr>'+
+    r.rows.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.customer)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.status)+'</td><td>'+ils(x.total)+'</td><td>'+ils(x.paid)+'</td><td>'+ils(x.balance)+'</td></tr>').join('')+'</table>'+
+    '<p class="tot">סה"כ: '+ils(r.total)+' · '+r.rows.length+' הזמנות</p>', {});
+}
+
+/* ================= ברקודים ================= */
+function rBarcodes(){
+  el('main').innerHTML = '<div class="section-title"><h2>ברקודים</h2><button class="btn" onclick="printBarcodes()">🖨 הדפס מדבקות</button></div>'+
+    '<div class="card"><div class="grid3">'+
+    '<div class="frow"><label>סוג</label><select id="bc_kind" onchange="renderBarcodeList()"><option value="units">יחידות ממוספרות</option><option value="items">פריטים</option><option value="carts">עגלות</option></select></div>'+
+    '<div class="frow"><label>פריט</label><select id="bc_item" onchange="renderBarcodeList()"><option value="">כל הפריטים</option>'+DB.items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>חיפוש מזהה</label><input id="bc_search" oninput="renderBarcodeList()" placeholder="MAPA00..."></div>'+
+    '</div></div><div id="bcList" class="grid3"></div>';
+  renderBarcodeList();
+}
+function barcodeEntries(){
+  var kind = el('bc_kind').value, itemF = el('bc_item').value, q = (el('bc_search').value||'').toUpperCase();
+  var list = [];
+  if(kind==='units') list = DB.units.filter(u=>u.status!=='גרוט').map(u=>({code:String(u.barcode), label:item(u.item_id), item_id:u.item_id}));
+  if(kind==='items') list = DB.items.filter(i=>i.barcode).map(i=>({code:String(i.barcode), label:i.name, item_id:i.id}));
+  if(kind==='carts') list = DB.carts.filter(c=>c.barcode).map(c=>({code:String(c.barcode), label:'עגלה '+c.id, item_id:''}));
+  if(itemF) list = list.filter(x=>x.item_id===itemF);
+  if(q) list = list.filter(x=>x.code.toUpperCase().includes(q));
+  return list;
+}
+function safeBarcode(code){
+  try{ return code128Svg(code); }catch(e){ return '<div class="muted" style="padding:14px">ברקוד חייב אותיות/ספרות באנגלית</div>'; }
+}
+function renderBarcodeList(){
+  var list = barcodeEntries();
+  el('bcList').innerHTML = list.length? list.slice(0,200).map(b=>'<div class="card" style="text-align:center">'+safeBarcode(b.code)+'<div class="muted">'+esc(b.label)+'</div></div>').join('')
+    : '<div class="card empty" style="grid-column:1/-1">אין ברקודים לפילטר זה. יחידות יוצרים ממסך פריטים ← "יחידות"</div>';
+}
+function printBarcodes(){
+  var list = barcodeEntries();
+  if(!list.length) return toast('אין ברקודים להדפסה', true);
+  var w = window.open('','_blank');
+  w.document.write('<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Arial;display:flex;flex-wrap:wrap;gap:6px;padding:8px}'+
+    '.lbl{border:1px dashed #999;padding:8px;text-align:center;font-size:11px;page-break-inside:avoid}</style></head><body>'+
+    list.map(b=>'<div class="lbl">'+safeBarcode(b.code)+'<div>'+esc(b.label)+'</div></div>').join('')+
+    '<script>window.onload=function(){window.print();}<\/script></body></html>');
+  w.document.close();
+}
+function unitsModal(iid){
+  var it = DB.items.find(x=>x.id===iid);
+  var units = DB.units.filter(u=>u.item_id===iid);
+  openModal('<h2>יחידות — '+esc(it.name)+'</h2>'+
+    (it.prefix?'<div class="row" style="margin-bottom:12px"><input id="f_uqty" type="number" min="1" max="500" placeholder="כמה יחידות" style="width:130px"><button class="btn" onclick="doCreateUnits(\''+iid+'\')">+ צור עם ברקוד אוטומטי ('+esc(it.prefix)+'...)</button></div>'
+    :'<p class="muted" style="margin-bottom:10px">כדי ליצור יחידות, הגדר לפריט קידומת באנגלית (למשל MAPA) בעריכת הפריט.</p>')+
+    (units.length?'<table><tr><th>מזהה</th><th>סטטוס</th><th></th></tr>'+units.map(u=>'<tr><td><b>'+esc(u.id)+'</b></td><td>'+esc(u.status)+'</td><td>'+
+      (u.status!=='גרוט'?'<button class="btn danger sm" onclick="doScrapUnit(\''+u.id+'\',\''+iid+'\')">גרוט</button>':'')+'</td></tr>').join('')+'</table>':'<div class="muted">אין יחידות עדיין</div>'));
+}
+async function doCreateUnits(iid){
+  var q = Number(el('f_uqty').value);
+  if(!(q>0)) return toast('כמות חובה', true);
+  var r = await act('createUnits',{item_id:iid,qty:q});
+  if(r){ toast('נוצרו '+r.created.length+' יחידות: '+r.created[0]+' עד '+r.created[r.created.length-1]); unitsModal(iid); }
+}
+async function doScrapUnit(uid,iid){
+  if(!confirm('לגרוט את '+uid+'? היחידה תיגרע מהמלאי — פעולה סופית.')) return;
+  var r = await act('setUnitStatus',{unit_id:uid,status:'גרוט'},'נגרט ונגרע מהמלאי');
+  if(r) unitsModal(iid);
+}
+
+/* ================= נוכחות ================= */
+function rAttendance(){
+  var recent = DB.attendance.slice(-25).reverse();
+  el('main').innerHTML = '<div class="section-title"><h2>נוכחות</h2>'+(ROLE==='מנהל'?'<button class="btn ghost sm" onclick="attForm()">+ רישום ידני</button>':'')+'</div>'+
+    '<div class="card" style="text-align:center"><h3 style="margin-bottom:10px">שעון נוכחות</h3>'+
+    '<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="קוד עובד" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
+    '<br><button class="btn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
+    '<h3 style="margin:14px 0 8px">רישומים אחרונים</h3><div class="card">'+
+    (recent.length?'<table><tr><th>עובד</th><th>תאריך</th><th>כניסה</th><th>יציאה</th><th>שעות</th></tr>'+
+    recent.map(a=>{var e=DB.employees.find(x=>x.id===a.employee_id)||{};return '<tr><td>'+esc(e.name)+'</td><td>'+esc(a.date)+'</td><td>'+esc(a.in_time)+'</td><td>'+esc(a.out_time||'—')+'</td><td>'+(a.hours!==''?a.hours:'—')+'</td></tr>';}).join('')+'</table>':'<div class="empty">אין רישומים</div>')+'</div>';
+}
+async function doClock(){
+  var r = await api('clock',{pin:el('clockPin').value});
+  if(!r.ok){ el('clockMsg').innerHTML='<span style="color:var(--danger)">'+esc(r.error)+'</span>'; return; }
+  el('clockMsg').innerHTML = '<b style="color:var(--ok)">'+esc(r.name)+' — '+(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓ ('+r.hours+' שעות)')+'</b>';
+  el('clockPin').value='';
+  var g = await api('getAll'); if(g.ok){ DB=g.db; }
+  setTimeout(function(){ if(VIEW==='attendance') rAttendance(); }, 1600);
+}
+function attForm(){
+  openModal('<h2>רישום נוכחות ידני</h2>'+
+    '<div class="frow"><label>עובד</label>'+sel('f_aemp',DB.employees.filter(e=>e.active!=='לא'),e=>e.name)+'</div>'+
+    '<div class="grid2"><div class="frow"><label>תאריך</label><input id="f_adate" type="date"></div><div></div>'+
+    '<div class="frow"><label>כניסה</label><input id="f_ain" type="time"></div>'+
+    '<div class="frow"><label>יציאה</label><input id="f_aout" type="time"></div></div>'+
+    '<button class="btn" onclick="saveAtt()">שמור</button>');
+}
+async function saveAtt(){
+  var r = await act('addAttendance',{employee_id:el('f_aemp').value,date:el('f_adate').value,in_time:el('f_ain').value,out_time:el('f_aout').value},'נרשם');
+  if(r) closeModal();
+}
+
+/* ================= שכר ================= */
+function rPayroll(){
+  var month = el('pr_month') ? el('pr_month').value : new Date().toISOString().slice(0,7);
+  el('main').innerHTML = '<div class="section-title"><h2>שכר</h2></div>'+
+    '<div class="card"><div class="row"><input id="pr_month" type="month" value="'+month+'" style="width:auto">'+
+    '<button class="btn" onclick="doBuildPayroll()">חשב שכר מהנוכחות</button><span class="muted">חישוב: שעות × תעריף + בונוס. שכר מאושר לא נדרס.</span></div></div>'+
+    '<div id="prList">'+payrollTable(month)+'</div>';
+}
+function payrollTable(month){
+  var rows = DB.payroll.filter(p=>p.month===month);
+  return rows.length? '<div class="card"><table><tr><th>עובד</th><th>שעות</th><th>תעריף</th><th>בסיס</th><th>בונוס</th><th>סה"כ</th><th></th></tr>'+
+    rows.map(function(p){ var e=DB.employees.find(x=>x.id===p.employee_id)||{};
+      return '<tr><td><b>'+esc(e.name)+'</b></td><td>'+p.hours+'</td><td>'+ils(p.hourly_rate)+'</td><td>'+ils(p.base_pay)+'</td><td>'+ils(p.bonus)+(p.bonus_note?' <span class="muted">('+esc(p.bonus_note)+')</span>':'')+'</td><td class="tot"><b>'+ils(p.total)+'</b></td>'+
+      '<td>'+(p.status==='אושר'?'<span class="chip הושלמה">אושר</span> <button class="btn ghost sm" onclick="printPayslip(\''+p.id+'\')">🖨</button>':
+      '<button class="btn ghost sm" onclick="bonusForm(\''+p.id+'\')">בונוס</button> <button class="btn sm" onclick="doApprovePayroll(\''+p.id+'\')">אשר</button>')+'</td></tr>'; }).join('')+'</table></div>'
+    : '<div class="card empty">אין נתוני שכר לחודש זה — לחץ "חשב שכר מהנוכחות"</div>';
+}
+async function doBuildPayroll(){
+  var r = await act('buildPayroll',{month:el('pr_month').value},'השכר חושב');
+  if(r) rPayroll();
+}
+function bonusForm(pid){
+  openModal('<h2>בונוס</h2><div class="grid2"><div class="frow"><label>סכום</label><input id="f_bamt" type="number" min="0"></div>'+
+    '<div class="frow"><label>סיבה</label><input id="f_bnote"></div></div>'+
+    '<button class="btn" onclick="saveBonus(\''+pid+'\')">שמור</button>');
+}
+async function saveBonus(pid){
+  var r = await act('setBonus',{payroll_id:pid,bonus:Number(el('f_bamt').value)||0,note:el('f_bnote').value},'הבונוס עודכן');
+  if(r){ closeModal(); rPayroll(); }
+}
+async function doApprovePayroll(pid){
+  if(!confirm('לאשר את השכר? יירשם כהוצאה — פעולה סופית.')) return;
+  var r = await act('approvePayroll',{payroll_id:pid},'אושר ונרשם כהוצאה');
+  if(r) rPayroll();
+}
+function printPayslip(pid){
+  var p = DB.payroll.find(x=>x.id===pid); if(!p) return;
+  var e = DB.employees.find(x=>x.id===p.employee_id)||{};
+  printDoc('סיכום שכר פנימי', null,
+    '<p><b>עובד:</b> '+esc(e.name)+' · <b>חודש:</b> '+esc(p.month)+'</p>'+
+    '<table><tr><th>שעות</th><th>תעריף</th><th>בסיס</th><th>בונוס</th><th>סה"כ</th></tr>'+
+    '<tr><td>'+p.hours+'</td><td>'+ils(p.hourly_rate)+'</td><td>'+ils(p.base_pay)+'</td><td>'+ils(p.bonus)+(p.bonus_note?' ('+esc(p.bonus_note)+')':'')+'</td><td class="tot">'+ils(p.total)+'</td></tr></table>'+
+    '<p class="muted" style="font-size:12px">מסמך פנימי — אינו תלוש שכר רשמי. תלוש רשמי מופק בתוכנת שכר מורשית.</p>', {signatures:true});
+}
+
+/* ================= מיתוג והגדרות ================= */
+var SETTING_FIELDS = [['business_name','שם העסק'],['business_address','כתובת'],['business_phone','טלפון'],
+  ['business_vat','ע.מ / ח.פ'],['logo_url','כתובת לוגו (URL לתמונה)'],['doc_footer','שורת סיום במסמכים']];
+function rSettings(){
+  el('main').innerHTML = '<div class="section-title"><h2>מיתוג והגדרות מסמכים</h2></div>'+
+    '<div class="card">'+SETTING_FIELDS.map(f=>'<div class="frow"><label>'+f[1]+'</label><input id="set_'+f[0]+'" value="'+esc(setting(f[0]))+'"></div>').join('')+
+    '<div class="frow"><label>נוסח הסכם השירות</label><textarea id="set_agreement_text" rows="8" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px">'+esc(setting('agreement_text'))+'</textarea></div>'+
+    '<button class="btn" onclick="saveSettings()">שמור הכל</button> <button class="btn ghost" onclick="printAgreementPreview()">🖨 תצוגה מקדימה של הסכם</button></div>'+
+    '<p class="muted">ההגדרות חלות מיידית על כל המסמכים: חשבוניות, קבלות, תעודות משלוח, טפסים, הסכמים ודוחות.</p>';
+}
+async function saveSettings(){
+  var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text']);
+  for(var i=0;i<keys.length;i++){
+    var r = await api('updateSetting',{key:keys[i],value:el('set_'+keys[i]).value});
+    if(!r.ok) return toast(r.error, true);
+  }
+  var g = await api('getAll'); if(g.ok) DB=g.db;
+  toast('ההגדרות נשמרו'); rSettings();
+}
+function printAgreementPreview(){
+  printDoc('הסכם שירות', null, '<pre>'+esc(el('set_agreement_text').value)+'</pre>', {signatures:true});
+}
+
+/* ================= משימות ================= */
+var TASK_COLS = ['פתוחה','בתהליך','הושלמה'];
+var PRIO_COLOR = {'דחופה':'var(--danger)','רגילה':'var(--navy2)','נמוכה':'#8C9BA5'};
+function rTasks(){
+  var cols = TASK_COLS.map(function(st){
+    var tks = DB.tasks.filter(t=>t.status===st);
+    return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tks.length+'</span></h3>'+
+      tks.map(function(t){
+        var a = DB.employees.find(e=>e.id===t.assignee_id)||{};
+        var overdue = t.due_date && t.due_date < new Date().toISOString().slice(0,10) && st!=='הושלמה';
+        return '<div class="ktask" style="cursor:pointer;border-right:4px solid '+(PRIO_COLOR[t.priority]||'var(--navy2)')+'" onclick="openTask(\''+t.id+'\')">'+
+          '<div class="t">'+esc(t.title)+'</div>'+
+          '<div class="muted">'+(a.name?esc(a.name):'ללא אחראי')+(t.due_date?' · יעד '+esc(t.due_date):'')+(overdue?' · <b style="color:var(--danger)">באיחור!</b>':'')+'</div></div>';
+      }).join('')+'</div>';
+  }).join('');
+  el('main').innerHTML = '<div class="section-title"><h2>לוח משימות</h2><button class="btn" onclick="taskForm()">+ משימה</button></div>'+
+    '<div class="kanban">'+cols+'</div>';
+}
+function taskForm(){
+  openModal('<h2>משימה חדשה</h2>'+
+    '<div class="frow"><label>כותרת</label><input id="f_ttitle"></div>'+
+    '<div class="frow"><label>פירוט</label><input id="f_tdetails"></div>'+
+    '<div class="grid2"><div class="frow"><label>אחראי</label><select id="f_tassign"><option value="">—</option>'+DB.employees.filter(e=>e.active!=='לא').map(e=>'<option value="'+e.id+'">'+esc(e.name)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>תאריך יעד</label><input id="f_tdue" type="date"></div>'+
+    '<div class="frow"><label>עדיפות</label><select id="f_tprio"><option>רגילה</option><option>דחופה</option><option>נמוכה</option></select></div></div>'+
+    '<button class="btn" onclick="saveTask()">שמור</button>');
+}
+async function saveTask(){
+  if(!el('f_ttitle').value) return toast('כותרת חובה', true);
+  var r = await act('create',{table:'tasks',row:{title:el('f_ttitle').value,details:el('f_tdetails').value,assignee_id:el('f_tassign').value,due_date:el('f_tdue').value,priority:el('f_tprio').value}},'המשימה נוצרה');
+  if(r) closeModal();
+}
+function openTask(tid){
+  var t = DB.tasks.find(x=>x.id===tid); if(!t) return;
+  var a = DB.employees.find(e=>e.id===t.assignee_id)||{};
+  var comments = DB.taskComments.filter(c=>c.task_id===tid).sort((x,y)=>x.ts>y.ts?1:-1);
+  var mt = t.meeting_id ? DB.meetings.find(m=>m.id===t.meeting_id) : null;
+  openModal('<h2>'+esc(t.title)+' <span class="chip" style="background:'+(PRIO_COLOR[t.priority]||'var(--navy2)')+'">'+esc(t.priority)+'</span></h2>'+
+    '<div class="muted" style="margin-bottom:8px">'+(t.details?esc(t.details)+'<br>':'')+
+    'אחראי: '+(a.name?esc(a.name):'—')+(t.due_date?' · יעד: '+esc(t.due_date):'')+
+    '<br>נוצרה ע"י '+esc(t.created_by)+' · '+esc(t.created_at)+(mt?' · מתוך אסיפה: '+esc(mt.title):'')+'</div>'+
+    '<div class="row" style="margin-bottom:12px">'+TASK_COLS.filter(s=>s!==t.status).map(s=>'<button class="btn ghost sm" onclick="doMoveTask(\''+tid+'\',\''+s+'\')">העבר ל'+s+'</button>').join('')+'</div>'+
+    '<h3>הערות ומעקב</h3>'+
+    '<div style="max-height:220px;overflow-y:auto;margin:8px 0">'+
+    (comments.length? comments.map(c=>'<div style="border-bottom:1px solid var(--line);padding:6px 0"><span class="muted">'+esc(c.ts)+' · <b>'+esc(c.user)+'</b></span><br>'+esc(c.text)+'</div>').join(''):'<div class="muted">אין הערות</div>')+'</div>'+
+    '<div class="row"><input id="f_tcomment" class="grow" placeholder="הוסף הערה..." onkeydown="if(event.key===\'Enter\')addTaskComment(\''+tid+'\')">'+
+    '<button class="btn sm" onclick="addTaskComment(\''+tid+'\')">הוסף</button></div>');
+}
+async function doMoveTask(tid, st){
+  var r = await act('moveTask',{task_id:tid,status:st},'הועבר ל'+st);
+  if(r) openTask(tid);
+}
+async function addTaskComment(tid){
+  var txt = el('f_tcomment').value;
+  if(!txt) return;
+  var r = await act('create',{table:'task_comments',row:{task_id:tid,text:txt}});
+  if(r){ toast('ההערה נוספה'); openTask(tid); }
+}
+
+/* ================= יומן ================= */
+function rCalendar(){
+  var today = new Date().toISOString().slice(0,10);
+  var horizon = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
+  var events = [];
+  DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status)).forEach(function(o){
+    events.push({date:o.start_date, kind:'אספקה', label:cust(o.customer_id)+' · '+o.type, color:'var(--teal)'});
+    events.push({date:o.end_date, kind:'איסוף/החזרה', label:cust(o.customer_id), color:'var(--amber)'});
+  });
+  DB.tasks.filter(t=>t.status!=='הושלמה'&&t.due_date).forEach(function(t){
+    events.push({date:t.due_date, kind:'משימה', label:t.title, color:'var(--navy2)', click:"openTask('"+t.id+"')"});
+  });
+  DB.meetings.forEach(function(m){
+    events.push({date:m.date, kind:'פגישה '+(m.time||''), label:m.title, color:'var(--danger)', click:"openMeeting('"+m.id+"')"});
+  });
+  DB.machines.filter(m=>m.next_service).forEach(function(m){
+    events.push({date:m.next_service, kind:'טיפול מכונה', label:m.id+' · '+m.type, color:'#8C9BA5'});
+  });
+  events = events.filter(e=>e.date && e.date>=today && e.date<=horizon).sort((a,b)=>a.date>b.date?1:-1);
+  var overdue = DB.tasks.filter(t=>t.status!=='הושלמה'&&t.due_date&&t.due_date<today);
+  var byDate = {};
+  events.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
+  el('main').innerHTML = '<div class="section-title"><h2>יומן — 30 הימים הקרובים</h2></div>'+
+    (overdue.length?'<div class="card" style="border-color:var(--danger)"><b style="color:var(--danger)">משימות באיחור:</b> '+overdue.map(t=>'<span style="cursor:pointer;text-decoration:underline" onclick="openTask(\''+t.id+'\')">'+esc(t.title)+'</span>').join(' · ')+'</div>':'')+
+    (Object.keys(byDate).length? Object.keys(byDate).map(d=>
+      '<div class="card"><b>'+d+(d===today?' — היום':'')+'</b>'+
+      byDate[d].map(e=>'<div class="row" style="padding:5px 0"'+(e.click?' onclick="'+e.click+'" style="cursor:pointer"':'')+'><span class="chip" style="background:'+e.color+'">'+esc(e.kind)+'</span><div class="grow">'+esc(e.label)+'</div></div>').join('')+'</div>').join('')
+    :'<div class="card empty">אין אירועים ב-30 הימים הקרובים</div>');
+}
+
+/* ================= פגישות ================= */
+function rMeetings(){
+  el('main').innerHTML = '<div class="section-title"><h2>פגישות ואסיפות</h2><button class="btn" onclick="meetingForm()">+ פגישה</button></div>'+
+    (DB.meetings.length? DB.meetings.slice().sort((a,b)=>a.date<b.date?1:-1).map(m=>
+      '<div class="card" style="cursor:pointer" onclick="openMeeting(\''+m.id+'\')"><div class="row"><div class="grow"><b>'+esc(m.title)+'</b>'+
+      '<div class="muted">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.participants?' · '+esc(m.participants):'')+'</div></div>'+
+      '<span class="muted">'+DB.tasks.filter(t=>t.meeting_id===m.id).length+' משימות</span></div></div>').join('')
+    :'<div class="card empty">אין פגישות עדיין</div>');
+}
+function meetingForm(){
+  openModal('<h2>פגישה חדשה</h2>'+
+    '<div class="frow"><label>נושא</label><input id="f_mtitle"></div>'+
+    '<div class="grid2"><div class="frow"><label>תאריך</label><input id="f_mdate" type="date"></div>'+
+    '<div class="frow"><label>שעה</label><input id="f_mtime" type="time"></div></div>'+
+    '<div class="frow"><label>משתתפים</label><input id="f_mpart"></div>'+
+    '<button class="btn" onclick="saveMeeting()">שמור</button>');
+}
+async function saveMeeting(){
+  if(!el('f_mtitle').value||!el('f_mdate').value) return toast('נושא ותאריך חובה', true);
+  var r = await act('create',{table:'meetings',row:{title:el('f_mtitle').value,date:el('f_mdate').value,time:el('f_mtime').value,participants:el('f_mpart').value,protocol:''}},'הפגישה נוצרה');
+  if(r){ closeModal(); openMeeting(r.row.id); }
+}
+function openMeeting(mid){
+  var m = DB.meetings.find(x=>x.id===mid); if(!m) return;
+  var tasks = DB.tasks.filter(t=>t.meeting_id===mid);
+  openModal('<h2>'+esc(m.title)+'</h2>'+
+    '<div class="muted" style="margin-bottom:10px">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.participants?' · משתתפים: '+esc(m.participants):'')+' · נוצרה ע"י '+esc(m.created_by)+'</div>'+
+    '<h3>פרוטוקול / תמלול</h3>'+
+    '<textarea id="f_mprotocol" rows="7" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="כתוב או הדבק כאן את סיכום האסיפה...">'+esc(m.protocol||'')+'</textarea>'+
+    '<div class="row" style="margin:8px 0 14px"><button class="btn sm" onclick="saveProtocol(\''+mid+'\')">שמור פרוטוקול</button>'+
+    '<button class="btn ghost sm" onclick="printMeeting(\''+mid+'\')">🖨 הדפס פרוטוקול</button></div>'+
+    '<h3>משימות מהאסיפה ('+tasks.length+')</h3>'+
+    (tasks.length? tasks.map(t=>'<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+t.id+'\')"><div class="grow">'+esc(t.title)+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status)+'</span></div>').join(''):'<div class="muted">אין משימות עדיין</div>')+
+    '<div style="margin-top:12px"><h3>+ משימה חדשה מהאסיפה</h3>'+
+    '<div class="row" style="margin-top:6px"><input id="f_mtask" class="grow" placeholder="מה סוכם לביצוע?">'+
+    '<select id="f_mtassign" style="width:auto"><option value="">אחראי</option>'+DB.employees.filter(e=>e.active!=='לא').map(e=>'<option value="'+e.id+'">'+esc(e.name)+'</option>').join('')+'</select>'+
+    '<input id="f_mtdue" type="date" style="width:auto">'+
+    '<button class="btn sm" onclick="doTaskFromMeeting(\''+mid+'\')">צור</button></div></div>');
+}
+async function saveProtocol(mid){
+  var r = await act('update',{table:'meetings',id:mid,row:{protocol:el('f_mprotocol').value}},'הפרוטוקול נשמר');
+  if(r) openMeeting(mid);
+}
+async function doTaskFromMeeting(mid){
+  if(!el('f_mtask').value) return toast('כתוב מה סוכם', true);
+  var r = await act('taskFromMeeting',{meeting_id:mid,title:el('f_mtask').value,assignee_id:el('f_mtassign').value,due_date:el('f_mtdue').value},'המשימה נוצרה ותועדה');
+  if(r) openMeeting(mid);
+}
+function printMeeting(mid){
+  var m = DB.meetings.find(x=>x.id===mid); if(!m) return;
+  var tasks = DB.tasks.filter(t=>t.meeting_id===mid);
+  printDoc('פרוטוקול אסיפה', null,
+    '<p><b>נושא:</b> '+esc(m.title)+' · <b>תאריך:</b> '+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.participants?'<br><b>משתתפים:</b> '+esc(m.participants):'')+'</p>'+
+    '<pre>'+esc(m.protocol||'')+'</pre>'+
+    (tasks.length?'<h3>משימות שנקבעו</h3><table><tr><th>משימה</th><th>אחראי</th><th>יעד</th><th>סטטוס</th></tr>'+
+      tasks.map(t=>{var a=DB.employees.find(e=>e.id===t.assignee_id)||{};return '<tr><td>'+esc(t.title)+'</td><td>'+esc(a.name||'')+'</td><td>'+esc(t.due_date)+'</td><td>'+esc(t.status)+'</td></tr>';}).join('')+'</table>':''),
+    {date:m.date});
+}
+
+/* ================= פורטל לקוחות ================= */
+var PORTAL = null;
+function showPortalLogin(){
+  el('login').innerHTML = '<div class="box"><div class="logo">MAPA<span>·</span>NOBLE</div>'+
+    '<p>פורטל לקוחות — הזמנת מפות ומפיות</p>'+
+    '<input id="pcode" placeholder="קוד לקוח (מופיע אצל נציג השירות)" style="text-transform:uppercase" onkeydown="if(event.key===\'Enter\')portalLogin()">'+
+    '<button onclick="portalLogin()">כניסה</button>'+
+    '<button style="background:none;color:var(--muted);margin-top:10px;font-size:13px;text-decoration:underline" onclick="location.reload()">חזרה לכניסת צוות</button>'+
+    '<div id="loginErr"></div></div>';
+}
+async function portalLogin(){
+  el('loginErr').textContent = 'מתחבר...';
+  try{
+    var r = await api('portalGetData',{code:el('pcode').value});
+    if(!r.ok){ el('loginErr').textContent = r.error; return; }
+    PORTAL = { code: el('pcode').value.toUpperCase(), data: r };
+    renderPortal();
+  }catch(e){ el('loginErr').textContent = 'שגיאת חיבור'; }
+}
+function renderPortal(){
+  var d = PORTAL.data;
+  el('login').innerHTML = '<div class="box" style="max-height:92vh;overflow-y:auto;text-align:right;width:min(480px,94vw)">'+
+    '<div class="logo" style="text-align:center">MAPA<span>·</span>NOBLE</div>'+
+    '<p style="text-align:center">שלום, '+esc(d.customer.name)+'</p>'+
+    '<h3 style="color:var(--navy);margin-bottom:8px">הזמנה חדשה</h3>'+
+    '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="p_start" type="date"></div>'+
+    '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="p_end" type="date"></div></div>'+
+    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0"><div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\'</span></div>'+
+      '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="pqty" style="width:70px;text-align:center"></div>').join('')+
+    '<div class="frow" style="margin-top:8px"><input id="p_notes" placeholder="הערות (רשות)"></div>'+
+    '<button style="width:100%;background:var(--teal);color:#fff;padding:12px;border-radius:8px;font-size:16px;font-weight:600" onclick="portalSubmit()">שלח בקשת הזמנה</button>'+
+    '<div id="loginErr"></div>'+
+    (d.orders.length?'<h3 style="color:var(--navy);margin:16px 0 6px">ההזמנות שלי</h3>'+
+      d.orders.slice(-8).reverse().map(o=>'<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);font-size:13px"><div class="grow">'+esc(o.start)+' — '+esc(o.end)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>').join(''):'')+
+    '</div>';
+}
+async function portalSubmit(){
+  var lines = Array.from(document.querySelectorAll('.pqty')).map(x=>({item_id:x.dataset.item,qty:Number(x.value)||0})).filter(l=>l.qty>0);
+  var r = await api('portalCreateOrder',{code:PORTAL.code,start_date:el('p_start').value,end_date:el('p_end').value,lines:lines,notes:el('p_notes').value});
+  if(!r.ok){ el('loginErr').textContent = r.error; return; }
+  el('login').innerHTML = '<div class="box"><div class="logo">MAPA<span>·</span>NOBLE</div>'+
+    '<h3 style="color:var(--ok);margin:14px 0">✓ הבקשה התקבלה!</h3>'+
+    '<p>סה"כ משוער: '+ils(r.total)+' (לפני מע"מ)<br>נציג יחזור אליך לאישור סופי.</p>'+
+    '<button onclick="location.reload()" style="margin-top:14px;background:var(--teal);color:#fff;padding:10px 20px;border-radius:8px">סגור</button></div>';
+}
+if(location.search.includes('portal=1')) window.addEventListener('load', showPortalLogin);
+
+/* ================= עגלות ומכונות ================= */
+function rAssets(){
+  el('main').innerHTML =
+    '<div class="section-title"><h2>עגלות</h2><button class="btn ghost sm" onclick="cartForm()">+ עגלה</button></div>'+
+    (DB.carts.length?'<div class="grid3">'+DB.carts.map(c=>'<div class="kpi"><div class="v" style="font-size:17px">'+esc(c.id)+'</div><div class="l">'+esc(c.location||'')+(c.barcode?' · ⎘'+esc(c.barcode):'')+'</div><span class="chip" style="background:'+(c.status==='פנויה'?'var(--ok)':'var(--amber)')+';margin-top:6px">'+esc(c.status)+'</span></div>').join('')+'</div>':'<div class="card empty">אין עגלות</div>')+
+    '<div class="section-title"><h2>מכונות</h2><button class="btn ghost sm" onclick="machForm()">+ מכונה</button></div>'+
+    (DB.machines.length? DB.machines.map(m=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(m.id)+'</b> · '+esc(m.type)+'<div class="muted">טיפול הבא: '+esc(m.next_service||'לא נקבע')+'</div></div><span class="chip" style="background:'+(m.status==='פעילה'?'var(--ok)':'var(--danger)')+'">'+esc(m.status)+'</span></div></div>').join(''):'<div class="card empty">אין מכונות</div>');
+}
+function cartForm(){
+  openModal('<h2>עגלה חדשה</h2><div class="grid2"><div class="frow"><label>מזהה</label><input id="f_cartid" placeholder="CART-06"></div>'+
+    '<div class="frow"><label>מיקום</label><input id="f_cartloc"></div>'+
+    '<div class="frow"><label>ברקוד</label><input id="f_cartbar"></div></div>'+
+    '<button class="btn" onclick="saveCart()">שמור</button>');
+}
+async function saveCart(){
+  if(!el('f_cartid').value) return toast('מזהה חובה', true);
+  var r = await act('create',{table:'carts',row:{id:el('f_cartid').value,location:el('f_cartloc').value,barcode:el('f_cartbar').value,status:'פנויה'}},'העגלה נוספה');
+  if(r) closeModal();
+}
+function machForm(){
+  openModal('<h2>מכונה חדשה</h2><div class="grid2"><div class="frow"><label>מזהה</label><input id="f_mid" placeholder="MACH-04"></div>'+
+    '<div class="frow"><label>סוג</label><input id="f_mtype2" placeholder="מכונת כביסה"></div>'+
+    '<div class="frow"><label>סטטוס</label><select id="f_mstat"><option>פעילה</option><option>בתיקון</option><option>מושבתת</option></select></div>'+
+    '<div class="frow"><label>טיפול הבא</label><input id="f_mnext" type="date"></div></div>'+
+    '<button class="btn" onclick="saveMach()">שמור</button>');
+}
+async function saveMach(){
+  if(!el('f_mid').value) return toast('מזהה חובה', true);
+  var r = await act('create',{table:'machines',row:{id:el('f_mid').value,type:el('f_mtype2').value,status:el('f_mstat').value,next_service:el('f_mnext').value}},'המכונה נוספה');
+  if(r) closeModal();
+}
+
+/* ================= עובדים ================= */
+function rStaff(){
+  el('main').innerHTML = '<div class="section-title"><h2>עובדים</h2><button class="btn" onclick="empForm()">+ עובד</button></div>'+
+    '<p class="muted" style="margin-bottom:10px">ברגע שקיים עובד אחד, הכניסה למערכת דורשת קוד עובד. תפקיד קובע אילו מסכים רואים: מכבסה — רק לוח כביסה וסריקה; נהג — רק משלוחים.</p>'+
+    (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(e.name)+'</b> · '+esc(e.role)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
+    '<button class="btn ghost sm" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'>ערוך הרשאות</button></div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
+    '<p class="muted" style="margin-top:10px">כניסות ייעודיות: נהג/עובד מכבסה נכנסים באותו קישור עם הקוד האישי — ורואים רק את המסכים שלהם. קישור פורטל ללקוחות: הוסף ?portal=1 לכתובת האתר. קוד הפורטל של כל לקוח מופיע בכרטיס הלקוח.</p>';
+}
+function empForm(emp){
+  emp = emp||{};
+  openModal('<h2>'+(emp.id?'עריכת עובד':'עובד חדש')+'</h2><div class="frow"><label>שם</label><input id="f_ename" value="'+esc(emp.name||'')+'"></div>'+
+    '<div class="grid2"><div class="frow"><label>תפקיד</label><select id="f_erole">'+['מנהל','משרד','מכבסה','נהג'].map(t=>'<option'+(emp.role===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>קוד כניסה</label><input id="f_epin" inputmode="numeric" placeholder="4 ספרות" value="'+esc(emp.pin||'')+'"></div>'+
+    '<div class="frow"><label>טלפון</label><input id="f_ephone" value="'+esc(emp.phone||'')+'"></div>'+
+    '<div class="frow"><label>תעריף לשעה (₪)</label><input id="f_erate" type="number" min="0" step="0.5" value="'+esc(emp.hourly_rate||'')+'"></div>'+
+    '<div class="frow"><label>הרשאת עריכה</label><select id="f_eedit"><option value="כן"'+(emp.can_edit!=='לא'?' selected':'')+'>עריכה מלאה</option><option value="לא"'+(emp.can_edit==='לא'?' selected':'')+'>צפייה בלבד</option></select></div></div>'+
+    '<div class="frow"><label>מסכים מותרים (ריק = לפי תפקיד)</label><div class="row" style="gap:6px">'+VIEWS.map(v=>'<label style="font-size:12px;font-weight:400;border:1px solid var(--line);border-radius:14px;padding:3px 9px"><input type="checkbox" class="evw" value="'+v[0]+'"'+((emp.views||'').split(',').includes(v[0])?' checked':'')+' style="width:auto"> '+v[1]+'</label>').join('')+'</div></div>'+
+    (emp.id?'':'<p class="muted" style="margin-bottom:10px">שים לב: העובד הראשון חייב להיות מנהל — אחרת תינעל בחוץ.</p>')+
+    '<button class="btn" onclick="saveEmp(\''+(emp.id||'')+'\')">שמור</button>');
+}
+async function saveEmp(id){
+  if(!el('f_ename').value||!el('f_epin').value) return toast('שם וקוד חובה', true);
+  if(!id && !DB.employees.length && el('f_erole').value!=='מנהל') return toast('העובד הראשון חייב להיות מנהל', true);
+  var views = Array.from(document.querySelectorAll('.evw:checked')).map(x=>x.value).join(',');
+  var row = {name:el('f_ename').value,role:el('f_erole').value,pin:el('f_epin').value,phone:el('f_ephone').value,
+    hourly_rate:Number(el('f_erate').value)||0,can_edit:el('f_eedit').value,views:views,active:'כן'};
+  var r = id? await act('update',{table:'employees',id:id,row:row},'עודכן') : await act('create',{table:'employees',row:row},'העובד נוסף');
+  if(r) closeModal();
+}
+</script>
+</body>
+</html>
