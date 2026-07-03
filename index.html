@@ -96,6 +96,7 @@ td{padding:7px 4px;border-bottom:1px solid #F0EEE8}
 .calday .dnum{font-weight:800;font-size:13px}
 .calday .dheb{color:var(--muted);font-size:10px}
 .calev{border-radius:4px;color:#fff;padding:1px 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calshab{display:block;color:var(--muted);font-size:9px;line-height:1.3;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #camOverlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:200;display:none;flex-direction:column;align-items:center;justify-content:center}
 #camOverlay video{width:min(94vw,560px);border-radius:12px}
 .empty{text-align:center;color:var(--muted);padding:28px;font-size:14px}
@@ -204,11 +205,26 @@ function toast(msg, err){
   clearTimeout(t._h); t._h=setTimeout(function(){ t.style.display='none'; }, 3500);
 }
 function esc(s){ return String(s==null?'':s).replace(/</g,'&lt;'); }
+// תצוגת חותמת זמן: תאריך + שעה (HH:MM) אם קיימת, אחרת רק תאריך — תואם לאחור לרשומות ישנות
+function fmtTs(ts){
+  var s = String(ts==null?'':ts);
+  if(!s) return '';
+  var m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/); // ISO עם זמן
+  if(m) return m[1]+' '+m[2];
+  var m2 = s.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})/); // תאריך רווח שעה
+  if(m2) return m2[1]+' '+m2[2];
+  return s; // רק תאריך / פורמט אחר — כפי שהוא
+}
+// חותמת זמן מלאה מקומית לשמירה (כולל שעה)
+function nowTs(){ var d=new Date(); return d.toISOString().slice(0,10)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function cust(id){ var c=DB.customers.find(x=>x.id===id); return c?c.name:(id||''); }
 function item(id){ var i=DB.items.find(x=>x.id===id); return i?i.name:id; }
 function supp(id){ var s=DB.suppliers.find(x=>x.id===id); return s?s.name:(id||''); }
 function whn(id){ if(!id) return 'ראשי'; var w=DB.warehouses.find(x=>x.id===id); return w?w.name:id; }
 function ils(n){ return '₪' + Number(n||0).toLocaleString('he-IL',{maximumFractionDigits:2}); }
+// תצוגת מחיר כולל מע"מ (18%) — לתצוגה בלבד, אינו משנה ערכים שמורים או חישובי שרת
+var VAT_RATE = 0.18;
+function ilsVat(n){ return ils(Number(n||0)*(1+VAT_RATE)); }
 function orderTotal(oid){ var o=DB.orders.find(x=>x.id===oid)||{}; return DB.orderLines.filter(l=>l.order_id===oid).reduce((s,l)=>s+Number(l.qty)*Number(l.unit_price),0)+Number(o.delivery_fee||0)+Number(o.shortage_charge||0); }
 function orderPaid(oid){ return DB.payments.filter(p=>p.order_id===oid).reduce((s,p)=>s+Number(p.amount),0); }
 function orderBalance(oid){
@@ -457,7 +473,7 @@ function newOrderForm(isQuote){
     '<div class="frow"><label>מחיר שינוע (₪) — ריק/0 = איסוף עצמי</label><input id="f_ofee" type="number" min="0" value="'+esc(setting('default_delivery_fee')||'')+'"></div>'+
     (DB.warehouses.length?'<div class="frow"><label>מחסן מספק (ריק = לפי הלקוח)</label><select id="f_owh"><option value="">לפי הלקוח</option>'+DB.warehouses.filter(w=>w.active!=='לא').map(w=>'<option value="'+w.id+'">'+esc(w.name)+'</option>').join('')+'</select></div>':'')+
     '<div class="frow"><label>הערות</label><input id="f_notes"></div>'+
-    '<button class="btn" onclick="createOrder('+(isQuote?'true':'false')+')">שמור</button>');
+    '<button class="btn" onclick="createOrder('+(isQuote?'true':'false')+')">להוספת פריטי הזמנה</button>');
 }
 async function createOrder(isQuote){
   var r = await act('create',{table:'orders',row:{type:el('f_type').value,customer_id:el('f_cust').value,
@@ -567,7 +583,8 @@ async function doAssignCart(tid){ await act('assignCart',{task_id:tid,cart_id:el
 
 /* ================= משלוחים ================= */
 function rDeliveries(){
-  var open = DB.deliveries.filter(d=>d.status==='מתוכנן').sort((a,b)=>a.date>b.date?1:-1);
+  var DONE_STATUSES = ['בוצע','בוצעה','הושלמה','הושלם','בוטל','בוטלה'];
+  var open = DB.deliveries.filter(d=>d.status==='מתוכנן' && !DONE_STATUSES.includes(d.status)).sort((a,b)=>a.date>b.date?1:-1);
   var done = DB.deliveries.filter(d=>d.status!=='מתוכנן').slice(-15).reverse();
   el('main').innerHTML = '<div class="section-title"><h2>משלוחים</h2><span class="muted">נוצרים אוטומטית באישור הזמנה</span></div>'+
     (open.length? open.map(delivCard).join(''):'<div class="card empty">אין משלוחים פתוחים</div>')+
@@ -729,7 +746,7 @@ function rItems(){
       var low = i.min_stock!=='' && (total-wash)<Number(i.min_stock);
       return '<div class="card"'+(low?' style="border-color:var(--danger)"':'')+'><div class="row">'+
         '<div class="grow"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+(i.barcode?' · ⎘'+esc(i.barcode):'')+'</span>'+
-        '<div class="muted">השכרה '+ils(i.rent_price)+' · כביסה '+ils(i.wash_price)+(low?' · <b style="color:var(--danger)">מתחת למינימום!</b>':'')+'</div></div>'+
+        '<div class="muted">השכרה '+ilsVat(i.rent_price)+' · כביסה '+ilsVat(i.wash_price)+' <span style="font-size:11px">(כולל מע"מ)</span>'+(low?' · <b style="color:var(--danger)">מתחת למינימום!</b>':'')+'</div></div>'+
         '<div style="text-align:center"><div class="big">'+total+'</div><div class="muted">מלאי כולל</div></div>'+
         (wash?'<div style="text-align:center"><div class="big" style="color:var(--amber)">'+wash+'</div><div class="muted">בכביסה</div></div>':'')+
         '<button class="btn ghost sm" onclick="availForm(\''+i.id+'\')">זמינות</button>'+
@@ -828,7 +845,7 @@ async function saveSup(){
 function purForm(){
   if(!DB.suppliers.length) return toast('קודם צור ספק', true);
   openModal('<h2>הזמנת רכש</h2><div class="frow"><label>ספק</label>'+sel('f_psup',DB.suppliers,s=>s.name)+'</div>'+
-    '<button class="btn" onclick="savePur()">צור טיוטה</button>');
+    '<button class="btn" onclick="savePur()">להוספת פריטי הזמנה</button>');
 }
 async function savePur(){
   var r = await act('create',{table:'purchases',row:{supplier_id:el('f_psup').value,date:new Date().toISOString().slice(0,10)}},'נוצר — הוסף שורות');
@@ -1060,18 +1077,31 @@ function rAttendance(){
   el('main').innerHTML = '<div class="section-title"><h2>נוכחות</h2>'+(ROLE==='מנהל'?'<button class="btn ghost sm" onclick="attForm()">+ רישום ידני</button>':'')+'</div>'+
     '<div class="card" style="text-align:center"><h3 style="margin-bottom:10px">שעון נוכחות</h3>'+
     '<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="קוד עובד" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
-    '<br><button class="btn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
+    '<br><button class="btn" id="clockBtn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
     '<h3 style="margin:14px 0 8px">רישומים אחרונים</h3><div class="card">'+
     (recent.length?'<table><tr><th>עובד</th><th>תאריך</th><th>כניסה</th><th>יציאה</th><th>שעות</th></tr>'+
     recent.map(a=>{var e=DB.employees.find(x=>x.id===a.employee_id)||{};return '<tr><td>'+esc(e.name)+'</td><td>'+esc(a.date)+'</td><td>'+esc(a.in_time)+'</td><td>'+esc(a.out_time||'—')+'</td><td>'+(a.hours!==''?a.hours:'—')+'</td></tr>';}).join('')+'</table>':'<div class="empty">אין רישומים</div>')+'</div>';
 }
+var CLOCK_BUSY = false;
 async function doClock(){
-  var r = await api('clock',{pin:el('clockPin').value});
-  if(!r.ok){ el('clockMsg').innerHTML='<span style="color:var(--danger)">'+esc(r.error)+'</span>'; return; }
-  el('clockMsg').innerHTML = '<b style="color:var(--ok)">'+esc(r.name)+' — '+(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓ ('+r.hours+' שעות)')+'</b>';
-  el('clockPin').value='';
-  var g = await api('getAll'); if(g.ok){ DB=g.db; }
-  setTimeout(function(){ if(VIEW==='attendance') rAttendance(); }, 1600);
+  if(CLOCK_BUSY) return; // מונע לחיצה כפולה
+  var btn = el('clockBtn'), origTxt = btn?btn.textContent:'';
+  CLOCK_BUSY = true;
+  if(btn){ btn.disabled = true; btn.style.opacity = '.6'; btn.textContent = 'שומר...'; }
+  el('clockMsg').innerHTML = '<span class="muted">שומר...</span>';
+  try{
+    var r = await api('clock',{pin:el('clockPin').value});
+    if(!r.ok){ el('clockMsg').innerHTML='<span style="color:var(--danger)">'+esc(r.error)+'</span>'; return; }
+    el('clockMsg').innerHTML = '<b style="color:var(--ok)">'+esc(r.name)+' — '+(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓ ('+r.hours+' שעות)')+'</b>';
+    toast(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓');
+    el('clockPin').value='';
+    var g = await api('getAll'); if(g.ok){ DB=g.db; }
+    setTimeout(function(){ if(VIEW==='attendance') rAttendance(); }, 1600);
+  }catch(e){ el('clockMsg').innerHTML='<span style="color:var(--danger)">שגיאת תקשורת — נסה שוב</span>';
+  }finally{
+    CLOCK_BUSY = false;
+    if(btn && document.body.contains(btn)){ btn.disabled=false; btn.style.opacity='1'; btn.textContent=origTxt; }
+  }
 }
 function attForm(){
   openModal('<h2>רישום נוכחות ידני</h2>'+
@@ -1198,7 +1228,7 @@ function openTask(tid){
     '<div class="row" style="margin-bottom:12px">'+TASK_COLS.filter(s=>s!==t.status).map(s=>'<button class="btn ghost sm" onclick="doMoveTask(\''+tid+'\',\''+s+'\')">העבר ל'+s+'</button>').join('')+'</div>'+
     '<h3>הערות ומעקב</h3>'+
     '<div style="max-height:220px;overflow-y:auto;margin:8px 0">'+
-    (comments.length? comments.map(c=>'<div style="border-bottom:1px solid var(--line);padding:6px 0"><span class="muted">'+esc(c.ts)+' · <b>'+esc(c.user)+'</b></span><br>'+esc(c.text)+'</div>').join(''):'<div class="muted">אין הערות</div>')+'</div>'+
+    (comments.length? comments.map(c=>'<div style="border-bottom:1px solid var(--line);padding:6px 0"><span class="muted">'+esc(fmtTs(c.ts))+' · <b>'+esc(c.user)+'</b></span><br>'+esc(c.text)+'</div>').join(''):'<div class="muted">אין הערות</div>')+'</div>'+
     '<div class="row" style="margin-bottom:8px">'+notesBtn('task',tid)+'</div>'+
     '<div class="row"><input id="f_tcomment" class="grow" placeholder="הוסף הערה..." onkeydown="if(event.key===\'Enter\')addTaskComment(\''+tid+'\')">'+
     '<button class="btn sm" onclick="addTaskComment(\''+tid+'\')">הוסף</button></div>');
@@ -1210,7 +1240,7 @@ async function doMoveTask(tid, st){
 async function addTaskComment(tid){
   var txt = el('f_tcomment').value;
   if(!txt) return;
-  var r = await act('create',{table:'task_comments',row:{task_id:tid,text:txt}});
+  var r = await act('create',{table:'task_comments',row:{task_id:tid,text:txt,ts:nowTs()}});
   if(r){ toast('ההערה נוספה'); openTask(tid); }
 }
 
@@ -1231,8 +1261,8 @@ function hebFmt(d, opts){ try{ return new Intl.DateTimeFormat('he-u-ca-hebrew', 
 function calEvents(){
   var events = [];
   DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status)).forEach(function(o){
-    events.push({date:o.start_date, label:'אספקה: '+cust(o.customer_id), color:'var(--teal)'});
-    events.push({date:o.end_date, label:'איסוף: '+cust(o.customer_id), color:'var(--amber)'});
+    events.push({date:o.start_date, label:'אספקה: '+cust(o.customer_id), color:'var(--teal)', click:"openOrder('"+o.id+"')"});
+    events.push({date:o.end_date, label:'איסוף: '+cust(o.customer_id), color:'var(--amber)', click:"openOrder('"+o.id+"')"});
   });
   DB.tasks.filter(t=>t.status!=='הושלמה'&&t.due_date).forEach(function(t){
     events.push({date:t.due_date, label:'משימה: '+t.title, color:'var(--navy2)', click:"openTask('"+t.id+"')"});
@@ -1259,9 +1289,9 @@ function rCalendarDraw(hebItems){
   var holyDays = {};
   (hebItems||[]).forEach(function(it){
     var d = String(it.date).substring(0,10);
-    if(it.category==='candles'){ (byDate[d]=byDate[d]||[]).push({date:d,label:'🕯 '+it.title,color:'#B8860B'}); holyDays[d==d?String(new Date(new Date(d).getTime()+864e5).toISOString().slice(0,10)):d]=1; }
-    if(it.category==='havdalah') (byDate[d]=byDate[d]||[]).push({date:d,label:'✨ '+it.title,color:'#B8860B'});
-    if(it.category==='holiday'){ (byDate[d]=byDate[d]||[]).push({date:d,label:'🎉 '+it.title,color:'var(--danger)'}); if(it.yomtov) holyDays[d]=1; }
+    if(it.category==='candles'){ (byDate[d]=byDate[d]||[]).push({date:d,label:'🕯 '+it.title,color:'#B8860B',plain:true}); holyDays[d==d?String(new Date(new Date(d).getTime()+864e5).toISOString().slice(0,10)):d]=1; }
+    if(it.category==='havdalah') (byDate[d]=byDate[d]||[]).push({date:d,label:'✨ '+it.title,color:'#B8860B',plain:true});
+    if(it.category==='holiday'){ (byDate[d]=byDate[d]||[]).push({date:d,label:'🎉 '+it.title,color:'var(--danger)',plain:true}); if(it.yomtov) holyDays[d]=1; }
   });
   var startOffset = first.getDay(); // 0=ראשון
   var daysInMonth = new Date(CAL_Y, CAL_M+1, 0).getDate();
@@ -1282,7 +1312,7 @@ function rCalendarDraw(hebItems){
     cells += '<div class="calday'+(iso===today?' today':'')+'" style="'+((isSat||holyDays[iso])?'background:#FDF6E3;':'')+'" onclick="openDay(\''+iso+'\')">'+
       (isSat?'<span class="chip" style="background:#B8860B;font-size:9px;padding:1px 6px">שבת</span> ':'')+
       '<span class="dnum">'+day+'</span> <span class="dheb">'+esc(hebFmt(d,{day:'numeric'}))+' '+esc(hebFmt(d,{month:'long'}))+'</span>'+
-      evs.slice(0,3).map(e=>'<div class="calev" style="background:'+e.color+'">'+esc(e.label)+'</div>').join('')+
+      evs.slice(0,3).map(e=>e.plain?'<span class="calshab">'+esc(e.label)+'</span>':'<div class="calev" style="background:'+e.color+'">'+esc(e.label)+'</div>').join('')+
       (evs.length>3?'<div class="muted">+'+(evs.length-3)+' נוספים</div>':'')+'</div>';
   }
   el('main').innerHTML = '<div class="section-title"><h2>יומן</h2><div class="row">'+
@@ -1298,7 +1328,7 @@ function openDay(iso){
   var evs = calEvents().filter(e=>e.date===iso);
   var d = new Date(iso);
   openModal('<h2>'+iso+'</h2><div class="muted" style="margin-bottom:10px">'+esc(hebFmt(d,{weekday:'long',day:'numeric',month:'long',year:'numeric'}))+'</div>'+
-    (evs.length? evs.map(e=>'<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"'+(e.click?' onclick="closeModal();'+e.click+'" style="cursor:pointer"':'')+'><span class="chip" style="background:'+e.color+'">•</span><div class="grow">'+esc(e.label)+'</div></div>').join(''):'<div class="muted">אין אירועים ביום זה</div>'));
+    (evs.length? evs.map(e=>'<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)'+(e.click?';cursor:pointer':'')+'"'+(e.click?' onclick="closeModal();'+e.click+'"':'')+'><span class="chip" style="background:'+e.color+'">•</span><div class="grow">'+esc(e.label)+(e.click?' <span class="muted" style="font-size:11px">↗ פתח</span>':'')+'</div></div>').join(''):'<div class="muted">אין אירועים ביום זה</div>'));
 }
 
 /* ================= פגישות ================= */
@@ -1387,7 +1417,7 @@ function renderShop(){
     '<p style="text-align:center">הזמנת מפות ומפיות לאירוע</p>'+
     '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="s_start" type="date"></div>'+
     '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="s_end" type="date"></div></div>'+
-    SHOP.items.map(i=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0"><div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\'</span></div>'+
+    SHOP.items.map(i=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0"><div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ilsVat(i.price)+' ליח\' (כולל מע"מ)</span></div>'+
       '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="sqty" style="width:70px;text-align:center" oninput="shopTotal()"></div>').join('')+
     '<div id="shopSum" style="margin:10px 0;font-size:15px;text-align:center;background:var(--linen);border-radius:8px;padding:10px">בחר פריטים לצפייה במחיר</div>'+
     '<h3 style="color:var(--navy);margin:6px 0">הפרטים שלך</h3>'+
@@ -1484,14 +1514,14 @@ function notesModal(type,id,replyTo){
   var list = DB.notes.filter(x=>x.entity_type===type&&String(x.entity_id)===String(id)).sort((a,b)=>a.ts<b.ts?1:-1);
   openModal('<h2>תרשומות — '+esc(NOTE_TYPES[type]||type)+': '+esc(noteEntityName(type,id))+'</h2>'+
     '<div class="frow"><textarea id="f_ntext" rows="3" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="'+(replyTo?'תרשומת המשך...':'תרשומת חדשה... (לא ניתנת למחיקה או עריכה)')+'"></textarea></div>'+
-    (replyTo?'<p class="muted">↩ בהמשך לתרשומת מ-'+esc((DB.notes.find(n=>n.id===replyTo)||{}).ts||'')+'</p>':'')+
+    (replyTo?'<p class="muted">↩ בהמשך לתרשומת מ-'+esc(fmtTs((DB.notes.find(n=>n.id===replyTo)||{}).ts||''))+'</p>':'')+
     '<div class="row"><input id="f_nfile" type="file" accept="image/*,.pdf" class="grow" style="border:none;padding:4px">'+
     '<button class="btn sm" onclick="saveNote(\''+type+'\',\''+id+'\',\''+(replyTo||'')+'\')">שמור תרשומת</button></div>'+
     '<div style="max-height:320px;overflow-y:auto;margin-top:12px">'+
     (list.length? list.map(function(n){
       var parent = n.link_note_id? DB.notes.find(x=>x.id===n.link_note_id) : null;
       return '<div style="border-bottom:1px solid var(--line);padding:8px 0'+(parent?';margin-right:14px;border-right:3px solid var(--teal);padding-right:8px':'')+'">'+
-        '<span class="muted">'+esc(n.ts)+' · <b>'+esc(n.user)+'</b></span>'+
+        '<span class="muted">'+esc(fmtTs(n.ts))+' · <b>'+esc(n.user)+'</b></span>'+
         (parent?'<div class="muted" style="font-size:11px">↩ בהמשך ל: "'+esc(String(parent.text).substring(0,40))+'..."</div>':'')+
         '<div style="white-space:pre-wrap">'+esc(n.text)+'</div>'+
         '<div class="row" style="margin-top:4px">'+(n.attachment_url?'<a href="'+esc(n.attachment_url)+'" target="_blank">📎 מסמך מצורף</a>':'')+
@@ -1501,7 +1531,7 @@ function notesModal(type,id,replyTo){
 async function saveNote(type,id,replyTo){
   var txt = el('f_ntext').value;
   if(!txt.trim()) return toast('כתוב תרשומת', true);
-  var r = await act('create',{table:'notes',row:{entity_type:type,entity_id:id,text:txt,link_note_id:replyTo||''}});
+  var r = await act('create',{table:'notes',row:{entity_type:type,entity_id:id,text:txt,link_note_id:replyTo||'',ts:nowTs()}});
   if(!r) return;
   var f = el('f_nfile').files[0];
   if(f){
@@ -1528,7 +1558,7 @@ function rNotes(){
     '<div class="frow"><label>חיפוש</label><input id="nt_q" value="'+esc(q)+'" oninput="rNotes()" placeholder="טקסט / כותב / שם"></div></div></div>'+
     (list.length? list.slice(0,100).map(n=>'<div class="card" style="cursor:pointer" onclick="notesModal(\''+n.entity_type+'\',\''+n.entity_id+'\')">'+
       '<span class="chip" style="background:var(--navy2)">'+esc(NOTE_TYPES[n.entity_type]||n.entity_type)+'</span> <b>'+esc(noteEntityName(n.entity_type,n.entity_id))+'</b>'+
-      '<div class="muted">'+esc(n.ts)+' · '+esc(n.user)+(n.attachment_url?' · 📎':'')+'</div>'+
+      '<div class="muted">'+esc(fmtTs(n.ts))+' · '+esc(n.user)+(n.attachment_url?' · 📎':'')+'</div>'+
       '<div style="white-space:pre-wrap">'+esc(String(n.text).substring(0,180))+(n.text.length>180?'...':'')+'</div></div>').join('')
     :'<div class="card empty">אין תרשומות'+(filter||q?' לסינון הזה':'')+'</div>');
 }
@@ -1560,7 +1590,7 @@ function renderPortal(){
     '<h3 style="color:var(--navy);margin-bottom:8px">הזמנה חדשה</h3>'+
     '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="p_start" type="date"></div>'+
     '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="p_end" type="date"></div></div>'+
-    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0"><div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\'</span></div>'+
+    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0"><div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ilsVat(i.price)+' ליח\' (כולל מע"מ)</span></div>'+
       '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="pqty" style="width:70px;text-align:center"></div>').join('')+
     '<div class="frow" style="margin-top:8px"><input id="p_notes" placeholder="הערות (רשות)"></div>'+
     '<button style="width:100%;background:var(--teal);color:#fff;padding:12px;border-radius:8px;font-size:16px;font-weight:600" onclick="portalSubmit()">שלח בקשת הזמנה</button>'+
