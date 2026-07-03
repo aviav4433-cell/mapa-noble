@@ -1501,7 +1501,7 @@ async function saveMeeting(){
   var names = d.partIds.map(function(id){ var k=(DB.contacts||[]).find(x=>x.id===id); return k?k.name:''; }).filter(Boolean);
   var r = await act('create',{table:'meetings',row:{title:d.title,date:d.date,time:d.time,location:d.location||'',
     participants:names.join(', '),participant_ids:d.partIds.join(','),protocol:''}},'הפגישה נוצרה');
-  if(r){ MEET_DRAFT=null; closeModal(); openMeeting(r.row.id); }
+  if(r){ MEET_DRAFT=null; closeModal(); await syncProtocolMentions(r.row.id, r.row.protocol||''); openMeeting(r.row.id); }
 }
 function openMeeting(mid){
   var m = DB.meetings.find(x=>x.id===mid); if(!m) return;
@@ -1509,7 +1509,9 @@ function openMeeting(mid){
   openModal('<h2>'+esc(m.title)+'</h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.location?' · מיקום: '+esc(m.location):'')+(m.participants?' · משתתפים: '+esc(m.participants):'')+' · נוצרה ע"י '+esc(m.created_by)+'</div>'+
     '<h3>פרוטוקול / תמלול</h3>'+
-    '<textarea id="f_mprotocol" rows="7" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="כתוב או הדבק כאן את סיכום האסיפה...">'+esc(m.protocol||'')+'</textarea>'+
+    '<div style="position:relative"><textarea id="f_mprotocol" rows="7" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="כתוב או הדבק כאן את סיכום האסיפה... אפשר לתייג עם @שם" oninput="mentionAuto(this)" onclick="mentionAuto(this)" onkeyup="if(event.key===\'Escape\')hideMentionDD();else mentionAuto(this)">'+esc(m.protocol||'')+'</textarea>'+
+    '<div id="mentionDD" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:60;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.18);max-height:220px;overflow-y:auto"></div></div>'+
+    (protocolMentionsIn(m.protocol||'').length? '<div style="white-space:pre-wrap;background:var(--linen);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-top:6px;line-height:2">'+renderProtocolHTML(m.protocol||'', true)+'</div>' : '')+
     '<div class="row" style="margin:8px 0 14px"><button class="btn sm" onclick="saveProtocol(\''+mid+'\')">שמור פרוטוקול</button>'+
     '<button class="btn ghost sm" onclick="printMeeting(\''+mid+'\')">🖨 הדפס פרוטוקול</button>'+notesBtn('meeting',mid)+tagBtn('meeting',mid)+'</div>'+linksSection('meeting',mid)+
     '<h3>משימות מהאסיפה ('+tasks.length+')</h3>'+
@@ -1521,8 +1523,9 @@ function openMeeting(mid){
     '<button class="btn sm" onclick="doTaskFromMeeting(\''+mid+'\')">צור</button></div></div>');
 }
 async function saveProtocol(mid){
-  var r = await act('update',{table:'meetings',id:mid,row:{protocol:el('f_mprotocol').value}},'הפרוטוקול נשמר');
-  if(r) openMeeting(mid);
+  var txt = el('f_mprotocol')? el('f_mprotocol').value : '';
+  var r = await act('update',{table:'meetings',id:mid,row:{protocol:txt}},'הפרוטוקול נשמר');
+  if(r){ await syncProtocolMentions(mid, txt); openMeeting(mid); }
 }
 async function doTaskFromMeeting(mid){
   if(!el('f_mtask').value) return toast('כתוב מה סוכם', true);
@@ -1534,7 +1537,7 @@ function printMeeting(mid){
   var tasks = DB.tasks.filter(t=>t.meeting_id===mid);
   printDoc('פרוטוקול אסיפה', null,
     '<p><b>נושא:</b> '+esc(m.title)+' · <b>תאריך:</b> '+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.location?' · <b>מיקום:</b> '+esc(m.location):'')+(m.participants?'<br><b>משתתפים:</b> '+esc(m.participants):'')+'</p>'+
-    '<pre>'+esc(m.protocol||'')+'</pre>'+
+    '<pre style="white-space:pre-wrap;font-family:inherit">'+renderProtocolHTML(m.protocol||'', false)+'</pre>'+
     (tasks.length?'<h3>משימות שנקבעו</h3><table><tr><th>משימה</th><th>אחראי</th><th>יעד</th><th>סטטוס</th></tr>'+
       tasks.map(t=>{var a=DB.employees.find(e=>e.id===t.assignee_id)||{};return '<tr><td>'+esc(t.title)+'</td><td>'+esc(a.name||'')+'</td><td>'+esc(t.due_date)+'</td><td>'+esc(t.status)+'</td></tr>';}).join('')+'</table>':''),
     {date:m.date});
@@ -1649,6 +1652,7 @@ async function submitReturn(){
 // רישום ישויות — לכל סוג: תווית בעברית, אייקון, רשימה, שם לתצוגה ופתיחה (מודל קיים או ניווט למסך)
 var ENT = {
   customer:{label:'לקוח', icon:'👤', list:function(){return DB.customers||[];}, name:function(r){return r.name;}, open:function(id){openCust(id);}},
+  contact:{label:'איש קשר', icon:'👤', list:function(){return DB.contacts||[];}, name:function(r){return r.name;}, open:function(id){var c=(DB.contacts||[]).find(function(x){return String(x.id)===String(id);})||{}; openModal('<h2>👤 '+esc(c.name||'איש קשר')+'</h2>'+(c.role?'<p class="muted">'+esc(c.role)+'</p>':'')+'<div style="margin-top:10px;line-height:2">'+(c.phone?'📞 '+esc(c.phone)+'<br>':'')+(c.email?'✉️ '+esc(c.email)+'<br>':'')+(c.note?'📝 '+esc(c.note):'')+((c.phone||c.email||c.note)?'':'<span class="muted">אין פרטים נוספים</span>')+'</div>'+linksSection('contact',id));}},
   supplier:{label:'ספק', icon:'🏭', list:function(){return DB.suppliers||[];}, name:function(r){return r.name;}, open:function(id){closeModal(); go('purchasing');}},
   order:{label:'הזמנה', icon:'📦', list:function(){return (DB.orders||[]).slice().reverse();}, name:function(r){return 'הזמנה '+(r.order_number?'#'+r.order_number:r.id)+' · '+cust(r.customer_id);}, open:function(id){openOrder(id);}},
   task:{label:'משימה', icon:'✅', list:function(){return (DB.tasks||[]).slice().reverse();}, name:function(r){return r.title;}, open:function(id){openTask(id);}},
@@ -1725,6 +1729,107 @@ async function tagSave(toType, toId){
   var r = await act('create',{table:'links',row:{from_type:TAG_CTX.type,from_id:TAG_CTX.id,to_type:toType,to_id:toId,note:note}},'הקישור נשמר');
   if(r) tagBack();
 }
+/* ================= @אזכורים בפרוטוקול פגישה ================= */
+// סוגי הישויות שאפשר לתייג עם @ בתוך טקסט הפרוטוקול
+var MENTION_TYPES = ['customer','contact','employee','supplier','item'];
+var MENTION_CTX = null; // {start,end} — גבולות הקטע '@חלקי' בטקסט בזמן ההשלמה
+// כל הישויות הניתנות לתיוג — שם לא ריק בלבד
+function mentionEntities(){
+  var out = [];
+  MENTION_TYPES.forEach(function(t){
+    var e = ENT[t]; if(!e) return;
+    ((e.list && e.list())||[]).forEach(function(r){
+      var n = String(e.name(r)||'').trim();
+      if(n && r.id!=null && r.id!=='') out.push({type:t, id:r.id, name:n});
+    });
+  });
+  return out;
+}
+// השלמה אוטומטית: מזהה '@קטע' שמסתיים בסמן ומציג עד 8 התאמות
+function mentionAuto(ta){
+  var dd = el('mentionDD'); if(!dd || !ta) return;
+  var pos = ta.selectionStart, before = ta.value.slice(0, pos);
+  var mm = before.match(/(^|[\s.,;:!?()"'-])@([^@\n]{0,40})$/);
+  if(!mm){ dd.style.display='none'; MENTION_CTX=null; return; }
+  var frag = mm[2], q = frag.trim().toLowerCase();
+  var list = mentionEntities().filter(function(e){ return !q || e.name.toLowerCase().indexOf(q)>-1; }).slice(0,8);
+  if(!list.length){ dd.style.display='none'; MENTION_CTX=null; return; }
+  MENTION_CTX = {start: pos - frag.length - 1, end: pos};
+  dd.innerHTML = list.map(function(e){
+    var t = ENT[e.type]||{};
+    return '<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line)" onclick="pickMention(\''+e.type+'\',\''+e.id+'\')">'+(t.icon||'')+' <span class="muted" style="font-size:12px">'+esc(t.label||'')+'</span> <b>'+esc(e.name)+'</b></div>';
+  }).join('');
+  dd.style.display='block';
+}
+function hideMentionDD(){ var dd = el('mentionDD'); if(dd) dd.style.display='none'; MENTION_CTX=null; }
+// בחירת שורה — מחליף את '@קטע' ב'@שם המלא ' ומחזיר פוקוס
+function pickMention(type, id){
+  var ta = el('f_mprotocol'), e = ENT[type];
+  var r = e? ((e.list && e.list())||[]).find(function(x){return String(x.id)===String(id);}) : null;
+  if(ta && r && MENTION_CTX){
+    var name = String(e.name(r)), v = ta.value;
+    ta.value = v.slice(0, MENTION_CTX.start) + '@' + name + ' ' + v.slice(MENTION_CTX.end);
+    var np = MENTION_CTX.start + name.length + 2;
+    ta.focus(); ta.setSelectionRange(np, np);
+  }
+  hideMentionDD();
+}
+// סגירת הרשימה בלחיצה מחוץ לה
+document.addEventListener('click', function(ev){
+  var dd = el('mentionDD');
+  if(dd && dd.style.display!=='none' && !dd.contains(ev.target) && !(ev.target && ev.target.id==='f_mprotocol')) hideMentionDD();
+});
+// כל האזכורים המזוהים בטקסט — התאמה מדויקת לשם, השם הארוך ביותר קודם
+function protocolMentionsIn(text){
+  var found = [];
+  text = String(text==null?'':text);
+  if(text.indexOf('@')===-1) return found;
+  var ents = mentionEntities().sort(function(a,b){ return b.name.length - a.name.length; });
+  if(!ents.length) return found;
+  var i = 0;
+  while((i = text.indexOf('@', i)) > -1){
+    var rest = text.slice(i+1), hit = null;
+    for(var k=0;k<ents.length;k++){ if(rest.indexOf(ents[k].name)===0){ hit = ents[k]; break; } }
+    if(hit){ found.push({index:i, len:hit.name.length+1, ent:hit}); i += hit.name.length + 1; }
+    else i++;
+  }
+  return found;
+}
+// פרוטוקול כ-HTML: אזכור מזוהה הופך לתגית מודגשת (לחיצה = ניווט), השאר טקסט רגיל
+function renderProtocolHTML(text, clickable){
+  text = String(text==null?'':text);
+  var ms = protocolMentionsIn(text);
+  if(!ms.length) return esc(text);
+  var html = '', pos = 0;
+  ms.forEach(function(mm){
+    html += esc(text.slice(pos, mm.index));
+    var t = ENT[mm.ent.type]||{};
+    var label = (t.icon||'')+' '+esc('@'+mm.ent.name);
+    html += clickable
+      ? '<span style="background:var(--navy2);color:#fff;border-radius:8px;padding:1px 7px;cursor:pointer;font-weight:600" title="'+esc(t.label||'')+'" onclick="entOpen(\''+mm.ent.type+'\',\''+mm.ent.id+'\')">'+label+'</span>'
+      : '<b style="text-decoration:underline">'+label+'</b>';
+    pos = mm.index + mm.len;
+  });
+  html += esc(text.slice(pos));
+  return html;
+}
+// יצירת קישורי links מהאזכורים — כפולים מדולגים, שגיאות נבלעות, לעולם לא חוסם שמירה
+async function syncProtocolMentions(mid, text){
+  try{
+    if(!mid) return;
+    var ms = protocolMentionsIn(text), seen = {};
+    for(var i=0;i<ms.length;i++){
+      var e = ms[i].ent, key = e.type+'|'+e.id;
+      if(seen[key]) continue; seen[key] = 1;
+      var exists = (DB.links||[]).some(function(l){
+        return l.from_type==='meeting' && String(l.from_id)===String(mid) && l.to_type===e.type && String(l.to_id)===String(e.id);
+      });
+      if(exists) continue;
+      try{ await act('create',{table:'links',row:{from_type:'meeting',from_id:mid,to_type:e.type,to_id:e.id,note:'תויג בפרוטוקול'}}); }catch(err){}
+    }
+  }catch(err){}
+}
+
 // תצוגת 360° — כל מה שקשור ללקוח, במקום אחד
 function cust360(cid){
   function grp(title){ return '<div style="font-weight:700;color:var(--navy);margin:12px 0 4px">'+title+'</div>'; }
