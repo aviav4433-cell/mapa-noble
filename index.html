@@ -340,7 +340,7 @@ function printDeliveryNote(did){
   var lines = DB.orderLines.filter(l=>l.order_id===d.order_id);
   printDoc('תעודת משלוח — '+d.kind, d.note_number,
     custBlock(o.customer_id)+
-    '<p><b>תאריך '+(d.kind==='אספקה'?'אספקה':'איסוף')+':</b> '+esc(d.date)+(d.driver?' · <b>נהג:</b> '+esc(d.driver):'')+' · <b>הזמנה:</b> '+esc(o.start_date)+' — '+esc(o.end_date)+'</p>'+
+    '<p><b>תאריך '+(d.kind==='אספקה'?'אספקה':'איסוף')+':</b> '+esc(d.date)+(d.driver?' · <b>נהג:</b> '+esc(d.driver):'')+' · <b>הזמנה:</b> '+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date)+' — '+esc(o.end_date)+'</p>'+
     linesTable(lines, d.kind==='איסוף')+
     '<div style="text-align:center;margin-top:14px">'+safeBarcode(String(d.note_number))+'<div style="font-size:11px;color:#888">סרקו בקליטת ההחזרה</div></div>', {num:d.note_number, date:d.date, signatures:true});
 }
@@ -354,7 +354,7 @@ function printOrderForm(oid){
     linesTable(lines)+
     (Number(o.delivery_fee)>0?'<p><b>שינוע:</b> '+ils(o.delivery_fee)+'</p>':'')+
     '<p class="tot">סה"כ (לפני מע"מ): '+ils(total)+' · מע"מ 18%: '+ils(total*0.18)+' · <u>סה"כ לתשלום: '+ils(total*1.18)+'</u></p>',
-    {date:o.created_at, signatures:true});
+    {num:(o.order_number?'#'+esc(o.order_number):''), date:o.created_at, signatures:true});
 }
 function printInvoice(vid){
   var v = DB.invoices.find(x=>x.id===vid); if(!v) return;
@@ -453,7 +453,7 @@ function custBalance(cid){
 function orderCard(o){
   var bal = orderBalance(o.id);
   return '<div class="card" onclick="openOrder(\''+o.id+'\')" style="cursor:pointer"><div class="row">'+
-    '<div class="grow"><div style="font-weight:600">'+esc(cust(o.customer_id))+' <span class="muted">· '+esc(o.type)+'</span></div>'+
+    '<div class="grow"><div style="font-weight:600">'+(o.order_number?'<span class="muted">הזמנה #'+esc(o.order_number)+' · </span>':'')+esc(cust(o.customer_id))+' <span class="muted">· '+esc(o.type)+'</span></div>'+
     '<div class="muted">'+esc(o.start_date)+' ← '+esc(o.end_date)+'</div></div>'+
     (bal>0.01?'<div class="muted">יתרה '+ils(bal)+'</div>':'')+
     '<span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div></div>';
@@ -461,7 +461,19 @@ function orderCard(o){
 function rOrders(){
   el('main').innerHTML =
     '<div class="section-title"><h2>הזמנות</h2><div><button class="btn ghost" onclick="newOrderForm(true)">+ הצעת מחיר</button> <button class="btn" onclick="newOrderForm(false)">+ הזמנה</button></div></div>'+
-    (DB.orders.length? DB.orders.slice().sort((a,b)=>a.start_date<b.start_date?1:-1).map(orderCard).join('') : '<div class="card empty">אין הזמנות עדיין</div>');
+    '<div class="card"><div class="frow" style="margin-bottom:0"><label>חיפוש</label><input id="ord_q" oninput="renderOrdersList()" placeholder="מספר הזמנה או שם לקוח"></div></div>'+
+    '<div id="ordList"></div>';
+  renderOrdersList();
+}
+function renderOrdersList(){
+  var box = el('ordList'); if(!box) return;
+  var q = (el('ord_q')?el('ord_q').value:'').trim().toLowerCase();
+  var list = DB.orders.slice().sort((a,b)=>a.start_date<b.start_date?1:-1);
+  if(q) list = list.filter(function(o){
+    var num = String(o.order_number||'').toLowerCase();
+    return (num && (num.indexOf(q)>-1 || ('#'+num).indexOf(q)>-1)) || cust(o.customer_id).toLowerCase().indexOf(q)>-1;
+  });
+  box.innerHTML = list.length? list.map(orderCard).join('') : '<div class="card empty">'+(q?'לא נמצאו הזמנות תואמות לחיפוש':'אין הזמנות עדיין')+'</div>';
 }
 function newOrderForm(isQuote){
   if(!DB.customers.length) return toast('קודם צור לקוח במסך לקוחות', true);
@@ -495,7 +507,7 @@ function openOrder(oid){
   if(o.status==='סופקה') actions = '<button class="btn" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoice(\''+oid+'\')">הפק חשבונית</button>');
   if((o.status==='הוחזרה'||o.status==='הושלמה')&&!inv) actions = '<button class="btn ghost" onclick="doInvoice(\''+oid+'\')">הפק חשבונית</button>';
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
-    '<div class="muted" style="margin-bottom:12px">'+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(DB.warehouses.length?' · מחסן: '+esc(whn(o.warehouse_id)):'')+(o.notes?' · '+esc(o.notes):'')+'</div>'+
+    '<div class="muted" style="margin-bottom:12px">'+(o.order_number?'הזמנה #'+esc(o.order_number)+' · ':'')+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(DB.warehouses.length?' · מחסן: '+esc(whn(o.warehouse_id)):'')+(o.notes?' · '+esc(o.notes):'')+'</div>'+
     '<h3>פריטים</h3><table><tr><th>פריט</th><th>כמות</th><th>מחיר</th><th>הוחזר</th></tr>'+
     lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
     '</table>'+
@@ -1113,7 +1125,7 @@ function rAttendance(){
     '<br><button class="btn" id="clockBtn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
     '<h3 style="margin:14px 0 8px">רישומים אחרונים</h3><div class="card">'+
     (recent.length?'<table><tr><th>עובד</th><th>תאריך</th><th>כניסה</th><th>יציאה</th><th>שעות</th></tr>'+
-    recent.map(a=>{var e=DB.employees.find(x=>x.id===a.employee_id)||{};return '<tr><td>'+esc(e.name)+'</td><td>'+esc(a.date)+'</td><td>'+esc(a.in_time)+'</td><td>'+esc(a.out_time||'—')+'</td><td>'+(a.hours!==''?a.hours:'—')+'</td></tr>';}).join('')+'</table>':'<div class="empty">אין רישומים</div>')+'</div>';
+    recent.map(a=>{var e=DB.employees.find(x=>x.id===a.employee_id)||{};var dts=a.in_date?(esc(a.in_date)+(a.out_date&&a.out_date!==a.in_date?' ← '+esc(a.out_date):'')):esc(a.date);return '<tr><td>'+esc(e.name)+'</td><td>'+dts+'</td><td>'+esc(a.in_time)+'</td><td>'+esc(a.out_time||'—')+'</td><td>'+(a.hours!==''?a.hours:'—')+'</td></tr>';}).join('')+'</table>':'<div class="empty">אין רישומים</div>')+'</div>';
 }
 var CLOCK_BUSY = false;
 async function doClock(){
@@ -1405,14 +1417,14 @@ function rMeetings(){
   el('main').innerHTML = '<div class="section-title"><h2>פגישות ואסיפות</h2><button class="btn" onclick="meetingForm()">+ פגישה</button></div>'+
     (DB.meetings.length? DB.meetings.slice().sort((a,b)=>a.date<b.date?1:-1).map(m=>
       '<div class="card" style="cursor:pointer" onclick="openMeeting(\''+m.id+'\')"><div class="row"><div class="grow"><b>'+esc(m.title)+'</b>'+
-      '<div class="muted">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.participants?' · '+esc(m.participants):'')+'</div></div>'+
+      '<div class="muted">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.location?' · '+esc(m.location):'')+(m.participants?' · '+esc(m.participants):'')+'</div></div>'+
       '<span class="muted">'+DB.tasks.filter(t=>t.meeting_id===m.id).length+' משימות</span></div></div>').join('')
     :'<div class="card empty">אין פגישות עדיין</div>');
 }
 // טיוטת פגישה בזיכרון — שומרת נושא/תאריך/שעה/משתתפים שנבחרו בין פתיחות מודל (הוספת משתתף)
 var MEET_DRAFT = null;
 function meetingForm(){
-  if(!MEET_DRAFT) MEET_DRAFT = {title:'',date:'',time:'',partIds:[]};
+  if(!MEET_DRAFT) MEET_DRAFT = {title:'',date:'',time:'',location:'',partIds:[]};
   drawMeetingForm();
 }
 function drawMeetingForm(){
@@ -1428,6 +1440,7 @@ function drawMeetingForm(){
     '<div class="frow"><label>נושא</label><input id="f_mtitle" value="'+esc(d.title)+'"></div>'+
     '<div class="grid2"><div class="frow"><label>תאריך</label><input id="f_mdate" type="date" value="'+esc(d.date)+'"></div>'+
     '<div class="frow"><label>שעה</label><input id="f_mtime" type="time" value="'+esc(d.time)+'"></div></div>'+
+    '<div class="frow"><label>מיקום</label><input id="f_mloc" value="'+esc(d.location||'')+'" placeholder="היכן מתקיימת הפגישה"></div>'+
     '<div class="frow"><label>משתתפים (בחירה מרובה)</label><div id="mpartBox" class="row" style="gap:4px">'+chips+'</div></div>'+
     '<div class="row" style="margin-bottom:10px"><button class="btn ghost sm" onclick="addParticipantForm()">+ הוסף משתתף</button></div>'+
     '<button class="btn" onclick="saveMeeting()">שמור</button>');
@@ -1438,6 +1451,7 @@ function syncMeetParts(){
   if(el('f_mtitle')) MEET_DRAFT.title = el('f_mtitle').value;
   if(el('f_mdate')) MEET_DRAFT.date = el('f_mdate').value;
   if(el('f_mtime')) MEET_DRAFT.time = el('f_mtime').value;
+  if(el('f_mloc')) MEET_DRAFT.location = el('f_mloc').value;
   MEET_DRAFT.partIds = Array.from(document.querySelectorAll('.mpart:checked')).map(x=>x.value);
 }
 // מודל הוספת משתתף חדש — נשמר לצמיתות ב-contacts (לא בלקוחות), עם פרטים אופציונליים ותפקיד/הקשר בפגישה
@@ -1468,7 +1482,7 @@ async function saveMeeting(){
   if(!d.title||!d.date) return toast('נושא ותאריך חובה', true);
   // מחרוזת קריאה לתאימות לאחור עם התצוגה הקיימת (m.participants)
   var names = d.partIds.map(function(id){ var k=(DB.contacts||[]).find(x=>x.id===id); return k?k.name:''; }).filter(Boolean);
-  var r = await act('create',{table:'meetings',row:{title:d.title,date:d.date,time:d.time,
+  var r = await act('create',{table:'meetings',row:{title:d.title,date:d.date,time:d.time,location:d.location||'',
     participants:names.join(', '),participant_ids:d.partIds.join(','),protocol:''}},'הפגישה נוצרה');
   if(r){ MEET_DRAFT=null; closeModal(); openMeeting(r.row.id); }
 }
@@ -1476,7 +1490,7 @@ function openMeeting(mid){
   var m = DB.meetings.find(x=>x.id===mid); if(!m) return;
   var tasks = DB.tasks.filter(t=>t.meeting_id===mid);
   openModal('<h2>'+esc(m.title)+'</h2>'+
-    '<div class="muted" style="margin-bottom:10px">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.participants?' · משתתפים: '+esc(m.participants):'')+' · נוצרה ע"י '+esc(m.created_by)+'</div>'+
+    '<div class="muted" style="margin-bottom:10px">'+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.location?' · מיקום: '+esc(m.location):'')+(m.participants?' · משתתפים: '+esc(m.participants):'')+' · נוצרה ע"י '+esc(m.created_by)+'</div>'+
     '<h3>פרוטוקול / תמלול</h3>'+
     '<textarea id="f_mprotocol" rows="7" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="כתוב או הדבק כאן את סיכום האסיפה...">'+esc(m.protocol||'')+'</textarea>'+
     '<div class="row" style="margin:8px 0 14px"><button class="btn sm" onclick="saveProtocol(\''+mid+'\')">שמור פרוטוקול</button>'+
@@ -1502,7 +1516,7 @@ function printMeeting(mid){
   var m = DB.meetings.find(x=>x.id===mid); if(!m) return;
   var tasks = DB.tasks.filter(t=>t.meeting_id===mid);
   printDoc('פרוטוקול אסיפה', null,
-    '<p><b>נושא:</b> '+esc(m.title)+' · <b>תאריך:</b> '+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.participants?'<br><b>משתתפים:</b> '+esc(m.participants):'')+'</p>'+
+    '<p><b>נושא:</b> '+esc(m.title)+' · <b>תאריך:</b> '+esc(m.date)+(m.time?' '+esc(m.time):'')+(m.location?' · <b>מיקום:</b> '+esc(m.location):'')+(m.participants?'<br><b>משתתפים:</b> '+esc(m.participants):'')+'</p>'+
     '<pre>'+esc(m.protocol||'')+'</pre>'+
     (tasks.length?'<h3>משימות שנקבעו</h3><table><tr><th>משימה</th><th>אחראי</th><th>יעד</th><th>סטטוס</th></tr>'+
       tasks.map(t=>{var a=DB.employees.find(e=>e.id===t.assignee_id)||{};return '<tr><td>'+esc(t.title)+'</td><td>'+esc(a.name||'')+'</td><td>'+esc(t.due_date)+'</td><td>'+esc(t.status)+'</td></tr>';}).join('')+'</table>':''),
