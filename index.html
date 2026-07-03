@@ -845,23 +845,56 @@ async function saveSup(){
 function purForm(){
   if(!DB.suppliers.length) return toast('קודם צור ספק', true);
   openModal('<h2>הזמנת רכש</h2><div class="frow"><label>ספק</label>'+sel('f_psup',DB.suppliers,s=>s.name)+'</div>'+
+    '<div class="grid2"><div class="frow"><label>מספר חשבונית</label><input id="f_pinv" placeholder="מס\' חשבונית ספק"></div>'+
+    '<div class="frow"><label>מספר קנייה / קבלה</label><input id="f_precpt" placeholder="מס\' קבלה / קנייה"></div></div>'+
+    '<div class="frow"><label>פרטים</label><input id="f_pdetails" placeholder="פרטים חופשיים"></div>'+
     '<button class="btn" onclick="savePur()">להוספת פריטי הזמנה</button>');
 }
 async function savePur(){
-  var r = await act('create',{table:'purchases',row:{supplier_id:el('f_psup').value,date:new Date().toISOString().slice(0,10)}},'נוצר — הוסף שורות');
+  var r = await act('create',{table:'purchases',row:{supplier_id:el('f_psup').value,date:new Date().toISOString().slice(0,10),
+    invoice_number:el('f_pinv').value,receipt_number:el('f_precpt').value,details:el('f_pdetails').value}},'נוצר — הוסף שורות');
   if(r){ closeModal(); purLineForm(r.row.id); }
 }
+// שורת רכש — אפשר לבחור פריט קיים או להוסיף פריט חדש למלאי (items) תוך כדי
 function purLineForm(pid){
-  if(!DB.items.length) return toast('קודם צור פריט', true);
-  openModal('<h2>שורת רכש</h2><div class="frow"><label>פריט</label>'+sel('f_plitem',DB.items,i=>i.name)+'</div>'+
+  var existing = DB.items.filter(i=>i.active!=='לא');
+  openModal('<h2>שורת רכש</h2>'+
+    '<div class="frow"><label>פריט</label><select id="f_plitem" onchange="togglePurNewItem()">'+
+      '<option value="__new__">➕ פריט חדש (יתווסף למלאי)</option>'+
+      existing.map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')+
+      '</select></div>'+
+    '<div id="purNewItem" style="border:1px dashed var(--line);border-radius:8px;padding:10px;margin-bottom:10px">'+
+      '<div class="frow"><label>שם הפריט החדש</label><input id="f_pniname" placeholder="שם הפריט"></div>'+
+      '<div class="grid2"><div class="frow"><label>מידה</label><input id="f_pnisize"></div>'+
+      '<div class="frow"><label>צבע</label><input id="f_pnicolor"></div>'+
+      '<div class="frow"><label>מחיר השכרה</label><input id="f_pnirent" type="number" min="0" value="0"></div>'+
+      '<div class="frow"><label>מחיר כביסה</label><input id="f_pniwash" type="number" min="0" value="0"></div>'+
+      '<div class="frow"><label>ברקוד</label><input id="f_pnibar"></div>'+
+      '<div class="frow"><label>מלאי מינימום</label><input id="f_pnimin" type="number"></div></div>'+
+    '</div>'+
     '<div class="grid2"><div class="frow"><label>כמות</label><input id="f_plqty" type="number" min="1"></div>'+
     '<div class="frow"><label>עלות ליחידה</label><input id="f_plcost" type="number" min="0" step="0.1"></div></div>'+
     '<button class="btn" onclick="savePurLine(\''+pid+'\')">הוסף</button>');
+  togglePurNewItem();
+}
+function togglePurNewItem(){
+  var isNew = el('f_plitem').value==='__new__';
+  el('purNewItem').style.display = isNew?'block':'none';
 }
 async function savePurLine(pid){
   var q = Number(el('f_plqty').value);
   if(!(q>0)) return toast('כמות חובה', true);
-  var r = await act('create',{table:'purchase_lines',row:{purchase_id:pid,item_id:el('f_plitem').value,qty:q,unit_cost:Number(el('f_plcost').value)||0}},'נוסף');
+  var itemId = el('f_plitem').value;
+  // פריט חדש — קודם ניצור אותו במלאי (items) ואז נשתמש במזהה שחזר
+  if(itemId==='__new__'){
+    if(!el('f_pniname').value) return toast('שם הפריט החדש חובה', true);
+    var ci = await act('create',{table:'items',row:{name:el('f_pniname').value,size:el('f_pnisize').value,color:el('f_pnicolor').value,
+      rent_price:Number(el('f_pnirent').value)||0,wash_price:Number(el('f_pniwash').value)||0,barcode:el('f_pnibar').value,
+      min_stock:el('f_pnimin').value,purchase_cost:Number(el('f_plcost').value)||'',active:'כן'}},'הפריט נוצר במלאי');
+    if(!ci) return;
+    itemId = ci.row.id;
+  }
+  var r = await act('create',{table:'purchase_lines',row:{purchase_id:pid,item_id:itemId,qty:q,unit_cost:Number(el('f_plcost').value)||0}},'נוסף');
   if(r) closeModal();
 }
 async function doReceivePur(pid){
@@ -1106,13 +1139,17 @@ async function doClock(){
 function attForm(){
   openModal('<h2>רישום נוכחות ידני</h2>'+
     '<div class="frow"><label>עובד</label>'+sel('f_aemp',DB.employees.filter(e=>e.active!=='לא'),e=>e.name)+'</div>'+
-    '<div class="grid2"><div class="frow"><label>תאריך</label><input id="f_adate" type="date"></div><div></div>'+
-    '<div class="frow"><label>כניסה</label><input id="f_ain" type="time"></div>'+
-    '<div class="frow"><label>יציאה</label><input id="f_aout" type="time"></div></div>'+
+    '<p class="muted" style="margin-bottom:8px">למשמרת לילה החוצה את חצות — תאריך היציאה יכול להיות שונה מתאריך הכניסה.</p>'+
+    '<div class="grid2"><div class="frow"><label>תאריך כניסה</label><input id="f_adate" type="date"></div>'+
+    '<div class="frow"><label>שעת כניסה</label><input id="f_ain" type="time"></div>'+
+    '<div class="frow"><label>תאריך יציאה (ריק = כמו כניסה)</label><input id="f_aoutdate" type="date"></div>'+
+    '<div class="frow"><label>שעת יציאה</label><input id="f_aout" type="time"></div></div>'+
     '<button class="btn" onclick="saveAtt()">שמור</button>');
 }
 async function saveAtt(){
-  var r = await act('addAttendance',{employee_id:el('f_aemp').value,date:el('f_adate').value,in_time:el('f_ain').value,out_time:el('f_aout').value},'נרשם');
+  var inDate = el('f_adate').value;
+  var outDate = el('f_aoutdate').value || inDate; // ברירת מחדל: אותו יום
+  var r = await act('addAttendance',{employee_id:el('f_aemp').value,date:inDate,in_date:inDate,out_date:outDate,in_time:el('f_ain').value,out_time:el('f_aout').value},'נרשם');
   if(r) closeModal();
 }
 
@@ -1168,17 +1205,29 @@ function rSettings(){
   el('main').innerHTML = '<div class="section-title"><h2>מיתוג והגדרות</h2></div>'+
     '<div class="card"><div class="frow"><label>ערכת צבעים לתצוגה</label><select id="set_ui_theme">'+['טורקיז','כחול','סגול','ירוק','כהה'].map(t=>'<option'+(setting('ui_theme')===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+SETTING_FIELDS.map(f=>'<div class="frow"><label>'+f[1]+'</label><input id="set_'+f[0]+'" value="'+esc(setting(f[0]))+'"></div>').join('')+
     '<div class="frow"><label>נוסח הסכם השירות</label><textarea id="set_agreement_text" rows="8" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px">'+esc(setting('agreement_text'))+'</textarea></div>'+
-    '<button class="btn" onclick="saveSettings()">שמור הכל</button> <button class="btn ghost" onclick="printAgreementPreview()">🖨 תצוגה מקדימה של הסכם</button></div>'+
+    '<button class="btn" id="setSaveBtn" onclick="saveSettings()">שמור הכל</button> <button class="btn ghost" onclick="printAgreementPreview()">🖨 תצוגה מקדימה של הסכם</button></div>'+
     '<p class="muted">ההגדרות חלות מיידית על כל המסמכים: חשבוניות, קבלות, תעודות משלוח, טפסים, הסכמים ודוחות.</p>';
 }
 async function saveSettings(){
-  var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text','ui_theme']);
-  for(var i=0;i<keys.length;i++){
-    var r = await api('updateSetting',{key:keys[i],value:el('set_'+keys[i]).value});
-    if(!r.ok) return toast(r.error, true);
+  var btn = el('setSaveBtn'), origTxt = btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.style.opacity='.6'; btn.textContent='שומר...'; }
+  showBusy(true);
+  try{
+    var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text','ui_theme']);
+    for(var i=0;i<keys.length;i++){
+      var fld = el('set_'+keys[i]);
+      if(!fld) continue; // שדה שלא קיים במסך — לא מפילים את כל השמירה
+      var r = await api('updateSetting',{key:keys[i],value:fld.value});
+      if(!r || !r.ok){ toast((r&&r.error)||('שמירת ההגדרה "'+keys[i]+'" נכשלה'), true); return; }
+    }
+    var g = await api('getAll'); if(g.ok) DB=g.db;
+    applyTheme(); toast('ההגדרות נשמרו ✓'); rSettings();
+  }catch(e){
+    toast('שגיאת תקשורת בשמירת ההגדרות — נסה שוב', true);
+  }finally{
+    showBusy(false);
+    if(btn && document.body.contains(btn)){ btn.disabled=false; btn.style.opacity='1'; btn.textContent=origTxt; }
   }
-  var g = await api('getAll'); if(g.ok) DB=g.db;
-  applyTheme(); toast('ההגדרות נשמרו'); rSettings();
 }
 function printAgreementPreview(){
   printDoc('הסכם שירות', null, '<pre>'+esc(el('set_agreement_text').value)+'</pre>', {signatures:true});
@@ -1225,6 +1274,7 @@ function openTask(tid){
     '<div class="muted" style="margin-bottom:8px">'+(t.details?esc(t.details)+'<br>':'')+
     'אחראי: '+(a.name?esc(a.name):'—')+(t.due_date?' · יעד: '+esc(t.due_date):'')+
     '<br>נוצרה ע"י '+esc(t.created_by)+' · '+esc(t.created_at)+(mt?' · מתוך אסיפה: '+esc(mt.title):'')+'</div>'+
+    (t.status==='הושלמה'&&t.completion_note?'<div class="card" style="background:var(--linen);margin-bottom:12px"><b>סיכום ביצוע:</b> '+esc(t.completion_note)+(t.completed_at?' <span class="muted">('+esc(fmtTs(t.completed_at))+')</span>':'')+'</div>':'')+
     '<div class="row" style="margin-bottom:12px">'+TASK_COLS.filter(s=>s!==t.status).map(s=>'<button class="btn ghost sm" onclick="doMoveTask(\''+tid+'\',\''+s+'\')">העבר ל'+s+'</button>').join('')+'</div>'+
     '<h3>הערות ומעקב</h3>'+
     '<div style="max-height:220px;overflow-y:auto;margin:8px 0">'+
@@ -1234,7 +1284,26 @@ function openTask(tid){
     '<button class="btn sm" onclick="addTaskComment(\''+tid+'\')">הוסף</button></div>');
 }
 async function doMoveTask(tid, st){
+  // סיום משימה מחייב תיאור של מה שבוצע — פותחים טופס במקום להעביר מיד
+  if(st==='הושלמה'){ completeTaskForm(tid); return; }
   var r = await act('moveTask',{task_id:tid,status:st},'הועבר ל'+st);
+  if(r) openTask(tid);
+}
+// טופס סיום משימה — חובה למלא תיאור מה בוצע
+function completeTaskForm(tid){
+  var t = DB.tasks.find(x=>x.id===tid); if(!t) return;
+  openModal('<h2>סיום משימה — '+esc(t.title)+'</h2>'+
+    '<p class="muted" style="margin-bottom:8px">כדי לסמן משימה כהושלמה חובה לתאר מה בוצע.</p>'+
+    '<div class="frow"><label>תיאור הביצוע (חובה)</label><textarea id="f_tdone" rows="4" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="מה בוצע בפועל..."></textarea></div>'+
+    '<button class="btn" onclick="doCompleteTask(\''+tid+'\')">סמן כהושלמה</button> '+
+    '<button class="btn ghost" onclick="openTask(\''+tid+'\')">חזרה</button>');
+}
+async function doCompleteTask(tid){
+  var desc = (el('f_tdone').value||'').trim();
+  if(!desc) return toast('חובה לתאר מה בוצע לפני סיום המשימה', true);
+  // שומרים את תיאור הביצוע גם כהערת מעקב וגם כשדה השלמה על המשימה
+  await act('create',{table:'task_comments',row:{task_id:tid,text:'סיכום ביצוע: '+desc,ts:nowTs()}});
+  var r = await act('moveTask',{task_id:tid,status:'הושלמה',completion_note:desc,completed_at:nowTs()},'המשימה הושלמה');
   if(r) openTask(tid);
 }
 async function addTaskComment(tid){
@@ -1340,18 +1409,68 @@ function rMeetings(){
       '<span class="muted">'+DB.tasks.filter(t=>t.meeting_id===m.id).length+' משימות</span></div></div>').join('')
     :'<div class="card empty">אין פגישות עדיין</div>');
 }
+// טיוטת פגישה בזיכרון — שומרת נושא/תאריך/שעה/משתתפים שנבחרו בין פתיחות מודל (הוספת משתתף)
+var MEET_DRAFT = null;
 function meetingForm(){
+  if(!MEET_DRAFT) MEET_DRAFT = {title:'',date:'',time:'',partIds:[]};
+  drawMeetingForm();
+}
+function drawMeetingForm(){
+  var d = MEET_DRAFT;
+  // רשימת אנשי הקשר (contacts) כמאגר קבוע של אנשים שאיתם התנהלנו
+  var people = (DB.contacts||[]).slice().sort((a,b)=>String(a.name)>String(b.name)?1:-1);
+  var chips = people.length? people.map(function(k){
+      var on = d.partIds.indexOf(k.id)>-1;
+      return '<label style="font-size:12px;font-weight:400;border:1px solid '+(on?'var(--teal)':'var(--line)')+';border-radius:14px;padding:3px 9px;display:inline-block;margin:2px">'+
+        '<input type="checkbox" class="mpart" value="'+k.id+'"'+(on?' checked':'')+' onchange="syncMeetParts()" style="width:auto"> '+esc(k.name)+(k.role?' ('+esc(k.role)+')':'')+'</label>';
+    }).join('') : '<span class="muted">אין אנשים במאגר — הוסף משתתף חדש</span>';
   openModal('<h2>פגישה חדשה</h2>'+
-    '<div class="frow"><label>נושא</label><input id="f_mtitle"></div>'+
-    '<div class="grid2"><div class="frow"><label>תאריך</label><input id="f_mdate" type="date"></div>'+
-    '<div class="frow"><label>שעה</label><input id="f_mtime" type="time"></div></div>'+
-    '<div class="frow"><label>משתתפים</label><input id="f_mpart"></div>'+
+    '<div class="frow"><label>נושא</label><input id="f_mtitle" value="'+esc(d.title)+'"></div>'+
+    '<div class="grid2"><div class="frow"><label>תאריך</label><input id="f_mdate" type="date" value="'+esc(d.date)+'"></div>'+
+    '<div class="frow"><label>שעה</label><input id="f_mtime" type="time" value="'+esc(d.time)+'"></div></div>'+
+    '<div class="frow"><label>משתתפים (בחירה מרובה)</label><div id="mpartBox" class="row" style="gap:4px">'+chips+'</div></div>'+
+    '<div class="row" style="margin-bottom:10px"><button class="btn ghost sm" onclick="addParticipantForm()">+ הוסף משתתף</button></div>'+
     '<button class="btn" onclick="saveMeeting()">שמור</button>');
 }
+// מסנכרן את הצ'קבוקסים לתוך הטיוטה בלי לרנדר מחדש
+function syncMeetParts(){
+  if(!MEET_DRAFT) return;
+  if(el('f_mtitle')) MEET_DRAFT.title = el('f_mtitle').value;
+  if(el('f_mdate')) MEET_DRAFT.date = el('f_mdate').value;
+  if(el('f_mtime')) MEET_DRAFT.time = el('f_mtime').value;
+  MEET_DRAFT.partIds = Array.from(document.querySelectorAll('.mpart:checked')).map(x=>x.value);
+}
+// מודל הוספת משתתף חדש — נשמר לצמיתות ב-contacts (לא בלקוחות), עם פרטים אופציונליים ותפקיד/הקשר בפגישה
+function addParticipantForm(){
+  syncMeetParts();
+  openModal('<h2>משתתף חדש</h2>'+
+    '<p class="muted" style="margin-bottom:8px">יישמר במאגר אנשי הקשר הקבוע וישמש גם בפגישות עתידיות.</p>'+
+    '<div class="frow"><label>שם</label><input id="f_pnname"></div>'+
+    '<div class="frow"><label>תפקיד / הקשר בפגישה</label><input id="f_pnrole" placeholder="למשל: ספק, יועץ, נציג לקוח"></div>'+
+    '<div class="grid2"><div class="frow"><label>טלפון</label><input id="f_pnphone" type="tel"></div>'+
+    '<div class="frow"><label>אימייל</label><input id="f_pnemail" type="email"></div></div>'+
+    '<div class="frow"><label>הערה (רשות)</label><input id="f_pnnote"></div>'+
+    '<button class="btn" onclick="saveParticipant()">שמור והוסף לפגישה</button> '+
+    '<button class="btn ghost" onclick="drawMeetingForm()">חזרה</button>');
+}
+async function saveParticipant(){
+  if(!el('f_pnname').value) return toast('שם חובה', true);
+  var r = await act('create',{table:'contacts',row:{customer_id:'',name:el('f_pnname').value,role:el('f_pnrole').value,
+    phone:el('f_pnphone').value,email:el('f_pnemail').value,note:el('f_pnnote').value,is_primary:''}},'המשתתף נוסף למאגר');
+  if(!r) return;
+  // מוסיפים אוטומטית את המשתתף החדש לפגישה הנוכחית
+  if(MEET_DRAFT && r.row && r.row.id) MEET_DRAFT.partIds.push(r.row.id);
+  drawMeetingForm();
+}
 async function saveMeeting(){
-  if(!el('f_mtitle').value||!el('f_mdate').value) return toast('נושא ותאריך חובה', true);
-  var r = await act('create',{table:'meetings',row:{title:el('f_mtitle').value,date:el('f_mdate').value,time:el('f_mtime').value,participants:el('f_mpart').value,protocol:''}},'הפגישה נוצרה');
-  if(r){ closeModal(); openMeeting(r.row.id); }
+  syncMeetParts();
+  var d = MEET_DRAFT;
+  if(!d.title||!d.date) return toast('נושא ותאריך חובה', true);
+  // מחרוזת קריאה לתאימות לאחור עם התצוגה הקיימת (m.participants)
+  var names = d.partIds.map(function(id){ var k=(DB.contacts||[]).find(x=>x.id===id); return k?k.name:''; }).filter(Boolean);
+  var r = await act('create',{table:'meetings',row:{title:d.title,date:d.date,time:d.time,
+    participants:names.join(', '),participant_ids:d.partIds.join(','),protocol:''}},'הפגישה נוצרה');
+  if(r){ MEET_DRAFT=null; closeModal(); openMeeting(r.row.id); }
 }
 function openMeeting(mid){
   var m = DB.meetings.find(x=>x.id===mid); if(!m) return;
@@ -1815,3 +1934,4 @@ async function saveEmp(id){
 </script>
 </body>
 </html>
+
