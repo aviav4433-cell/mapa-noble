@@ -30,9 +30,7 @@ header{background:var(--navy);color:#fff;padding:12px 18px;display:flex;align-it
 header .logo{font-weight:800;font-size:18px;letter-spacing:.5px}
 header .logo span{color:#7BD8D7}
 header .who{margin-inline-start:auto;font-size:12px;color:#9FB3C4}
-nav{display:flex;background:#fff;border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:48px;z-index:19;-webkit-overflow-scrolling:touch}
-nav button{background:none;padding:12px 14px;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;white-space:nowrap}
-nav button.on{color:var(--navy);border-bottom-color:var(--teal)}
+nav{display:flex;background:var(--card);border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:48px;z-index:19;-webkit-overflow-scrolling:touch}
 main{padding:16px;max-width:1080px;margin:0 auto;padding-bottom:40px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px}
 .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -83,10 +81,8 @@ td{padding:7px 4px;border-bottom:1px solid #F0EEE8}
 .mclose{position:absolute;top:10px;left:10px;background:var(--linen);border-radius:50%;width:32px;height:32px;font-size:15px;color:var(--navy);font-weight:700}
 .mclose:hover{background:var(--line)}
 @media(min-width:900px){
-  nav{position:fixed;top:48px;right:0;bottom:0;width:190px;flex-direction:column;border-bottom:none;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden}
-  nav button{text-align:right;border-bottom:none;border-right:4px solid transparent;padding:12px 16px;font-size:15px}
-  nav button.on{border-right-color:var(--teal);background:var(--linen)}
-  main{margin-right:190px;max-width:none;padding:20px 26px}
+  nav{position:fixed;top:48px;right:0;bottom:0;width:200px;flex-direction:column;border-bottom:none;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden}
+  main{margin-right:200px;max-width:none;padding:20px 26px}
 }
 .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .calhead{text-align:center;font-weight:800;color:var(--navy);font-size:13px;padding:4px 0}
@@ -104,6 +100,58 @@ td{padding:7px 4px;border-bottom:1px solid #F0EEE8}
 .tabs button{background:#fff;border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--muted)}
 .tabs button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
 .scanbox{font-size:22px;text-align:center;letter-spacing:2px}
+/* ===== Batch E: פעולות בתוך שורה ===== */
+.rowact{display:inline-flex;gap:6px;align-items:center}
+.rowact button{background:var(--card);border:1px solid var(--line);border-radius:8px;width:32px;height:32px;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0}
+.rowact button:hover{background:var(--linen);border-color:var(--muted)}
+.rowact button.del:hover{background:#FBEAE7;border-color:var(--danger)}
+/* ===== כפתורי קשר מהיר ===== */
+.cbtns{display:inline-flex;gap:5px;vertical-align:middle}
+.cbtns a{text-decoration:none;background:var(--linen);border:1px solid var(--line);border-radius:8px;width:30px;height:30px;font-size:14px;display:inline-flex;align-items:center;justify-content:center}
+.cbtns a:hover{background:var(--line)}
+/* ===== דשבורד מקצועי ===== */
+.gridkpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media(min-width:900px){.gridkpi{grid-template-columns:repeat(6,1fr)}}
+.kpi .ico{font-size:19px;line-height:1.2}
+.kpi.click{cursor:pointer;transition:transform .12s,box-shadow .12s}
+.kpi.click:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(22,50,79,.14)}
+.chartgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+@media(max-width:760px){.chartgrid{grid-template-columns:1fr}}
+.attn-row{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line);cursor:pointer;font-size:14px;flex-wrap:wrap}
+.attn-row:last-child{border-bottom:none}
+.attn-row:hover{background:var(--linen)}
+.attn-row .tag{font-size:11px;font-weight:700;color:#fff;border-radius:6px;padding:2px 8px;white-space:nowrap}
+/* ===== ניווט מקובץ ===== */
+nav .ghead{background:none;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--muted);padding:10px 14px;white-space:nowrap}
+nav .ghead .arr{margin-inline-start:auto;font-size:10px}
+nav .ghead:hover{color:var(--navy)}
+nav .nitem{background:none;padding:9px 14px;font-size:14px;font-weight:600;color:var(--muted);white-space:nowrap}
+nav .nitem.on{color:var(--navy)}
+@media(max-width:899px){
+  nav{align-items:center;padding:4px 6px;gap:2px}
+  nav .ngrp{display:flex;align-items:center}
+  nav .ghead{border:1px solid var(--line);border-radius:18px;padding:6px 12px;margin:2px}
+  nav .ghead .arr{margin-inline-start:4px}
+  nav .ngrp.open .ghead{background:var(--navy);color:#fff}
+  nav .nitem{border-radius:18px;padding:6px 12px}
+  nav .nitem.on{background:var(--linen);color:var(--navy);box-shadow:inset 0 0 0 1px var(--teal)}
+  nav .nitem.lone{border:1px solid var(--line);border-radius:18px;padding:6px 12px;margin:2px}
+  nav .nitem.lone.on{background:var(--navy);color:#fff;box-shadow:none}
+}
+@media(min-width:900px){
+  nav .ngrp{border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:2px}
+  nav .ghead{width:100%;text-align:right}
+  nav .nitem{width:100%;display:block;text-align:right;border-right:4px solid transparent;padding:9px 24px 9px 12px}
+  nav .nitem.on{border-right-color:var(--teal);background:var(--linen)}
+  nav .nitem.lone{width:100%;display:block;text-align:right;font-weight:700;color:var(--navy);padding:13px 14px;border-right:4px solid transparent;border-bottom:1px solid var(--line)}
+  nav .nitem.lone.on{border-right-color:var(--teal);background:var(--linen)}
+}
+/* ===== סרגל עליון ===== */
+header .logo{display:flex;align-items:center;gap:8px}
+header .brandimg{max-height:30px;border-radius:6px}
+header .qnav{display:flex;gap:4px}
+header .qnav button{background:rgba(255,255,255,.12);border-radius:8px;width:34px;height:34px;font-size:16px;color:#fff;display:inline-flex;align-items:center;justify-content:center}
+header .qnav button:hover{background:rgba(255,255,255,.25)}
 </style>
 </head>
 <body>
@@ -122,9 +170,10 @@ td{padding:7px 4px;border-bottom:1px solid #F0EEE8}
 
 <div id="app">
   <header>
-    <div class="logo">MAPA<span>·</span>NOBLE</div>
+    <div class="logo" id="brandLbl">MAPA<span>·</span>NOBLE</div>
+    <div class="qnav" id="qnav"></div>
     <div class="who" id="whoLbl"></div>
-    <button class="btn sm ghost" onclick="refresh()">רענון</button>
+    <button class="btn sm" onclick="refresh()" title="משיכת נתונים עדכניים מהשרת">🔄 רענון</button>
   </header>
   <nav id="nav"></nav>
   <main id="main"></main>
@@ -394,10 +443,48 @@ function copyPortalLink(code){
   navigator.clipboard.writeText(url).then(function(){ toast('הקישור הועתק — שלח ללקוח בוואטסאפ'); },
     function(){ prompt('העתק את הקישור:', url); });
 }
-async function delRecord(table, id, label){
-  if(!confirm('למחוק '+label+'? פעולה סופית.')) return;
-  var r = await act('delete',{table:table,id:id},'נמחק');
-  if(r) closeModal();
+/* ===== מחיקה מאובטחת — דורשת קוד מנהל ===== */
+var MGR_DEL_CB = null;
+function confirmManagerDelete(cb){
+  var mgrs = (DB && DB.employees ? DB.employees : []).filter(function(e){ return e.role==='מנהל' && e.active!=='לא'; });
+  if(!mgrs.length){ if(confirm('למחוק? פעולה סופית שאינה ניתנת לשחזור.')) cb(); return; }
+  MGR_DEL_CB = cb;
+  openModal('<h2>🔒 פעולה רגישה</h2>'+
+    '<p class="muted" style="margin-bottom:12px">מחיקה היא סופית ואינה ניתנת לשחזור. הזן קוד מנהל לאישור.</p>'+
+    '<div class="frow"><label>קוד מנהל</label><input id="f_mgrpin" type="password" inputmode="numeric" placeholder="הקש קוד..." onkeydown="if(event.key===\'Enter\')mgrDelGo()"></div>'+
+    '<div class="row"><button class="btn danger" onclick="mgrDelGo()">אשר מחיקה</button><button class="btn ghost" onclick="MGR_DEL_CB=null;closeModal()">ביטול</button></div>');
+  setTimeout(function(){ var i=el('f_mgrpin'); if(i) i.focus(); }, 60);
+}
+function mgrDelGo(){
+  var pin = String(el('f_mgrpin').value||'');
+  var ok = pin!=='' && (DB.employees||[]).some(function(e){ return e.role==='מנהל' && e.active!=='לא' && String(e.pin)===pin; });
+  if(!ok){ toast('קוד מנהל שגוי', true); el('f_mgrpin').value=''; el('f_mgrpin').focus(); return; }
+  var cb = MGR_DEL_CB; MGR_DEL_CB = null; closeModal();
+  if(cb) cb();
+}
+function delRecord(table, id, label){
+  confirmManagerDelete(async function(){
+    var r = await act('delete',{table:table,id:id},'נמחק');
+    if(r) closeModal();
+  });
+}
+
+/* ===== כפתורי קשר מהיר — חיוג / וואטסאפ / מייל ===== */
+function waNorm(phone){
+  var d = String(phone||'').replace(/\D/g,'');
+  if(d.length<8) return '';
+  if(d.charAt(0)==='0') d = '972'+d.slice(1);
+  return d;
+}
+function contactBtns(phone,email){
+  var h='';
+  if(phone){
+    h+='<a href="tel:'+encodeURIComponent(String(phone))+'" title="חיוג" onclick="event.stopPropagation()">📞</a>';
+    var w=waNorm(phone);
+    if(w) h+='<a href="https://wa.me/'+w+'" target="_blank" rel="noopener" title="וואטסאפ" onclick="event.stopPropagation()">💬</a>';
+  }
+  if(email) h+='<a href="mailto:'+encodeURIComponent(String(email))+'" title="שליחת מייל" onclick="event.stopPropagation()">✉️</a>';
+  return h? '<span class="cbtns">'+h+'</span>' : '';
 }
 
 /* ================= ניווט ================= */
@@ -405,46 +492,182 @@ var VIEWS = [['dash','לוח בקרה'],['orders','הזמנות'],['notes','תר
   ['laundry','כביסה'],['returns','החזרות'],['deliveries','משלוחים'],['finance','כספים'],
   ['customers','לקוחות'],['items','פריטים ומלאי'],['purchasing','רכש וספקים'],['scan','סריקה'],['barcodes','ברקודים'],
   ['reports','דוחות'],['warehouses','מחסנים'],['shelves','מדפים'],['fleet','צי רכב'],['assets','עגלות ומכונות'],['staff','עובדים'],['attendance','נוכחות'],['payroll','שכר'],['settings','מיתוג והגדרות']];
-function render(){
-  var views = VIEWS.filter(function(v){
+/* קטגוריות התפריט — אותם מפתחות מסכים, רק קיבוץ ויזואלי */
+var NAV_GROUPS = [
+  ['🏠','לוח בקרה',['dash']],
+  ['📦','מכירות',['orders','customers','deliveries','returns']],
+  ['🧺','תפעול',['laundry','items','scan','barcodes','shelves','warehouses','assets']],
+  ['🛒','רכש',['purchasing']],
+  ['💰','כספים',['finance','reports']],
+  ['👥','צוות',['staff','attendance','payroll']],
+  ['🗂️','ארגון',['tasks','meetings','calendar','notes']],
+  ['⚙️','הנהלה',['fleet','settings']]
+];
+var NAV_OPEN = ''; // הקטגוריה הפתוחה כרגע (נשמרת בין רינדורים)
+function allowedViews(){
+  return VIEWS.filter(function(v){
     if(USER_VIEWS) return USER_VIEWS.split(',').map(s=>s.trim()).includes(v[0]);
     if(ROLE==='מכבסה') return ['dash','laundry','returns','scan','assets','attendance','tasks'].includes(v[0]);
     if(ROLE==='נהג') return ['dash','deliveries','scan','attendance','tasks'].includes(v[0]);
     if(ROLE==='משרד' && ['payroll','settings'].includes(v[0])) return false;
     return true;
   });
+}
+function navGroupOf(key){ var g = NAV_GROUPS.find(x=>x[2].includes(key)); return g? g[1] : ''; }
+function renderNav(views){
+  views = views || allowedViews();
+  var allowed = {}; views.forEach(function(v){ allowed[v[0]]=v[1]; });
+  if(!NAV_OPEN) NAV_OPEN = navGroupOf(VIEW);
+  var groups = NAV_GROUPS.slice();
+  var extra = views.filter(v=>!navGroupOf(v[0])).map(v=>v[0]); // ביטחון — מסך שלא שויך לקטגוריה
+  if(extra.length) groups = groups.concat([['📄','עוד',extra]]);
+  el('nav').innerHTML = groups.map(function(g){
+    var items = g[2].filter(k=>allowed[k]!==undefined);
+    if(!items.length) return ''; // כל המסכים בקטגוריה מסוננים — לא מציגים אותה
+    if(items.length===1 && items[0]==='dash')
+      return '<button class="nitem lone'+(VIEW==='dash'?' on':'')+'" onclick="go(\'dash\')">'+g[0]+' '+allowed['dash']+'</button>';
+    var open = NAV_OPEN===g[1];
+    return '<div class="ngrp'+(open?' open':'')+'">'+
+      '<button class="ghead" onclick="navToggle(\''+g[1]+'\')">'+g[0]+' '+g[1]+'<span class="arr">'+(open?'▾':'◂')+'</span></button>'+
+      (open? items.map(k=>'<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+'</button>').join('') : '')+
+      '</div>';
+  }).join('');
+}
+function navToggle(name){ NAV_OPEN = (NAV_OPEN===name ? '__closed__' : name); renderNav(); }
+function renderTopbar(views){
+  var keys = views.map(v=>v[0]);
+  var qn = el('qnav');
+  if(qn) qn.innerHTML = [['orders','📦','הזמנות'],['customers','👥','לקוחות'],['calendar','📅','יומן']]
+    .filter(x=>keys.includes(x[0]))
+    .map(x=>'<button onclick="go(\''+x[0]+'\')" title="'+x[2]+'">'+x[1]+'</button>').join('');
+  var bl = el('brandLbl');
+  if(bl){
+    var bn = setting('business_name'), lu = setting('logo_url');
+    bl.innerHTML = (lu?'<img class="brandimg" src="'+esc(lu)+'" alt="">':'')+(bn? esc(bn) : 'MAPA<span>·</span>NOBLE');
+  }
+}
+function render(){
+  var views = allowedViews();
   if(!views.some(v=>v[0]===VIEW)) VIEW = views[0][0];
-  el('nav').innerHTML = views.map(v=>'<button class="'+(VIEW===v[0]?'on':'')+'" onclick="go(\''+v[0]+'\')">'+v[1]+'</button>').join('');
+  renderTopbar(views);
+  renderNav(views);
   ({dash:rDash,orders:rOrders,tasks:rTasks,calendar:rCalendar,meetings:rMeetings,laundry:rLaundry,deliveries:rDeliveries,finance:rFinance,customers:rCustomers,
     items:rItems,purchasing:rPurchasing,scan:rScan,barcodes:rBarcodes,reports:rReports,assets:rAssets,
     staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings,warehouses:rWarehouses,shelves:rShelves,fleet:rFleet,returns:rReturns,notes:rNotes})[VIEW]();
 }
-function go(v){ VIEW=v; render(); window.scrollTo(0,0); }
+function go(v){ VIEW=v; var g=navGroupOf(v); if(g && g!=='לוח בקרה') NAV_OPEN=g; render(); window.scrollTo(0,0); }
 
 /* ================= לוח בקרה ================= */
 function rDash(){
   var today = new Date().toISOString().slice(0,10);
   var week = new Date(Date.now()+6*864e5).toISOString().slice(0,10);
-  var upcoming = DB.orders.filter(o=>o.type==='השכרה' && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);
-  var out = DB.orders.filter(o=>o.status==='סופקה');
+  var openOrd = DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status));
+  var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date===today);
+  var delDue = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today).sort((a,b)=>a.date>b.date?1:-1);
+  var debt = DB.customers.reduce(function(s,c){ var b=custBalance(c.id); return s+(b>0?b:0); },0);
+  var openTasks = DB.tasks.filter(t=>t.status!=='הושלמה');
+  var lateTasks = openTasks.filter(t=>t.due_date && t.due_date<today).sort((a,b)=>a.due_date>b.due_date?1:-1);
   var inWash = DB.laundryTasks.filter(t=>t.stage!=='מוכן');
-  var debt = DB.customers.reduce((s,c)=>s+custBalance(c.id),0);
-  var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today);
-  var openInv = DB.invoices.filter(v=>v.status==='פתוחה').length;
+  var lateWash = inWash.filter(t=>t.target_date && t.target_date<today);
+  var low = DB.items.filter(function(i){
+    if(i.min_stock==='' || i.min_stock==null) return false;
+    var total = DB.stockMoves.filter(m=>m.item_id===i.id).reduce((s,m)=>s+Number(m.qty),0);
+    var wash = DB.laundryTasks.filter(t=>t.item_id===i.id&&t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty),0);
+    return (total-wash) < Number(i.min_stock);
+  });
+  var upcoming = DB.orders.filter(o=>o.type==='השכרה' && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);
   el('main').innerHTML =
-    '<div class="grid3">'+
-    kpi(delToday.length,'משלוחים להיום', delToday.length>0)+
-    kpi(upcoming.length,'אספקות השבוע')+
-    kpi(out.length,'הזמנות בחוץ')+
-    kpi(inWash.reduce((s,t)=>s+Number(t.qty),0),'פריטים בכביסה')+
-    kpi(ils(debt),'יתרות לגבייה', debt>0)+
-    kpi(openInv,'חשבוניות פתוחות', openInv>0)+
+    '<div class="gridkpi">'+
+    kpi(ils(debt),'חוב לגבייה', debt>0, 'reports','💰')+
+    kpi(delToday.length,'משלוחים להיום', delToday.length>0, 'deliveries','🚚')+
+    kpi(inWash.reduce((s,t)=>s+Number(t.qty),0),'כביסה בתהליך', lateWash.length>0, 'laundry','🧺')+
+    kpi(openOrd.length,'הזמנות פתוחות', false, 'orders','📦')+
+    kpi(openTasks.length,'משימות פתוחות', lateTasks.length>0, 'tasks','✅')+
+    kpi(low.length,'מלאי נמוך', low.length>0, 'items','📉')+
     '</div>'+
-    (delToday.length?'<div class="section-title"><h2>משלוחים להיום</h2></div>'+delToday.map(delivCard).join(''):'')+
-    '<div class="section-title"><h2>אספקות קרובות</h2></div>'+
+    '<div class="chartgrid">'+
+    '<div class="card"><h3 style="margin-bottom:10px">📈 הכנסות — 6 חודשים אחרונים <span class="muted" style="font-weight:400;font-size:12px">(לפני מע"מ)</span></h3>'+revenueChartSvg()+'</div>'+
+    '<div class="card"><h3 style="margin-bottom:10px">🍩 הזמנות לפי סטטוס</h3>'+ordersDonutSvg()+'</div>'+
+    '</div>'+
+    attnListHtml(delDue, lateWash, lateTasks, today)+
+    '<div class="section-title"><h2>אספקות קרובות (7 ימים)</h2></div>'+
     (upcoming.length? upcoming.sort((a,b)=>a.start_date>b.start_date?1:-1).map(orderCard).join('') : '<div class="card empty">אין אספקות מתוכננות השבוע</div>');
 }
-function kpi(v,l,alert){ return '<div class="kpi'+(alert?' alert':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
+/* גרף עמודות הכנסות — SVG טהור, ללא ספריות */
+function revenueChartSvg(){
+  var months = [], now = new Date();
+  for(var i=5;i>=0;i--){
+    var d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2));
+  }
+  var sums = months.map(function(mk){
+    return (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+      .reduce((s,v)=>s+Number(v.subtotal||0),0);
+  });
+  var max = Math.max.apply(null, sums);
+  if(!(max>0)) return '<div class="empty">אין נתונים עדיין — הפק חשבונית ראשונה והגרף יתמלא</div>';
+  var HEB_M = ['ינו','פבר','מרץ','אפר','מאי','יונ','יול','אוג','ספט','אוק','נוב','דצמ'];
+  var W=480, H=210, pad=10, bw=Math.floor((W-2*pad)/6);
+  var bars = months.map(function(mk,idx){
+    var v = sums[idx], bh = Math.round((H-64)*v/max), x = pad+idx*bw+9, y = H-32-bh;
+    var lbl = HEB_M[Number(mk.slice(5,7))-1]+' '+mk.slice(2,4);
+    return '<rect x="'+x+'" y="'+y+'" width="'+(bw-18)+'" height="'+Math.max(bh,2)+'" rx="6" fill="'+(idx===5?'var(--teal)':'var(--navy2)')+'" opacity="'+(idx===5?'1':'.72')+'"/>'+
+      '<text x="'+(x+(bw-18)/2)+'" y="'+(y-7)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">'+(v?'₪'+Math.round(v).toLocaleString('he-IL'):'')+'</text>'+
+      '<text x="'+(x+(bw-18)/2)+'" y="'+(H-12)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+lbl+'</text>';
+  }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="הכנסות 6 חודשים">'+
+    '<line x1="'+pad+'" y1="'+(H-32)+'" x2="'+(W-pad)+'" y2="'+(H-32)+'" stroke="var(--line)" stroke-width="1.5"/>'+bars+'</svg>';
+}
+/* דונאט הזמנות לפי סטטוס — SVG טהור */
+function ordersDonutSvg(){
+  var COLORS = {'הצעת מחיר':'#B3BEC6','טיוטה':'#8C9BA5','מאושרת':'var(--teal)','סופקה':'var(--amber)','הוחזרה':'var(--navy2)','הושלמה':'var(--ok)','בוטלה':'var(--danger)'};
+  var counts = {};
+  (DB.orders||[]).forEach(function(o){ var st=o.status||'אחר'; counts[st]=(counts[st]||0)+1; });
+  var keys = Object.keys(counts);
+  var total = keys.reduce((s,k)=>s+counts[k],0);
+  if(!total) return '<div class="empty">אין נתונים עדיין — צור הזמנה ראשונה והגרף יתמלא</div>';
+  var R=70, C=2*Math.PI*R, off=0, segs='';
+  keys.forEach(function(k){
+    var len = counts[k]/total*C;
+    segs += '<circle r="'+R+'" cx="100" cy="100" fill="none" stroke="'+(COLORS[k]||'#8C9BA5')+'" stroke-width="30" stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'" transform="rotate(-90 100 100)"/>';
+    off += len;
+  });
+  var legend = keys.map(k=>'<div style="display:flex;align-items:center;gap:7px;padding:3px 0;font-size:13px">'+
+    '<span style="width:13px;height:13px;border-radius:4px;background:'+(COLORS[k]||'#8C9BA5')+';flex:none"></span>'+esc(k)+' — <b>'+counts[k]+'</b></div>').join('');
+  return '<div class="row" style="align-items:center">'+
+    '<svg viewBox="0 0 200 200" style="width:165px;height:165px;flex:none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="הזמנות לפי סטטוס">'+segs+
+    '<text x="100" y="97" text-anchor="middle" font-size="27" font-weight="800" fill="var(--navy)">'+total+'</text>'+
+    '<text x="100" y="117" text-anchor="middle" font-size="12" fill="var(--muted)">הזמנות</text></svg>'+
+    '<div class="grow" style="min-width:130px">'+legend+'</div></div>';
+}
+/* רשימת "דורש טיפול היום" — כסף ← תפעול ← משימות */
+function attnListHtml(delDue, lateWash, lateTasks, today){
+  var rows = [];
+  var av = allowedViews().map(function(x){ return x[0]; });
+  delDue.forEach(function(d){
+    var o = DB.orders.find(x=>x.id===d.order_id)||{};
+    rows.push('<div class="attn-row"'+(av.includes('deliveries')?' onclick="go(\'deliveries\')" style="cursor:pointer"':' style="cursor:default"')+'><span class="tag" style="background:var(--navy2)">🚚 משלוח</span>'+
+      '<div class="grow">'+esc(d.kind)+' — '+esc(cust(o.customer_id))+(d.driver?' · נהג: '+esc(d.driver):' · <b style="color:var(--danger)">ללא נהג</b>')+'</div>'+
+      '<span class="muted">'+esc(d.date)+(d.date<today?' ⚠️ באיחור':'')+'</span></div>');
+  });
+  lateWash.forEach(function(t){
+    rows.push('<div class="attn-row"'+(av.includes('laundry')?' onclick="go(\'laundry\')" style="cursor:pointer"':' style="cursor:default"')+'><span class="tag" style="background:var(--amber)">🧺 כביסה</span>'+
+      '<div class="grow">'+esc(item(t.item_id))+' × '+esc(t.qty)+' — עבר יעד השחרור</div>'+
+      '<span class="muted">יעד: '+esc(t.target_date)+'</span></div>');
+  });
+  lateTasks.forEach(function(t){
+    rows.push('<div class="attn-row" onclick="openTask(\''+t.id+'\')"><span class="tag" style="background:var(--danger)">✅ משימה</span>'+
+      '<div class="grow">'+esc(t.title)+' — באיחור</div>'+
+      '<span class="muted">יעד: '+esc(t.due_date)+'</span></div>');
+  });
+  return '<div class="section-title"><h2>⚡ דורש טיפול היום</h2></div><div class="card">'+
+    (rows.length? rows.join('') : '<div class="empty">הכל תחת שליטה — אין חריגים להיום 🎉</div>')+'</div>';
+}
+function kpi(v,l,alert,view,ico){
+  var canGo = view && allowedViews().some(function(x){ return x[0]===view; });
+  return '<div class="kpi'+(alert?' alert':'')+(canGo?' click':'')+'"'+(canGo?' onclick="go(\''+view+'\')" title="לחץ למעבר למסך"':'')+'>'+
+    (ico?'<div class="ico">'+ico+'</div>':'')+'<div class="v">'+v+'</div><div class="l">'+l+'</div></div>';
+}
 function custBalance(cid){
   return DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).reduce((s,o)=>s+orderBalance(o.id),0);
 }
@@ -605,8 +828,10 @@ function rDeliveries(){
 }
 function delivCard(d){
   var o = DB.orders.find(x=>x.id===d.order_id)||{};
+  var drv = d.driver? DB.employees.find(e=>e.name===d.driver) : null;
   return '<div class="card"><div class="row"><div class="grow"><b>'+esc(d.kind)+'</b> · '+esc(cust(o.customer_id))+
     '<div class="muted">'+esc(d.date)+(d.driver?' · נהג: '+esc(d.driver):'')+'</div></div>'+
+    (drv?contactBtns(drv.phone,''):'')+
     '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
     (d.status==='מתוכנן'?'<button class="btn ghost sm" onclick="driverForm(\''+d.id+'\')">שבץ נהג</button>':'')+
     (d.status==='בוצע'&&d.note_number?'<button class="btn ghost sm" onclick="printDeliveryNote(\''+d.id+'\')">🖨 תעודה '+d.note_number+'</button>':'')+
@@ -697,6 +922,9 @@ function rCustomers(){
         '<div class="grow"><b>'+esc(c.name)+'</b> <span class="muted">· '+esc(c.type)+'</span>'+
         '<div class="muted">'+(primary?esc(primary.name)+' '+esc(primary.phone):'אין איש קשר')+'</div></div>'+
         (bal>0.01?'<div style="color:var(--danger);font-weight:600">'+ils(bal)+'</div>':'')+
+        contactBtns((primary&&primary.phone)||c.phone, c.email)+
+        '<span class="rowact"><button title="עריכת לקוח" onclick=\'event.stopPropagation();custForm('+JSON.stringify(c).replace(/'/g,'&#39;')+')\'>✏️</button>'+
+        (ROLE==='מנהל'?'<button class="del" title="מחיקת לקוח (קוד מנהל)" onclick="event.stopPropagation();delRecord(\'customers\',\''+c.id+'\',\'את הלקוח\')">🗑️</button>':'')+'</span>'+
         '</div></div>';
     }).join(''):'<div class="card empty">אין לקוחות עדיין</div>');
 }
@@ -725,12 +953,13 @@ function openCust(cid){
   var c = DB.customers.find(x=>x.id===cid); if(!c) return;
   var contacts = DB.contacts.filter(x=>x.customer_id===cid);
   var prices = DB.customerPrices ? DB.customerPrices.filter(x=>x.customer_id===cid) : (DB.customer_prices||[]).filter(x=>x.customer_id===cid);
-  openModal('<h2>'+esc(c.name)+' <button class="btn ghost sm" onclick=\'custForm('+JSON.stringify(c).replace(/'/g,'&#39;')+')\'>ערוך</button></h2>'+
+  var primK = DB.contacts.find(x=>x.customer_id===cid&&x.is_primary==='כן')||DB.contacts.find(x=>x.customer_id===cid)||{};
+  openModal('<h2>'+esc(c.name)+' '+contactBtns(c.phone||primK.phone, c.email||primK.email)+' <button class="btn ghost sm" onclick=\'custForm('+JSON.stringify(c).replace(/'/g,'&#39;')+')\'>ערוך</button></h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(c.type)+(c.payment_terms?' · '+esc(c.payment_terms):'')+(c.vat_id?' · ח.פ '+esc(c.vat_id):'')+
     (c.portal_code?' · קוד פורטל: <b>'+esc(c.portal_code)+'</b> <button class="btn ghost sm" onclick="copyPortalLink(\''+esc(c.portal_code)+'\')">📋 העתק קישור הזמנה</button>':'')+'</div>'+
     '<div class="section-title" style="margin-top:6px"><h3>אנשי קשר</h3><button class="btn ghost sm" onclick="contactForm(\''+cid+'\')">+ איש קשר</button></div>'+
-    (contacts.length?'<table><tr><th>שם</th><th>תפקיד</th><th>טלפון</th><th>ראשי</th></tr>'+
-      contacts.map(k=>'<tr><td>'+esc(k.name)+'</td><td>'+esc(k.role)+'</td><td><a href="tel:'+esc(k.phone)+'">'+esc(k.phone)+'</a></td><td>'+(k.is_primary==='כן'?'★':'')+'</td></tr>').join('')+'</table>'
+    (contacts.length?'<table><tr><th>שם</th><th>תפקיד</th><th>טלפון</th><th>קשר</th><th>ראשי</th></tr>'+
+      contacts.map(k=>'<tr><td>'+esc(k.name)+'</td><td>'+esc(k.role)+'</td><td>'+esc(k.phone)+'</td><td>'+contactBtns(k.phone,k.email)+'</td><td>'+(k.is_primary==='כן'?'★':'')+'</td></tr>').join('')+'</table>'
       :'<div class="muted">אין אנשי קשר</div>')+
     '<div class="section-title"><h3>מחירון מיוחד</h3><button class="btn ghost sm" onclick="priceForm(\''+cid+'\')">+ מחיר</button></div>'+
     (prices.length?'<table><tr><th>פריט</th><th>סוג</th><th>מחיר</th></tr>'+prices.map(p=>'<tr><td>'+esc(item(p.item_id))+'</td><td>'+esc(p.price_type)+'</td><td>'+ils(p.price)+'</td></tr>').join('')+'</table>':'<div class="muted">אין — יחול מחיר הפריט הרגיל</div>')+
@@ -778,7 +1007,8 @@ function rItems(){
         (wash?'<div style="text-align:center"><div class="big" style="color:var(--amber)">'+wash+'</div><div class="muted">בכביסה</div></div>':'')+
         '<button class="btn ghost sm" onclick="availForm(\''+i.id+'\')">זמינות</button>'+
         '<button class="btn ghost sm" onclick="unitsModal(\''+i.id+'\')">יחידות ('+DB.units.filter(u=>u.item_id===i.id&&u.status!=='גרוט').length+')</button>'+
-        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'items\',\''+i.id+'\',\'את הפריט\')">מחק</button>':'')+notesBtn('item',i.id)+tagBtn('item',i.id)+'</div>'+linksSection('item',i.id)+'</div>';
+        notesBtn('item',i.id)+tagBtn('item',i.id)+
+        (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת פריט (קוד מנהל)" onclick="delRecord(\'items\',\''+i.id+'\',\'את הפריט\')">🗑️</button></span>':'')+'</div>'+linksSection('item',i.id)+'</div>';
     }).join(''):'<div class="card empty">אין פריטים עדיין</div>');
 }
 function itemForm(){
@@ -843,7 +1073,8 @@ async function runAvail(iid){
 function rPurchasing(){
   el('main').innerHTML = '<div class="section-title"><h2>ספקים</h2><button class="btn ghost sm" onclick="supForm()">+ ספק</button></div>'+
     (DB.suppliers.length? DB.suppliers.map(s=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(s.name)+'</b><div class="muted">'+esc(s.contact_name||'')+' '+esc(s.phone||'')+(s.payment_terms?' · '+esc(s.payment_terms):'')+'</div></div>'+
-    (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'suppliers\',\''+s.id+'\',\'את הספק\')">מחק</button>':'')+notesBtn('supplier',s.id)+tagBtn('supplier',s.id)+'</div>'+linksSection('supplier',s.id)+'</div>').join(''):'<div class="card empty">אין ספקים</div>')+
+    contactBtns(s.phone, s.email)+notesBtn('supplier',s.id)+tagBtn('supplier',s.id)+
+    (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת ספק (קוד מנהל)" onclick="delRecord(\'suppliers\',\''+s.id+'\',\'את הספק\')">🗑️</button></span>':'')+'</div>'+linksSection('supplier',s.id)+'</div>').join(''):'<div class="card empty">אין ספקים</div>')+
     '<div class="section-title"><h2>הזמנות רכש</h2><button class="btn" onclick="purForm()">+ רכש</button></div>'+
     (DB.purchases.length? DB.purchases.slice().reverse().map(function(p){
       var lines = DB.purchaseLines.filter(l=>l.purchase_id===p.id);
@@ -1691,10 +1922,11 @@ function linksSection(type,id){
   if(!ls.length) return '';
   return '<div style="margin-top:12px"><h3>🏷️ מקושר אל:</h3><div style="margin-top:6px;line-height:2.4">'+ls.map(function(L){return linkChip(L,type,id);}).join(' ')+'</div></div>';
 }
-async function delLink(lid, ctxType, ctxId){
-  if(!confirm('להסיר את הקישור?')) return;
-  var r = await act('delete',{table:'links',id:lid},'הקישור הוסר');
-  if(r) entOpen(ctxType, ctxId);
+function delLink(lid, ctxType, ctxId){
+  confirmManagerDelete(async function(){
+    var r = await act('delete',{table:'links',id:lid},'הקישור הוסר');
+    if(r) entOpen(ctxType, ctxId);
+  });
 }
 // דיאלוג תיוג — בחר סוג, חפש בשם, לחץ לשמירה
 var TAG_CTX = null;
@@ -1983,7 +2215,7 @@ function rWarehouses(){
     (DB.warehouses.length? DB.warehouses.map(function(w){
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(w.name)+'</b> · '+esc(w.city||'')+
         '<div class="muted">'+esc(w.address||'')+(w.phone?' · '+esc(w.phone):'')+'</div></div>'+
-        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'warehouses\',\''+w.id+'\',\'את המחסן\')">מחק</button>':'')+'</div>'+
+        (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת מחסן (קוד מנהל)" onclick="delRecord(\'warehouses\',\''+w.id+'\',\'את המחסן\')">🗑️</button></span>':'')+'</div>'+
         '<table style="margin-top:8px"><tr><th>פריט</th><th>מלאי במחסן</th></tr>'+
         DB.items.map(function(i){
           var q = DB.stockMoves.filter(m=>m.item_id===i.id&&String(m.warehouse_id||'')===w.id).reduce((s,m)=>s+Number(m.qty),0);
@@ -2052,8 +2284,9 @@ function rFleet(){
         '<div class="muted">ק"מ: '+esc(v.mileage_km||'—')+(v.assigned_driver_id?' · נהג קבוע: '+esc(empName(v.assigned_driver_id)):'')+'</div>'+
         (warns.length?'<div style="color:var(--amber);font-weight:600">⚠ '+warns.join(' · ')+'</div>':'')+'</div>'+
         '<span class="chip" style="background:'+(v.status==='פעיל'?'var(--ok)':v.status==='בטיפול'?'var(--amber)':'var(--danger)')+'">'+esc(v.status)+'</span>'+
-        '<button class="btn ghost sm" onclick=\'vehForm('+JSON.stringify(v).replace(/'/g,'&#39;')+')\'>ערוך</button>'+
-        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'vehicles\',\''+v.id+'\',\'את הרכב\')">מחק</button>':'')+notesBtn('vehicle',v.id)+tagBtn('vehicle',v.id)+'</div>'+linksSection('vehicle',v.id)+'</div>';
+        notesBtn('vehicle',v.id)+tagBtn('vehicle',v.id)+
+        '<span class="rowact"><button title="עריכת רכב" onclick=\'vehForm('+JSON.stringify(v).replace(/'/g,'&#39;')+')\'>✏️</button>'+
+        (ROLE==='מנהל'?'<button class="del" title="מחיקת רכב (קוד מנהל)" onclick="delRecord(\'vehicles\',\''+v.id+'\',\'את הרכב\')">🗑️</button>':'')+'</span></div>'+linksSection('vehicle',v.id)+'</div>';
     }).join(''):'<div class="card empty">אין רכבים בצי</div>')+
     '<div class="section-title"><h3>יומן נסיעות (שינוע)</h3></div>'+
     (DB.trips.length?'<div class="card"><table><tr><th>תאריך</th><th>סוג</th><th>שיטה</th><th>נהג/שליח</th><th>רכב</th><th>מסלול</th><th>עלות</th></tr>'+
@@ -2103,7 +2336,8 @@ function rAssets(){
     (DB.carts.length?'<div class="grid3">'+DB.carts.map(c=>'<div class="kpi"><div class="v" style="font-size:17px">'+esc(c.id)+'</div><div class="l">'+esc(c.location||'')+(c.barcode?' · ⎘'+esc(c.barcode):'')+'</div><span class="chip" style="background:'+(c.status==='פנויה'?'var(--ok)':'var(--amber)')+';margin-top:6px">'+esc(c.status)+'</span></div>').join('')+'</div>':'<div class="card empty">אין עגלות</div>')+
     '<div class="section-title"><h2>מכונות</h2><button class="btn ghost sm" onclick="machForm()">+ מכונה</button></div>'+
     (DB.machines.length? DB.machines.map(m=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(m.id)+'</b> · '+esc(m.type)+(m.model?' · '+esc(m.manufacturer||'')+' '+esc(m.model):'')+'<div class="muted">טיפול הבא: '+esc(m.next_service||'לא נקבע')+'</div></div><span class="chip" style="background:'+(m.status==='פעילה'?'var(--ok)':'var(--danger)')+'">'+esc(m.status)+'</span>'+
-    (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'machines\',\''+m.id+'\',\'את המכונה\')">מחק</button>':'')+notesBtn('machine',m.id)+'</div></div>').join(''):'<div class="card empty">אין מכונות</div>');
+    notesBtn('machine',m.id)+
+    (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת מכונה (קוד מנהל)" onclick="delRecord(\'machines\',\''+m.id+'\',\'את המכונה\')">🗑️</button></span>':'')+'</div></div>').join(''):'<div class="card empty">אין מכונות</div>');
 }
 function cartForm(){
   openModal('<h2>עגלה חדשה</h2><div class="grid2"><div class="frow"><label>מזהה (ריק = אוטומטי)</label><input id="f_cartid" placeholder="אוטומטי"></div>'+
@@ -2141,8 +2375,8 @@ function rShelves(){
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(sh.code||sh.id)+'</b>'+(sh.location?' · '+esc(sh.location):'')+(sh.barcode?' <span class="muted">· ⎘'+esc(sh.barcode)+'</span>':'')+
         '<div class="muted">מחסן: '+esc(w?w.name:'ראשי')+(sh.notes?' · '+esc(sh.notes):'')+'</div></div>'+
         '<span class="chip" style="background:'+(sh.active!=='לא'?'var(--ok)':'var(--danger)')+'">'+(sh.active!=='לא'?'פעיל':'לא פעיל')+'</span>'+
-        '<button class="btn ghost sm" onclick=\'shelfForm('+JSON.stringify(sh).replace(/'/g,'&#39;')+')\'>ערוך</button>'+
-        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'shelves\',\''+sh.id+'\',\'את המדף\')">מחק</button>':'')+'</div></div>';
+        '<span class="rowact"><button title="עריכת מדף" onclick=\'shelfForm('+JSON.stringify(sh).replace(/'/g,'&#39;')+')\'>✏️</button>'+
+        (ROLE==='מנהל'?'<button class="del" title="מחיקת מדף (קוד מנהל)" onclick="delRecord(\'shelves\',\''+sh.id+'\',\'את המדף\')">🗑️</button>':'')+'</span></div></div>';
     }).join(''):'<div class="card empty">אין מדפים עדיין</div>');
 }
 function shelfForm(sh){
@@ -2169,7 +2403,8 @@ function rStaff(){
   el('main').innerHTML = '<div class="section-title"><h2>עובדים</h2><button class="btn" onclick="empForm()">+ עובד</button></div>'+
     '<p class="muted" style="margin-bottom:10px">ברגע שקיים עובד אחד, הכניסה למערכת דורשת קוד עובד. תפקיד קובע אילו מסכים רואים: מכבסה — רק לוח כביסה וסריקה; נהג — רק משלוחים.</p>'+
     (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(e.name)+'</b> · '+esc(e.role)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
-    '<button class="btn ghost sm" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'>ערוך הרשאות</button>'+notesBtn('employee',e.id)+'</div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
+    contactBtns(e.phone, e.email)+notesBtn('employee',e.id)+
+    '<span class="rowact"><button title="עריכת עובד והרשאות" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'>✏️</button></span>'+'</div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
     '<p class="muted" style="margin-top:10px">כניסות ייעודיות: נהג/עובד מכבסה נכנסים באותו קישור עם הקוד האישי — ורואים רק את המסכים שלהם. קישור פורטל ללקוח קיים: כפתור ההעתקה בכרטיס הלקוח. קישור חנות ציבורית לאתר/דף נחיתה: הוסף ?shop=1 לכתובת — מבקר בוחר מוצרים, רואה מחיר, ממלא פרטים ונרשם אוטומטית כלקוח.</p>';
 }
 function empForm(emp){
