@@ -169,7 +169,7 @@ async function refresh(){ var r = await api('getAll'); if(r.ok){ DB=r.db; render
 var BUSY = false;
 var FE_MAP = {customers:'customers',contacts:'contacts',customer_prices:'customerPrices',items:'items',units:'units',
   stock_moves:'stockMoves',suppliers:'suppliers',purchases:'purchases',purchase_lines:'purchaseLines',orders:'orders',
-  order_lines:'orderLines',deliveries:'deliveries',expenses:'expenses',carts:'carts',machines:'machines',
+  order_lines:'orderLines',deliveries:'deliveries',expenses:'expenses',carts:'carts',machines:'machines',shelves:'shelves',
   employees:'employees',attendance:'attendance',payroll:'payroll',tasks:'tasks',task_comments:'taskComments',meetings:'meetings'};
 function showBusy(on){ el('busy').style.display = on?'block':'none'; }
 async function act(action, payload, okMsg){
@@ -404,7 +404,7 @@ async function delRecord(table, id, label){
 var VIEWS = [['dash','לוח בקרה'],['orders','הזמנות'],['notes','תרשומות'],['tasks','משימות'],['calendar','יומן'],['meetings','פגישות'],
   ['laundry','כביסה'],['returns','החזרות'],['deliveries','משלוחים'],['finance','כספים'],
   ['customers','לקוחות'],['items','פריטים ומלאי'],['purchasing','רכש וספקים'],['scan','סריקה'],['barcodes','ברקודים'],
-  ['reports','דוחות'],['warehouses','מחסנים'],['fleet','צי רכב'],['assets','עגלות ומכונות'],['staff','עובדים'],['attendance','נוכחות'],['payroll','שכר'],['settings','מיתוג והגדרות']];
+  ['reports','דוחות'],['warehouses','מחסנים'],['shelves','מדפים'],['fleet','צי רכב'],['assets','עגלות ומכונות'],['staff','עובדים'],['attendance','נוכחות'],['payroll','שכר'],['settings','מיתוג והגדרות']];
 function render(){
   var views = VIEWS.filter(function(v){
     if(USER_VIEWS) return USER_VIEWS.split(',').map(s=>s.trim()).includes(v[0]);
@@ -417,7 +417,7 @@ function render(){
   el('nav').innerHTML = views.map(v=>'<button class="'+(VIEW===v[0]?'on':'')+'" onclick="go(\''+v[0]+'\')">'+v[1]+'</button>').join('');
   ({dash:rDash,orders:rOrders,tasks:rTasks,calendar:rCalendar,meetings:rMeetings,laundry:rLaundry,deliveries:rDeliveries,finance:rFinance,customers:rCustomers,
     items:rItems,purchasing:rPurchasing,scan:rScan,barcodes:rBarcodes,reports:rReports,assets:rAssets,
-    staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings,warehouses:rWarehouses,fleet:rFleet,returns:rReturns,notes:rNotes})[VIEW]();
+    staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings,warehouses:rWarehouses,shelves:rShelves,fleet:rFleet,returns:rReturns,notes:rNotes})[VIEW]();
 }
 function go(v){ VIEW=v; render(); window.scrollTo(0,0); }
 
@@ -581,7 +581,7 @@ function rLaundry(){
         var freeCarts = DB.carts.filter(c=>c.status==='פנויה');
         return '<div class="ktask"><div class="t">'+esc(item(t.item_id))+' × '+t.qty+'</div>'+
         '<div class="muted">'+esc(cust((DB.orders.find(o=>o.id===t.order_id)||{}).customer_id))+(t.cart_id?' · עגלה '+esc(t.cart_id):'')+
-        (t.target_date?'<br>יעד שחרור: <b style="color:'+(t.target_date<new Date().toISOString().slice(0,10)?'var(--danger)':'var(--ink)')+'">'+esc(t.target_date)+'</b> (ימי עסקים, בלי שבת/חג)':'')+'</div>'+
+        (t.target_date?'<br>יעד שחרור: <b style="color:'+(t.target_date<new Date().toISOString().slice(0,10)?'var(--danger)':'var(--ink)')+'">'+esc(t.target_date)+'</b> (ימי עסקים, בלי שבת/חג)':'')+(st==='מוכן'&&t.package_barcode?'<br>אריזה: <b>'+esc(t.package_barcode)+'</b>':'')+'</div>'+
         (st!=='מוכן'?'<div class="row" style="margin-top:8px">'+
           '<button class="btn sm" onclick="doAdvance(\''+t.id+'\')">קדם ←</button>'+
           (!t.cart_id&&freeCarts.length?'<select id="cart_'+t.id+'" style="width:auto;font-size:12px;padding:5px">'+freeCarts.map(c=>'<option>'+c.id+'</option>').join('')+'</select><button class="btn ghost sm" onclick="doAssignCart(\''+t.id+'\')">שייך עגלה</button>':'')+
@@ -609,6 +609,7 @@ function delivCard(d){
     '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
     (d.status==='מתוכנן'?'<button class="btn ghost sm" onclick="driverForm(\''+d.id+'\')">שבץ נהג</button>':'')+
     (d.status==='בוצע'&&d.note_number?'<button class="btn ghost sm" onclick="printDeliveryNote(\''+d.id+'\')">🖨 תעודה '+d.note_number+'</button>':'')+
+    (d.photo_url?'<a class="btn ghost sm" href="'+esc(d.photo_url)+'" target="_blank">📷 צפה בצילום</a>':'<button class="btn ghost sm" onclick="deliveryPhoto(\''+d.id+'\')">📷 צילום מסירה</button>')+
     '</div></div>';
 }
 function driverForm(did){
@@ -621,6 +622,21 @@ function driverForm(did){
 async function saveDriver(did){
   var r = await act('update',{table:'deliveries',id:did,row:{driver:el('f_driver').value,vehicle_id:el('f_dveh').value}},'שובץ');
   if(r) closeModal();
+}
+function deliveryPhoto(did){
+  var inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*'; inp.setAttribute('capture','environment');
+  inp.onchange = async function(){
+    var f = inp.files[0];
+    if(!f) return;
+    if(f.size > 4*1024*1024) return toast('הקובץ גדול מ-4MB — צלם באיכות נמוכה יותר', true);
+    toast('מעלה צילום מסירה...');
+    var b64 = await new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(rd.result.split(',')[1]);}; rd.readAsDataURL(f); });
+    var u = await api('deliverPhoto',{delivery_id:did,base64:b64,mime:f.type});
+    if(u.ok){ toast('הצילום נשמר'); var g = await api('getAll'); if(g.ok){ DB=g.db; render(); } }
+    else toast(u.error, true);
+  };
+  inp.click();
 }
 
 /* ================= כספים ================= */
@@ -777,7 +793,7 @@ function itemForm(){
     '<div class="frow"><label>קידומת ליחידות (למשל MAPA)</label><input id="f_iprefix" style="text-transform:uppercase" placeholder="באנגלית בלבד"></div>'+
     '<div class="frow"><label>ספק</label><select id="f_isup"><option value="">—</option>'+DB.suppliers.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>עלות רכישה</label><input id="f_icost" type="number" min="0" step="0.1"></div>'+
-    '<div class="frow"><label>מיקום אחסון</label><input id="f_iloc" placeholder="מדף / אזור"></div>'+
+    '<div class="frow"><label>מיקום אחסון</label><input id="f_iloc" list="shelfList" placeholder="מדף / אזור"><datalist id="shelfList">'+(DB.shelves||[]).filter(sh=>sh.active!=='לא'&&sh.code).map(sh=>'<option value="'+esc(sh.code)+'">'+esc(sh.location||'')+'</option>').join('')+'</datalist></div>'+
     '<div class="frow"><label>הערות</label><input id="f_inotes"></div>'+
     '<div class="frow"><label>משקל הפריט (ק"ג ליחידה)</label><input id="f_iweight" type="number" min="0" step="0.01" placeholder="לשקילת החזרות"></div>'+
     '<div class="frow"><label>אחוז סטייה מותר (ריק = ברירת מחדל)</label><input id="f_idev" type="number" min="0" step="0.5"></div>'+
@@ -1061,7 +1077,7 @@ function printReport(){
 function rBarcodes(){
   el('main').innerHTML = '<div class="section-title"><h2>ברקודים</h2><button class="btn" onclick="printBarcodes()">🖨 הדפס מדבקות</button></div>'+
     '<div class="card"><div class="grid3">'+
-    '<div class="frow"><label>סוג</label><select id="bc_kind" onchange="renderBarcodeList()"><option value="units">יחידות ממוספרות</option><option value="items">פריטים</option><option value="carts">עגלות</option></select></div>'+
+    '<div class="frow"><label>סוג</label><select id="bc_kind" onchange="renderBarcodeList()"><option value="units">יחידות ממוספרות</option><option value="items">פריטים</option><option value="carts">עגלות</option><option value="packages">אריזות מוכנות</option></select></div>'+
     '<div class="frow"><label>פריט</label><select id="bc_item" onchange="renderBarcodeList()"><option value="">כל הפריטים</option>'+DB.items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>חיפוש מזהה</label><input id="bc_search" oninput="renderBarcodeList()" placeholder="MAPA00..."></div>'+
     '</div></div><div id="bcList" class="grid3"></div>';
@@ -1073,6 +1089,7 @@ function barcodeEntries(){
   if(kind==='units') list = DB.units.filter(u=>u.status!=='גרוט').map(u=>({code:String(u.barcode), label:item(u.item_id), item_id:u.item_id}));
   if(kind==='items') list = DB.items.filter(i=>i.barcode).map(i=>({code:String(i.barcode), label:i.name, item_id:i.id}));
   if(kind==='carts') list = DB.carts.filter(c=>c.barcode).map(c=>({code:String(c.barcode), label:'עגלה '+c.id, item_id:''}));
+  if(kind==='packages') list = DB.laundryTasks.filter(t=>t.package_barcode).map(t=>({code:String(t.package_barcode), label:'אריזה · '+item(t.item_id), item_id:t.item_id}));
   if(itemF) list = list.filter(x=>x.item_id===itemF);
   if(q) list = list.filter(x=>x.code.toUpperCase().includes(q));
   return list;
@@ -1901,6 +1918,38 @@ function machForm(){
 }
 async function saveMach(){
   var r = await act('create',{table:'machines',row:{id:el('f_mid').value,type:el('f_mtype2').value,status:el('f_mstat').value,next_service:el('f_mnext').value,manufacturer:el('f_mmanu').value,model:el('f_mmodel').value,serial:el('f_mserial').value,capacity:el('f_mcap').value}},'המכונה נוספה');
+  if(r) closeModal();
+}
+
+/* ================= מדפים ================= */
+function rShelves(){
+  if(!DB.shelves) DB.shelves = [];
+  el('main').innerHTML = '<div class="section-title"><h2>מדפים</h2><button class="btn" onclick="shelfForm()">+ מדף</button></div>'+
+    ((DB.shelves||[]).length? (DB.shelves||[]).map(function(sh){
+      var w = DB.warehouses.find(x=>x.id===sh.warehouse_id);
+      return '<div class="card"><div class="row"><div class="grow"><b>'+esc(sh.code||sh.id)+'</b>'+(sh.location?' · '+esc(sh.location):'')+(sh.barcode?' <span class="muted">· ⎘'+esc(sh.barcode)+'</span>':'')+
+        '<div class="muted">מחסן: '+esc(w?w.name:'ראשי')+(sh.notes?' · '+esc(sh.notes):'')+'</div></div>'+
+        '<span class="chip" style="background:'+(sh.active!=='לא'?'var(--ok)':'var(--danger)')+'">'+(sh.active!=='לא'?'פעיל':'לא פעיל')+'</span>'+
+        '<button class="btn ghost sm" onclick=\'shelfForm('+JSON.stringify(sh).replace(/'/g,'&#39;')+')\'>ערוך</button>'+
+        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'shelves\',\''+sh.id+'\',\'את המדף\')">מחק</button>':'')+'</div></div>';
+    }).join(''):'<div class="card empty">אין מדפים עדיין</div>');
+}
+function shelfForm(sh){
+  sh = sh||{};
+  openModal('<h2>'+(sh.id?'עריכת מדף':'מדף חדש')+'</h2><div class="grid2">'+
+    '<div class="frow"><label>קוד מדף</label><input id="fs_code" value="'+esc(sh.code||'')+'" placeholder="A-01"></div>'+
+    '<div class="frow"><label>ברקוד</label><input id="fs_bar" value="'+esc(sh.barcode||'')+'"></div>'+
+    '<div class="frow"><label>מיקום</label><input id="fs_loc" value="'+esc(sh.location||'')+'" placeholder="אזור / שורה"></div>'+
+    '<div class="frow"><label>מחסן</label><select id="fs_wh">'+whOptions(sh.warehouse_id)+'</select></div>'+
+    '<div class="frow"><label>פעיל</label><select id="fs_active"><option value="כן"'+(sh.active!=='לא'?' selected':'')+'>כן</option><option value="לא"'+(sh.active==='לא'?' selected':'')+'>לא</option></select></div></div>'+
+    '<div class="frow"><label>הערות</label><input id="fs_notes" value="'+esc(sh.notes||'')+'"></div>'+
+    '<button class="btn" onclick="saveShelf(\''+(sh.id||'')+'\')">שמור</button>');
+}
+async function saveShelf(id){
+  if(!el('fs_code').value) return toast('קוד מדף חובה', true);
+  var row = {code:el('fs_code').value,barcode:el('fs_bar').value,location:el('fs_loc').value,
+    warehouse_id:el('fs_wh').value,notes:el('fs_notes').value,active:el('fs_active').value};
+  var r = id? await act('update',{table:'shelves',id:id,row:row},'עודכן') : await act('create',{table:'shelves',row:row},'המדף נוסף');
   if(r) closeModal();
 }
 
