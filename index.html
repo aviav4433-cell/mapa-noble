@@ -170,7 +170,7 @@ var BUSY = false;
 var FE_MAP = {customers:'customers',contacts:'contacts',customer_prices:'customerPrices',items:'items',units:'units',
   stock_moves:'stockMoves',suppliers:'suppliers',purchases:'purchases',purchase_lines:'purchaseLines',orders:'orders',
   order_lines:'orderLines',deliveries:'deliveries',expenses:'expenses',carts:'carts',machines:'machines',shelves:'shelves',
-  employees:'employees',attendance:'attendance',payroll:'payroll',tasks:'tasks',task_comments:'taskComments',meetings:'meetings'};
+  employees:'employees',attendance:'attendance',payroll:'payroll',tasks:'tasks',task_comments:'taskComments',meetings:'meetings',links:'links'};
 function showBusy(on){ el('busy').style.display = on?'block':'none'; }
 async function act(action, payload, okMsg){
   if(BUSY) return null; // מונע לחיצה כפולה — הפעולה הקודמת עוד רצה
@@ -188,9 +188,9 @@ async function act(action, payload, okMsg){
     }
     // עדכון מקומי מיידי במקום סבב שרת נוסף — פי 2 מהיר
     var t = payload && payload.table, cascades = ['customers','items'];
-    if(action==='create' && r.row && FE_MAP[t]) DB[FE_MAP[t]].push(r.row);
+    if(action==='create' && r.row && FE_MAP[t]) (DB[FE_MAP[t]]=DB[FE_MAP[t]]||[]).push(r.row);
     else if(action==='update' && r.row && FE_MAP[t]){ var arr=DB[FE_MAP[t]]; var i=arr.findIndex(x=>x.id===payload.id); if(i>-1) arr[i]=r.row; }
-    else if(action==='delete' && FE_MAP[t] && !cascades.includes(t)) DB[FE_MAP[t]] = DB[FE_MAP[t]].filter(x=>x.id!==payload.id);
+    else if(action==='delete' && FE_MAP[t] && !cascades.includes(t)) DB[FE_MAP[t]] = (DB[FE_MAP[t]]||[]).filter(x=>x.id!==payload.id);
     else { var g = await api('getAll'); if(g.ok) DB=g.db; }
     render(); if(okMsg) toast(okMsg);
     return r;
@@ -519,7 +519,8 @@ function openOrder(oid){
     (bal>0.01 && !editable?'<button class="btn ghost sm" onclick="payForm(\''+oid+'\')">+ תשלום</button>':'')+'</div>'+
     (pays.length?'<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th></tr>'+pays.map(p=>'<tr><td>'+p.receipt_number+'</td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+'</td></tr>').join('')+'</table>':'')+
     (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
-    '<div style="margin-top:16px" class="row">'+actions+' <button class="btn ghost sm" onclick="printOrderForm(\''+oid+'\')">🖨 '+(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה')+'</button> '+notesBtn('order',oid)+'</div>');
+    linksSection('order',oid)+
+    '<div style="margin-top:16px" class="row">'+actions+' <button class="btn ghost sm" onclick="printOrderForm(\''+oid+'\')">🖨 '+(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה')+'</button> '+notesBtn('order',oid)+' '+tagBtn('order',oid)+'</div>');
 }
 async function doAct(action, oid, msg){ var r=await act(action,{order_id:oid},msg); if(r) openOrder(oid); }
 async function doCancel(oid){ if(confirm('לבטל את ההזמנה?')){ var r=await act('cancelOrder',{order_id:oid},'בוטלה'); if(r) closeModal(); } }
@@ -724,7 +725,6 @@ function openCust(cid){
   var c = DB.customers.find(x=>x.id===cid); if(!c) return;
   var contacts = DB.contacts.filter(x=>x.customer_id===cid);
   var prices = DB.customerPrices ? DB.customerPrices.filter(x=>x.customer_id===cid) : (DB.customer_prices||[]).filter(x=>x.customer_id===cid);
-  var orders = DB.orders.filter(o=>o.customer_id===cid);
   openModal('<h2>'+esc(c.name)+' <button class="btn ghost sm" onclick=\'custForm('+JSON.stringify(c).replace(/'/g,'&#39;')+')\'>ערוך</button></h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(c.type)+(c.payment_terms?' · '+esc(c.payment_terms):'')+(c.vat_id?' · ח.פ '+esc(c.vat_id):'')+
     (c.portal_code?' · קוד פורטל: <b>'+esc(c.portal_code)+'</b> <button class="btn ghost sm" onclick="copyPortalLink(\''+esc(c.portal_code)+'\')">📋 העתק קישור הזמנה</button>':'')+'</div>'+
@@ -734,8 +734,7 @@ function openCust(cid){
       :'<div class="muted">אין אנשי קשר</div>')+
     '<div class="section-title"><h3>מחירון מיוחד</h3><button class="btn ghost sm" onclick="priceForm(\''+cid+'\')">+ מחיר</button></div>'+
     (prices.length?'<table><tr><th>פריט</th><th>סוג</th><th>מחיר</th></tr>'+prices.map(p=>'<tr><td>'+esc(item(p.item_id))+'</td><td>'+esc(p.price_type)+'</td><td>'+ils(p.price)+'</td></tr>').join('')+'</table>':'<div class="muted">אין — יחול מחיר הפריט הרגיל</div>')+
-    '<div class="section-title"><h3>הזמנות</h3></div>'+
-    (orders.length? orders.map(o=>'<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div class="grow">'+esc(o.start_date)+' · '+esc(o.type)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>').join(''):'<div class="muted">אין הזמנות</div>')+
+    cust360(cid)+
     '<div style="margin-top:14px" class="row"><button class="btn ghost sm" onclick="printAgreement(\''+cid+'\')">🖨 הסכם שירות</button><button class="btn ghost sm" onclick="printStatement(\''+cid+'\')">🖨 דו"ח לקוח</button>'+
     (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'customers\',\''+cid+'\',\'את הלקוח\')">מחק לקוח</button>':'')+notesBtn('customer',cid)+'</div>');
 }
@@ -779,7 +778,7 @@ function rItems(){
         (wash?'<div style="text-align:center"><div class="big" style="color:var(--amber)">'+wash+'</div><div class="muted">בכביסה</div></div>':'')+
         '<button class="btn ghost sm" onclick="availForm(\''+i.id+'\')">זמינות</button>'+
         '<button class="btn ghost sm" onclick="unitsModal(\''+i.id+'\')">יחידות ('+DB.units.filter(u=>u.item_id===i.id&&u.status!=='גרוט').length+')</button>'+
-        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'items\',\''+i.id+'\',\'את הפריט\')">מחק</button>':'')+notesBtn('item',i.id)+'</div></div>';
+        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'items\',\''+i.id+'\',\'את הפריט\')">מחק</button>':'')+notesBtn('item',i.id)+tagBtn('item',i.id)+'</div>'+linksSection('item',i.id)+'</div>';
     }).join(''):'<div class="card empty">אין פריטים עדיין</div>');
 }
 function itemForm(){
@@ -844,7 +843,7 @@ async function runAvail(iid){
 function rPurchasing(){
   el('main').innerHTML = '<div class="section-title"><h2>ספקים</h2><button class="btn ghost sm" onclick="supForm()">+ ספק</button></div>'+
     (DB.suppliers.length? DB.suppliers.map(s=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(s.name)+'</b><div class="muted">'+esc(s.contact_name||'')+' '+esc(s.phone||'')+(s.payment_terms?' · '+esc(s.payment_terms):'')+'</div></div>'+
-    (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'suppliers\',\''+s.id+'\',\'את הספק\')">מחק</button>':'')+notesBtn('supplier',s.id)+'</div></div>').join(''):'<div class="card empty">אין ספקים</div>')+
+    (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'suppliers\',\''+s.id+'\',\'את הספק\')">מחק</button>':'')+notesBtn('supplier',s.id)+tagBtn('supplier',s.id)+'</div>'+linksSection('supplier',s.id)+'</div>').join(''):'<div class="card empty">אין ספקים</div>')+
     '<div class="section-title"><h2>הזמנות רכש</h2><button class="btn" onclick="purForm()">+ רכש</button></div>'+
     (DB.purchases.length? DB.purchases.slice().reverse().map(function(p){
       var lines = DB.purchaseLines.filter(l=>l.purchase_id===p.id);
@@ -852,8 +851,8 @@ function rPurchasing(){
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(supp(p.supplier_id))+'</b> · '+esc(p.date)+
         '<div class="muted">'+lines.map(l=>esc(item(l.item_id))+'×'+l.qty).join(', ')+' · '+ils(total)+'</div></div>'+
         '<span class="chip '+esc(p.status)+'">'+esc(p.status)+'</span>'+
-        (p.status==='טיוטה'?'<button class="btn ghost sm" onclick="purLineForm(\''+p.id+'\')">+ שורה</button><button class="btn sm" onclick="doReceivePur(\''+p.id+'\')">קבל למלאי</button>':'')+
-        '</div></div>';
+        (p.status==='טיוטה'?'<button class="btn ghost sm" onclick="purLineForm(\''+p.id+'\')">+ שורה</button><button class="btn sm" onclick="doReceivePur(\''+p.id+'\')">קבל למלאי</button>':'')+tagBtn('purchase',p.id)+
+        '</div>'+linksSection('purchase',p.id)+'</div>';
     }).join(''):'<div class="card empty">אין הזמנות רכש</div>');
 }
 function supForm(){
@@ -1308,7 +1307,8 @@ function openTask(tid){
     '<h3>הערות ומעקב</h3>'+
     '<div style="max-height:220px;overflow-y:auto;margin:8px 0">'+
     (comments.length? comments.map(c=>'<div style="border-bottom:1px solid var(--line);padding:6px 0"><span class="muted">'+esc(fmtTs(c.ts))+' · <b>'+esc(c.user)+'</b></span><br>'+esc(c.text)+'</div>').join(''):'<div class="muted">אין הערות</div>')+'</div>'+
-    '<div class="row" style="margin-bottom:8px">'+notesBtn('task',tid)+'</div>'+
+    linksSection('task',tid)+
+    '<div class="row" style="margin-bottom:8px">'+notesBtn('task',tid)+' '+tagBtn('task',tid)+'</div>'+
     '<div class="row"><input id="f_tcomment" class="grow" placeholder="הוסף הערה..." onkeydown="if(event.key===\'Enter\')addTaskComment(\''+tid+'\')">'+
     '<button class="btn sm" onclick="addTaskComment(\''+tid+'\')">הוסף</button></div>');
 }
@@ -1511,7 +1511,7 @@ function openMeeting(mid){
     '<h3>פרוטוקול / תמלול</h3>'+
     '<textarea id="f_mprotocol" rows="7" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px" placeholder="כתוב או הדבק כאן את סיכום האסיפה...">'+esc(m.protocol||'')+'</textarea>'+
     '<div class="row" style="margin:8px 0 14px"><button class="btn sm" onclick="saveProtocol(\''+mid+'\')">שמור פרוטוקול</button>'+
-    '<button class="btn ghost sm" onclick="printMeeting(\''+mid+'\')">🖨 הדפס פרוטוקול</button>'+notesBtn('meeting',mid)+'</div>'+
+    '<button class="btn ghost sm" onclick="printMeeting(\''+mid+'\')">🖨 הדפס פרוטוקול</button>'+notesBtn('meeting',mid)+tagBtn('meeting',mid)+'</div>'+linksSection('meeting',mid)+
     '<h3>משימות מהאסיפה ('+tasks.length+')</h3>'+
     (tasks.length? tasks.map(t=>'<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+t.id+'\')"><div class="grow">'+esc(t.title)+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status)+'</span></div>').join(''):'<div class="muted">אין משימות עדיין</div>')+
     '<div style="margin-top:12px"><h3>+ משימה חדשה מהאסיפה</h3>'+
@@ -1643,6 +1643,112 @@ async function submitReturn(){
     (r.shortage_charge>0?'<p style="color:var(--danger);font-weight:600">נרשם חיוב חוסרים אוטומטי: '+ils(r.shortage_charge)+' (נכנס לחשבונית)</p>':'<p class="muted">ללא חוסרים</p>')+
     '<p class="muted">הפריטים נכנסו לכביסה</p></div>';
   RET = null;
+}
+
+/* ================= תיוג אוניברסלי (links) ================= */
+// רישום ישויות — לכל סוג: תווית בעברית, אייקון, רשימה, שם לתצוגה ופתיחה (מודל קיים או ניווט למסך)
+var ENT = {
+  customer:{label:'לקוח', icon:'👤', list:function(){return DB.customers||[];}, name:function(r){return r.name;}, open:function(id){openCust(id);}},
+  supplier:{label:'ספק', icon:'🏭', list:function(){return DB.suppliers||[];}, name:function(r){return r.name;}, open:function(id){closeModal(); go('purchasing');}},
+  order:{label:'הזמנה', icon:'📦', list:function(){return (DB.orders||[]).slice().reverse();}, name:function(r){return 'הזמנה '+(r.order_number?'#'+r.order_number:r.id)+' · '+cust(r.customer_id);}, open:function(id){openOrder(id);}},
+  task:{label:'משימה', icon:'✅', list:function(){return (DB.tasks||[]).slice().reverse();}, name:function(r){return r.title;}, open:function(id){openTask(id);}},
+  meeting:{label:'פגישה', icon:'📅', list:function(){return (DB.meetings||[]).slice().reverse();}, name:function(r){return r.title+(r.date?' · '+r.date:'');}, open:function(id){openMeeting(id);}},
+  employee:{label:'עובד', icon:'🧑‍💼', list:function(){return DB.employees||[];}, name:function(r){return r.name;}, open:function(id){closeModal(); go('staff');}},
+  item:{label:'פריט', icon:'🧺', list:function(){return DB.items||[];}, name:function(r){return r.name+(r.size?' '+r.size:'')+(r.color?' '+r.color:'');}, open:function(id){closeModal(); go('items');}},
+  purchase:{label:'רכש', icon:'🛒', list:function(){return (DB.purchases||[]).slice().reverse();}, name:function(r){return 'רכש '+supp(r.supplier_id)+' · '+(r.date||'');}, open:function(id){closeModal(); go('purchasing');}},
+  vehicle:{label:'רכב', icon:'🚚', list:function(){return DB.vehicles||[];}, name:function(r){return (r.plate||r.id)+(r.model?' '+r.model:'');}, open:function(id){closeModal(); go('fleet');}}
+};
+function entName(type,id){
+  var e = ENT[type]; if(!e) return id||'';
+  var r = (e.list()||[]).find(function(x){return String(x.id)===String(id);});
+  return r? e.name(r) : (id||'');
+}
+function entOpen(type,id){ var e=ENT[type]; if(e&&e.open) e.open(id); }
+// כל הקישורים של ישות — בשני הכיוונים
+function linksOf(type,id){
+  return (DB.links||[]).filter(function(l){
+    return (l.from_type===type && String(l.from_id)===String(id)) || (l.to_type===type && String(l.to_id)===String(id));
+  }).map(function(l){
+    var isFrom = (l.from_type===type && String(l.from_id)===String(id));
+    return {linkId:l.id, otherType:isFrom?l.to_type:l.from_type, otherId:isFrom?l.to_id:l.from_id, note:l.note||''};
+  });
+}
+function tagBtn(type,id){
+  var n = linksOf(type,id).length;
+  return '<button class="btn ghost sm" onclick="tagDialog(\''+type+'\',\''+id+'\')">🏷️ תיוג'+(n?' ('+n+')':'')+'</button>';
+}
+function linkChip(L, ctxType, ctxId){
+  var e = ENT[L.otherType]||{};
+  return '<span class="chip" style="background:var(--navy2);cursor:pointer;margin:2px" title="'+esc(e.label||L.otherType)+'" onclick="entOpen(\''+L.otherType+'\',\''+L.otherId+'\')">'+(e.icon||'🏷️')+' '+esc(entName(L.otherType,L.otherId))+(L.note?' · '+esc(L.note):'')+'</span>'+
+    (ROLE==='מנהל'?'<span style="cursor:pointer;color:var(--danger);font-weight:700;padding:0 4px" title="הסר קישור" onclick="delLink(\''+L.linkId+'\',\''+ctxType+'\',\''+ctxId+'\')">✖</span>':'');
+}
+function linksSection(type,id){
+  var ls = linksOf(type,id);
+  if(!ls.length) return '';
+  return '<div style="margin-top:12px"><h3>🏷️ מקושר אל:</h3><div style="margin-top:6px;line-height:2.4">'+ls.map(function(L){return linkChip(L,type,id);}).join(' ')+'</div></div>';
+}
+async function delLink(lid, ctxType, ctxId){
+  if(!confirm('להסיר את הקישור?')) return;
+  var r = await act('delete',{table:'links',id:lid},'הקישור הוסר');
+  if(r) entOpen(ctxType, ctxId);
+}
+// דיאלוג תיוג — בחר סוג, חפש בשם, לחץ לשמירה
+var TAG_CTX = null;
+function tagDialog(fromType, fromId){
+  TAG_CTX = {type:fromType, id:fromId};
+  openModal('<h2>🏷️ קשר אל...</h2>'+
+    '<p class="muted" style="margin-bottom:8px">מתייג את: <b>'+esc((ENT[fromType]||{}).label||fromType)+' — '+esc(entName(fromType,fromId))+'</b></p>'+
+    '<div class="frow"><label>מה לקשר?</label><select id="tg_type" onchange="tagSearchDraw()">'+
+      Object.keys(ENT).map(function(k){return '<option value="'+k+'">'+(ENT[k].icon||'')+' '+ENT[k].label+'</option>';}).join('')+'</select></div>'+
+    '<div class="frow"><label>חיפוש</label><input id="tg_q" placeholder="הקלד שם או מספר..." oninput="tagSearchDraw()"></div>'+
+    '<div class="frow"><label>הערת קשר (רשות)</label><input id="tg_note" placeholder="הקשר, למשל: גביית חוב"></div>'+
+    '<div id="tg_results" style="max-height:260px;overflow-y:auto;border-top:1px solid var(--line)"></div>'+
+    '<div style="margin-top:12px"><button class="btn ghost" onclick="tagBack()">חזרה</button></div>');
+  tagSearchDraw();
+}
+function tagBack(){ closeModal(); if(TAG_CTX) entOpen(TAG_CTX.type, TAG_CTX.id); }
+function tagSearchDraw(){
+  if(!TAG_CTX || !el('tg_type')) return;
+  var t = el('tg_type').value, q = (el('tg_q').value||'').trim().toLowerCase();
+  var e = ENT[t];
+  var list = (e.list()||[]).filter(function(r){
+    if(t===TAG_CTX.type && String(r.id)===String(TAG_CTX.id)) return false; // בלי קישור עצמי
+    if(!q) return true;
+    return String(e.name(r)).toLowerCase().indexOf(q)>-1 || String(r.id).toLowerCase().indexOf(q)>-1;
+  }).slice(0,15);
+  el('tg_results').innerHTML = list.length? list.map(function(r){
+    return '<div class="row" style="padding:8px 6px;border-bottom:1px solid var(--line);cursor:pointer" onclick="tagSave(\''+t+'\',\''+r.id+'\')"><div class="grow">'+(e.icon||'')+' '+esc(e.name(r))+'</div><span class="muted">לחץ לקישור</span></div>';
+  }).join('') : '<div class="muted" style="padding:10px">לא נמצאו תוצאות</div>';
+}
+async function tagSave(toType, toId){
+  var note = el('tg_note')? el('tg_note').value : '';
+  var r = await act('create',{table:'links',row:{from_type:TAG_CTX.type,from_id:TAG_CTX.id,to_type:toType,to_id:toId,note:note}},'הקישור נשמר');
+  if(r) tagBack();
+}
+// תצוגת 360° — כל מה שקשור ללקוח, במקום אחד
+function cust360(cid){
+  function grp(title){ return '<div style="font-weight:700;color:var(--navy);margin:12px 0 4px">'+title+'</div>'; }
+  function rowsOf(arr, fn){ return arr.length? arr.map(fn).join('') : '<div class="muted">אין עדיין</div>'; }
+  var orders = (DB.orders||[]).filter(o=>o.customer_id===cid).slice().sort((a,b)=>a.start_date<b.start_date?1:-1);
+  var linked = linksOf('customer',cid);
+  var lTasks = linked.filter(l=>l.otherType==='task');
+  var lMeets = linked.filter(l=>l.otherType==='meeting');
+  var lOther = linked.filter(l=>l.otherType!=='task'&&l.otherType!=='meeting');
+  var notes = (DB.notes||[]).filter(n=>n.entity_type==='customer'&&String(n.entity_id)===String(cid)).sort((a,b)=>a.ts<b.ts?1:-1);
+  var invs = (DB.invoices||[]).filter(v=>v.customer_id===cid).slice().reverse();
+  var bal = custBalance(cid);
+  return '<div class="section-title" style="margin-top:14px"><h3>🔎 כל מה שקשור ללקוח</h3>'+tagBtn('customer',cid)+'</div>'+
+    grp('📦 הזמנות ('+orders.length+')')+
+    rowsOf(orders, function(o){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openOrder(\''+o.id+'\')"><div class="grow">'+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date)+' ← '+esc(o.end_date)+' · '+esc(o.type)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>'; })+
+    grp('✅ משימות מקושרות ('+lTasks.length+')')+
+    rowsOf(lTasks, function(L){ var t=(DB.tasks||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+L.otherId+'\')"><div class="grow">'+esc(t.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status||'')+'</span></div>'; })+
+    grp('📅 פגישות מקושרות ('+lMeets.length+')')+
+    rowsOf(lMeets, function(L){ var m=(DB.meetings||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openMeeting(\''+L.otherId+'\')"><div class="grow">'+esc(m.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="muted">'+esc(m.date||'')+'</span></div>'; })+
+    grp('📝 תרשומות ('+notes.length+')')+
+    rowsOf(notes.slice(0,8), function(n){ return '<div style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="notesModal(\'customer\',\''+cid+'\')"><span class="muted">'+esc(fmtTs(n.ts))+' · '+esc(n.user)+':</span> '+esc(String(n.text).substring(0,90))+'</div>'; })+
+    grp('🧾 חשבוניות ('+invs.length+') · יתרה לגבייה: '+ils(bal))+
+    rowsOf(invs, function(v){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="printInvoice(\''+v.id+'\')"><div class="grow">חשבונית '+esc(v.number)+' · '+esc(v.date)+'</div><div><b>'+ils(v.total)+'</b></div><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></div>'; })+
+    (lOther.length? grp('🏷️ עוד תיוגים')+'<div style="line-height:2.4">'+lOther.map(function(L){return linkChip(L,'customer',cid);}).join(' ')+'</div>' : '');
 }
 
 /* ================= תרשומות ================= */
@@ -1842,7 +1948,7 @@ function rFleet(){
         (warns.length?'<div style="color:var(--amber);font-weight:600">⚠ '+warns.join(' · ')+'</div>':'')+'</div>'+
         '<span class="chip" style="background:'+(v.status==='פעיל'?'var(--ok)':v.status==='בטיפול'?'var(--amber)':'var(--danger)')+'">'+esc(v.status)+'</span>'+
         '<button class="btn ghost sm" onclick=\'vehForm('+JSON.stringify(v).replace(/'/g,'&#39;')+')\'>ערוך</button>'+
-        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'vehicles\',\''+v.id+'\',\'את הרכב\')">מחק</button>':'')+notesBtn('vehicle',v.id)+'</div></div>';
+        (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'vehicles\',\''+v.id+'\',\'את הרכב\')">מחק</button>':'')+notesBtn('vehicle',v.id)+tagBtn('vehicle',v.id)+'</div>'+linksSection('vehicle',v.id)+'</div>';
     }).join(''):'<div class="card empty">אין רכבים בצי</div>')+
     '<div class="section-title"><h3>יומן נסיעות (שינוע)</h3></div>'+
     (DB.trips.length?'<div class="card"><table><tr><th>תאריך</th><th>סוג</th><th>שיטה</th><th>נהג/שליח</th><th>רכב</th><th>מסלול</th><th>עלות</th></tr>'+
