@@ -193,8 +193,9 @@ nav .nitem.on{color:#fff}
   <div class="box">
     <div class="logo">MAPA<span>·</span>NOBLE</div>
     <p>מערכת ניהול השכרה, כביסה וכספים</p>
-    <input id="pw" type="password" placeholder="סיסמת מערכת">
-    <input id="pin" type="password" inputmode="numeric" placeholder="קוד עובד (אם הוגדר)" onkeydown="if(event.key==='Enter')doLogin()">
+    <input id="lg_user" type="text" autocomplete="username" placeholder="שם משתמש" style="direction:ltr" onkeydown="if(event.key==='Enter')doLogin()">
+    <input id="lg_pass" type="password" autocomplete="current-password" placeholder="סיסמה" onkeydown="if(event.key==='Enter')doLogin()">
+    <label style="display:flex;align-items:center;justify-content:center;gap:7px;font-size:13.5px;color:var(--muted);margin-bottom:14px;font-weight:400;cursor:pointer"><input type="checkbox" id="lg_remember" style="width:auto"> זכור אותי במכשיר</label>
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
@@ -206,6 +207,8 @@ nav .nitem.on{color:#fff}
     <div class="logo" id="brandLbl">MAPA<span>·</span>NOBLE</div>
     <div class="qnav" id="qnav"></div>
     <div class="who" id="whoLbl"></div>
+    <button class="btn sm" onclick="changeMyPassword()" title="שינוי סיסמה למשתמש המחובר">שינוי סיסמה</button>
+    <button class="btn sm" onclick="doLogout()" title="יציאה מהמערכת ומחיקת ההתחברות ממכשיר זה">יציאה</button>
     <button class="btn sm" onclick="refresh()" title="משיכת נתונים עדכניים מהשרת"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg> רענון</button>
   </header>
   <nav id="nav"></nav>
@@ -220,32 +223,134 @@ nav .nitem.on{color:#fff}
 /* ================= הגדרות ================= */
 var API_URL = 'https://script.google.com/macros/s/AKfycbyAFqEJrLLbRT-o5D7slN9lieaIjR8YKFiToy20iHgjS5F4QbDptfD-7al2Ywhs6WA1Hg/exec';
 var PASS = '', USER = '', ROLE = '', CAN_EDIT = true, USER_VIEWS = '';
+var TOKEN = ''; // F2: טוקן סשן — מחליף את סיסמת המערכת בכל בקשה
 var DB = null, VIEW = 'dash', FIN_TAB = 'invoices';
 var STAGES = ['התקבל','בכביסה','בייבוש','בגיהוץ וקיפול','מוכן'];
 
 /* ================= API ================= */
-async function api(action, payload){
+// F2: קריאת רשת גולמית — כשיש טוקן סשן הוא נשלח בתוך ה-payload במקום סיסמת המערכת.
+// פעולות פורטל (portal*) ציבוריות — נשלחות תמיד ללא טוקן.
+async function apiRaw(action, payload){
+  payload = payload || {};
+  var body = { user: USER, action: action, payload: payload };
+  if (TOKEN && String(action).indexOf('portal') !== 0) payload.token = TOKEN;
+  else body.password = PASS; // ללא טוקן — התנהגות ישנה (פורטל / טרום-כניסה)
   var res = await fetch(API_URL, { method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({ password: PASS, user: USER, action: action, payload: payload||{} })});
+    body: JSON.stringify(body)});
   return res.json();
 }
+// F2: שמירת פרטי הסשן מתשובת login / resumeSession
+function applyLogin(lg){
+  USER = lg.user; ROLE = lg.role; CAN_EDIT = lg.can_edit !== false; USER_VIEWS = lg.views || '';
+  if (lg.token){ TOKEN = lg.token; sessionStorage.setItem('mn_token', TOKEN); }
+  sessionStorage.setItem('mn_sess', JSON.stringify({ user: USER, role: ROLE, views: USER_VIEWS, can_edit: CAN_EDIT }));
+
+}
+// F2: ניסיון חידוש שקוף מטוקן המכשיר ("זכור אותי") — מנפיק טוקן סשן טרי
+async function tryResume(){
+  var dt = localStorage.getItem('mn_devtoken');
+  if (!dt) return false;
+  try{
+    var r = await apiRaw('loginByRemember', { remember_token: dt });
+    if (r && r.ok){ applyLogin(r); return true; }
+  }catch(e){ return false; } // תקלת רשת — לא מוחקים את טוקן המכשיר
+  localStorage.removeItem('mn_devtoken'); // השרת דחה — הטוקן פג/בוטל
+  return false;
+}
+// F2: פקיעת סשן — ניקוי הטוקנים וחזרה למסך הכניסה
+function authExpired(){
+  TOKEN = ''; sessionStorage.removeItem('mn_token'); sessionStorage.removeItem('mn_sess');
+  el('app').style.display='none';
+  el('login').style.display='flex';
+  var e = el('loginErr'); if(e) e.textContent = 'פג תוקף החיבור — יש להתחבר מחדש';
+}
+// F2: עטיפת ה-API — אם השרת דחה את הטוקן ('סיסמה שגויה'), מנסים חידוש שקוף
+// פעם אחת מטוקן המכשיר וחוזרים על הבקשה; אחרת חוזרים למסך הכניסה.
+async function api(action, payload){
+  var r = await apiRaw(action, payload);
+  if (r && !r.ok && r.error === 'סיסמה שגויה' && TOKEN && String(action).indexOf('portal') !== 0 && action !== 'login'){
+    if (await tryResume()) return apiRaw(action, payload);
+    authExpired();
+  }
+  return r;
+}
+// F2: כניסה בשם משתמש + סיסמה (+ "זכור אותי")
 async function doLogin(){
-  PASS = el('pw').value;
+  var un = (el('lg_user').value || '').trim(), pw = el('lg_pass').value || '';
+  if(!un || !pw){ el('loginErr').textContent = 'יש להזין שם משתמש וסיסמה'; return; }
   el('loginErr').textContent = 'מתחבר...';
   try{
-    var lg = await api('login', { pin: el('pin').value });
+    var lg = await api('login', { username: un, password: pw, remember: el('lg_remember').checked });
     if(!lg.ok){ el('loginErr').textContent = lg.error; return; }
-    USER = lg.user; ROLE = lg.role; CAN_EDIT = lg.can_edit !== false; USER_VIEWS = lg.views || '';
-    var r = await api('getAll');
-    if(!r.ok){ el('loginErr').textContent = r.error; return; }
-    DB = r.db;
-    el('login').style.display='none';
-    el('app').style.display='block';
-    el('whoLbl').textContent = USER + ' · ' + ROLE;
-    applyTheme();
-    render();
+    applyLogin(lg);
+    if(el('lg_remember').checked && TOKEN){
+      try{ var rm = await apiRaw('rememberLogin', { token: TOKEN });
+        if(rm && rm.ok && rm.remember_token) localStorage.setItem('mn_devtoken', rm.remember_token);
+      }catch(e){}
+    }
+    await enterApp();
   }catch(e){ el('loginErr').textContent = 'שגיאת חיבור — בדוק את כתובת השרת'; }
+}
+// טעינת הנתונים והצגת המערכת — משותף לכניסה, לחידוש ולכניסה אוטומטית
+async function enterApp(){
+  var r = await api('getAll');
+  if(!r.ok){
+    var e = el('loginErr');
+    if(e && r.error !== 'סיסמה שגויה') e.textContent = r.error; // בכשל טוקן authExpired כבר הציג הודעה
+    return false;
+  }
+  DB = r.db;
+  el('login').style.display='none';
+  el('app').style.display='block';
+  el('whoLbl').textContent = USER + ' · ' + ROLE;
+  applyTheme();
+  render();
+  return true;
+}
+// F2: יציאה — ביטול טוקן הסשן וטוקן המכשיר בשרת, ניקוי מקומי וחזרה למסך הכניסה
+async function doLogout(){
+  var dt = localStorage.getItem('mn_devtoken');
+  try{ await apiRaw('logout', { token: TOKEN, deviceToken: dt || undefined }); }catch(e){}
+  TOKEN = ''; sessionStorage.removeItem('mn_token'); sessionStorage.removeItem('mn_sess');
+  localStorage.removeItem('mn_devtoken');
+  location.reload();
+}
+// F2: כניסה אוטומטית בטעינה — קודם טוקן סשן פעיל, ואם אין: "זכור אותי" מהמכשיר
+async function autoLogin(){
+  if(location.search.includes('portal=1') || location.search.includes('shop=1')) return;
+  var t = sessionStorage.getItem('mn_token');
+  if(t){
+    TOKEN = t;
+    try{ var ss = JSON.parse(sessionStorage.getItem('mn_sess') || '{}');
+      USER = ss.user || ''; ROLE = ss.role || ''; USER_VIEWS = ss.views || ''; CAN_EDIT = ss.can_edit !== false;
+    }catch(e){}
+    try{ if(await enterApp()) return; }catch(e){}
+    if(TOKEN) return; // כשל שאינו פקיעת טוקן (למשל רשת) — נשארים במסך הכניסה
+  }
+  if(localStorage.getItem('mn_devtoken')){
+    el('loginErr').textContent = 'מתחבר...';
+    try{ if(await tryResume() && await enterApp()) return; }catch(e){}
+    if(el('loginErr').textContent === 'מתחבר...') el('loginErr').textContent = '';
+  }
+}
+window.addEventListener('load', autoLogin);
+// F2: שינוי סיסמה של המשתמש המחובר — השרת מאמת "עצמי" לפי הטוקן (ללא סיסמה ישנה)
+function changeMyPassword(){
+  var me = ((DB && DB.employees) || []).find(function(x){ return x.name === USER; });
+  if(!me){ toast('לא נמצא עובד תואם למשתמש המחובר', true); return; }
+  openModal('<h2>שינוי סיסמה</h2>'+
+    '<div class="frow"><label>סיסמה חדשה (לפחות 6 תווים)</label><input id="f_np1" type="password" autocomplete="new-password"></div>'+
+    '<div class="frow"><label>אימות סיסמה</label><input id="f_np2" type="password" autocomplete="new-password" onkeydown="if(event.key===\'Enter\')saveMyPassword(\''+me.id+'\')"></div>'+
+    '<button class="btn" onclick="saveMyPassword(\''+me.id+'\')">שמור</button>');
+}
+async function saveMyPassword(id){
+  var p1 = el('f_np1').value, p2 = el('f_np2').value;
+  if(String(p1).length < 6) return toast('הסיסמה חייבת להכיל לפחות 6 תווים', true);
+  if(p1 !== p2) return toast('הסיסמאות אינן תואמות', true);
+  var r = await api('setPassword', { employee_id: id, newPassword: p1 });
+  if(!r || !r.ok) return toast((r && r.error) || 'שגיאה בעדכון הסיסמה', true);
+  closeModal(); toast('הסיסמה עודכנה');
 }
 async function refresh(){ var r = await api('getAll'); if(r.ok){ DB=r.db; render(); toast('עודכן'); } }
 var BUSY = false;
@@ -253,7 +358,12 @@ var FE_MAP = {customers:'customers',contacts:'contacts',customer_prices:'custome
   stock_moves:'stockMoves',suppliers:'suppliers',purchases:'purchases',purchase_lines:'purchaseLines',orders:'orders',
   order_lines:'orderLines',deliveries:'deliveries',expenses:'expenses',carts:'carts',machines:'machines',shelves:'shelves',
   employees:'employees',attendance:'attendance',payroll:'payroll',tasks:'tasks',task_comments:'taskComments',meetings:'meetings',links:'links'};
-function showBusy(on){ el('busy').style.display = on?'block':'none'; }
+function showBusy(on){
+  el('busy').style.display = on?'block':'none';
+  // נטרול כפתורי המודאל בזמן שמירה — מונע לחיצה כפולה שיוצרת רשומות כפולות
+  var modal = el('modal');
+  if(modal) Array.from(modal.querySelectorAll('button')).forEach(function(b){ b.disabled = on; });
+}
 async function act(action, payload, okMsg){
   if(BUSY) return null; // מונע לחיצה כפולה — הפעולה הקודמת עוד רצה
   if(!CAN_EDIT && !['clock'].includes(action)) { toast('למשתמש זה הרשאת צפייה בלבד', true); return null; }
@@ -2474,9 +2584,9 @@ async function saveShelf(id){
 function rStaff(){
   el('main').innerHTML = '<div class="section-title"><h2>עובדים</h2><button class="btn" onclick="empForm()">+ עובד</button></div>'+
     '<p class="muted" style="margin-bottom:10px">ברגע שקיים עובד אחד, הכניסה למערכת דורשת קוד עובד. תפקיד קובע אילו מסכים רואים: מכבסה — רק לוח כביסה וסריקה; נהג — רק משלוחים.</p>'+
-    (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(e.name)+'</b> · '+esc(e.role)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
+    (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(e.name)+'</b> · '+esc(e.role)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.username?' · משתמש: '+esc(e.username):'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
     contactBtns(e.phone, e.email)+notesBtn('employee',e.id)+
-    '<span class="rowact"><button title="עריכת עובד והרשאות" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button></span>'+'</div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
+    '<span class="rowact">'+(ROLE==='מנהל'?'<button title="איפוס סיסמה (מנהל)" onclick="resetEmpPassword(\''+e.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></button>':'')+'<button title="עריכת עובד והרשאות" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button></span>'+'</div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
     '<p class="muted" style="margin-top:10px">כניסות ייעודיות: נהג/עובד מכבסה נכנסים באותו קישור עם הקוד האישי — ורואים רק את המסכים שלהם. קישור פורטל ללקוח קיים: כפתור ההעתקה בכרטיס הלקוח. קישור חנות ציבורית לאתר/דף נחיתה: הוסף ?shop=1 לכתובת — מבקר בוחר מוצרים, רואה מחיר, ממלא פרטים ונרשם אוטומטית כלקוח.</p>';
 }
 function empForm(emp){
@@ -2484,6 +2594,7 @@ function empForm(emp){
   openModal('<h2>'+(emp.id?'עריכת עובד':'עובד חדש')+'</h2><div class="frow"><label>שם</label><input id="f_ename" value="'+esc(emp.name||'')+'"></div>'+
     '<div class="grid2"><div class="frow"><label>תפקיד</label><select id="f_erole">'+['מנהל','משרד','מכבסה','נהג'].map(t=>'<option'+(emp.role===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>קוד כניסה</label><input id="f_epin" inputmode="numeric" placeholder="4 ספרות" value="'+esc(emp.pin||'')+'"></div>'+
+    '<div class="frow"><label>שם משתמש (לכניסה)</label><input id="f_euser" value="'+esc(emp.username||'')+'" placeholder="באנגלית, ללא רווחים" style="direction:ltr;text-align:left"></div>'+
     '<div class="frow"><label>טלפון</label><input id="f_ephone" value="'+esc(emp.phone||'')+'"></div>'+
     '<div class="frow"><label>תעריף לשעה (₪)</label><input id="f_erate" type="number" min="0" step="0.5" value="'+esc(emp.hourly_rate||'')+'"></div>'+
     '<div class="frow"><label>הרשאת עריכה</label><select id="f_eedit"><option value="כן"'+(emp.can_edit!=='לא'?' selected':'')+'>עריכה מלאה</option><option value="לא"'+(emp.can_edit==='לא'?' selected':'')+'>צפייה בלבד</option></select></div>'+
@@ -2506,11 +2617,38 @@ async function saveEmp(id){
   if(!id && !DB.employees.length && el('f_erole').value!=='מנהל') return toast('העובד הראשון חייב להיות מנהל', true);
   var views = Array.from(document.querySelectorAll('.evw:checked')).map(x=>x.value).join(',');
   var row = {name:el('f_ename').value,role:el('f_erole').value,pin:el('f_epin').value,phone:el('f_ephone').value,
+    username:(el('f_euser').value||'').trim().toLowerCase(),
     hourly_rate:Number(el('f_erate').value)||0,can_edit:el('f_eedit').value,views:views,active:'כן',
     national_id:el('f_enid').value,address:el('f_eaddr').value,email:el('f_eemail').value,start_date:el('f_estart').value,
     emergency_name:el('f_eemname').value,emergency_phone:el('f_eemphone').value,bank_details:el('f_ebank').value,notes:el('f_enotes').value,license_number:el('f_elic').value,license_expiry:el('f_elicexp').value};
   var r = id? await act('update',{table:'employees',id:id,row:row},'עודכן') : await act('create',{table:'employees',row:row},'העובד נוסף');
   if(r) closeModal();
+}
+// F2: סיסמה אקראית בת 8 תווים — ללא תווים דו-משמעיים (0/O, 1/l/I)
+function genPassword(){
+  var CH = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789', out = '';
+  var a = new Uint32Array(8); crypto.getRandomValues(a);
+  for(var i=0;i<8;i++) out += CH.charAt(a[i] % CH.length);
+  return out;
+}
+// F2: איפוס סיסמה לעובד (מנהל בלבד) — מוצעת סיסמה אקראית, מוצגת פעם אחת בלבד
+function resetEmpPassword(id){
+  var emp = (DB.employees||[]).find(function(x){ return x.id === id; });
+  if(!emp) return;
+  openModal('<h2>איפוס סיסמה — '+esc(emp.name)+'</h2>'+
+    '<div class="frow"><label>סיסמה חדשה (לפחות 6 תווים)</label><input id="f_rp" value="'+genPassword()+'" style="direction:ltr;text-align:left;font-family:monospace"></div>'+
+    '<p class="muted" style="margin-bottom:10px">הסיסמה תוצג פעם אחת בלבד — העבר אותה לעובד. היא נשמרת בשרת בגיבוב בלבד.</p>'+
+    '<button class="btn" onclick="doResetEmpPassword(\''+id+'\')">אפס סיסמה</button>');
+}
+async function doResetEmpPassword(id){
+  var np = el('f_rp').value;
+  if(String(np).length < 6) return toast('הסיסמה חייבת להכיל לפחות 6 תווים', true);
+  var r = await api('setPassword', { employee_id: id, newPassword: np });
+  if(!r || !r.ok) return toast((r && r.error) || 'שגיאה באיפוס הסיסמה', true);
+  openModal('<h2>הסיסמה אופסה</h2><p>הסיסמה החדשה:</p>'+
+    '<div class="card" style="font-family:monospace;font-size:18px;direction:ltr;text-align:center;user-select:all">'+esc(np)+'</div>'+
+    '<p class="muted" style="margin-bottom:10px">רשום או העבר אותה כעת — היא לא תוצג שוב.</p>'+
+    '<button class="btn" onclick="closeModal()">סגור</button>');
 }
 </script>
 </body>
