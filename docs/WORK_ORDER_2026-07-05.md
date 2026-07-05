@@ -67,7 +67,9 @@ This is a full module, not a fix. Before coding, verify what already exists in t
 
 ### Legacy system reference (validated prototype — study before designing)
 
-The previous NOBLE system (AppSheet, 13 tables / 48 views / 63 actions) implemented this exact flow in production. Its client portal is preserved at **`docs/legacy_noble_portal.html`** in the repo — read it. The owner's instruction: use it as the base for understanding the logic, **then surpass it tenfold**.
+The previous NOBLE system (AppSheet, 13 tables / 48 views / 63 actions) implemented this exact flow in production. Its client portal is preserved at **`docs/legacy_noble_portal.html`** in the repo — read it.
+
+**OWNER'S EXPLICIT DIRECTIVE — greenfield rebuild, not a patch job:** the legacy system was self-built by a non-programmer. It is a *requirements document written in code* — nothing more. Its value is the business logic it proves (the flow, the scans, the billing model). Its implementation is amateur by the owner's own definition and must NOT be copied, ported, or patched. Build the module from scratch, professionally, natively inside the ERP's architecture (single `doPost` router, `TABLES` registry, token auth, LockService/audit discipline, shared UI components). Zero code reuse from the legacy file. If a legacy pattern conflicts with clean design — clean design wins; flag the deviation to the owner in Hebrew with a one-line rationale. "Patch upon patch" (טלאי על טלאי) is the explicit anti-goal.
 
 **Legacy data model (adopt these proven patterns):**
 
