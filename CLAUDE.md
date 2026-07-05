@@ -22,6 +22,7 @@
 - כניסה: action `login` עם `{ username, password }` ב-payload. השרת מחזיר `token` (סשן 6 שעות ב-CacheService).
 - "זכור אותי": `rememberLogin` מנפיק `remember_token` (נשמר hashed ב-ScriptProperties), `loginByRemember` מחדש סשן.
 - הסשן ב-Cache חייב לכלול `{ employee_id, role, name }` — השדה `name` נחוץ לבדיקות ההרשאה ב-`route`.
+- **טקסטים ארוכים (אצווה G1):** `getAll` מחזיר שדות טקסט ארוכים (notes.text, tasks.details, meetings.protocol, task_comments.text) קצוצים ל-300 תווים עם דגל `<שדה>_trunc: 1`. הנתונים בגיליון לא נחתכים לעולם. שליפה מלאה: פעולת `getFullTexts {table, ids}` (קריאה בלבד). בממשק: `ensureFullTexts` לפני כל הצגה/עריכה של רשומה קטועה. **אסור לפתוח טופס עריכה של שדה כזה בלי לשלוף קודם את הטקסט המלא — אחרת שמירה תדרוס את המקור.**
 
 ## אבטחה — חוקים שאסור להפר
 
