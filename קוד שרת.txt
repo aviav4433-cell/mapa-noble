@@ -28,7 +28,14 @@
 //             • חסימת approveOrder להזמנת פורטל/חנות שטרם עברה תשלום/מסגרת (D2/S2)
 //             • כל החישובים באגורות (integer); שדות amount בגיליון נשארים בש"ח לתאימות
 //             • canary: v4.0-B2
-//  אחרי הדבקה: (1) הרץ setupDatabase() פעם אחת מהעורך
+//  אצווה B3-1: שרת פקדון / אימות אשראי (D5 / D10 · הכרעה S4) — ללא שינוי סכימה:
+//             • b3DepositContext (קריאה) · b3StartVerification + portalB3StartVerification (redirect stub)
+//             • doGet — callback stub לקליטת token מספק הסליקה (token בלבד — לעולם לא מספרי כרטיס)
+//             • portalB3RequestGuarantee (לקוח מבקש ערבות חלופית → approval_pending)
+//             • b3SaveGuarantee (משרד: רישום שיק/ערב) · b3ApproveGuarantee (מנהל בלבד)
+//             • portalGetData מחזיר deposit (מצב פקדון — ללא token)
+//             • credentials של ספק אמיתי: ScriptProperties בלבד (S4). כרגע stub — אין ספק מחובר.
+//  אחרי הדבקה: (1) אין צורך ב-setupDatabase — אין שינוי סכימה ב-B3-1
 //              (2) Deploy → Manage deployments → Edit → New version → Deploy
 // ============================================================
 
@@ -106,7 +113,9 @@ var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'setBonus', 'appr
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
-  'b2SetCreditLimit'];
+  'b2SetCreditLimit',
+  // B3-1: אישור ערבות חלופית — מנהל בלבד (D5)
+  'b3ApproveGuarantee'];
 
 // הרץ פעם אחת מהעורך
 function setupDatabase() {
@@ -320,7 +329,9 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   // B1: פעולות קריאה בלבד
   'b1GetInvoiceLink',
   // B2: קריאה בלבד — מצב אשראי והקשר מסך התשלום (D9). שים לב: b2GetReceiptLink היא פעולת כתיבה (שחזור ל-Drive) ולכן לא כאן.
-  'b2CreditStatus', 'b2PaymentContext'];
+  'b2CreditStatus', 'b2PaymentContext',
+  // B3-1: קריאה בלבד — מצב פקדון של לקוח
+  'b3DepositContext'];
 
 function route(action, p, user) {
   var db = loadDb();
@@ -1008,7 +1019,8 @@ function handle(action, p, db, user) {
       return {
         ok: true, customer: { id: pc.id, name: pc.name }, items: items, orders: myOrders, laundry: laundry,
         credit: pgCredit, debt: agIls(pgCredit.used_ag), receipts: pgReceipts, invoices: pgInvoices,
-        payment_link: b2Setting(db, 'payment_link'), order_center_phone: b2Setting(db, 'order_center_phone')
+        payment_link: b2Setting(db, 'payment_link'), order_center_phone: b2Setting(db, 'order_center_phone'),
+        deposit: b3DepositObj(db, pc.id)   // B3-1 (D5/D10): מצב פקדון — לעולם לא כולל token
       };
     }
     case 'portalCreateOrder': {
@@ -1323,6 +1335,22 @@ function handle(action, p, db, user) {
     case 'b2MarkPayLater': return b2MarkPayLater(db, p);
     case 'b2GetReceiptLink': return b2GetReceiptLink(db, p);
     case 'portalB2Checkout': return portalB2Checkout(db, p);
+
+    // ---- B3-1: פקדון / אימות אשראי ----
+    case 'b3DepositContext': return b3DepositContext(db, p);
+    case 'b3StartVerification': return b3StartVerification(db, p.customer_id);
+    case 'portalB3StartVerification': {
+      var b3pc1 = b3PortalCustomer(db, p.code);
+      if (!b3pc1) return { ok: false, error: 'קוד לקוח שגוי' };
+      return b3StartVerification(db, b3pc1.id);
+    }
+    case 'portalB3RequestGuarantee': {
+      var b3pc2 = b3PortalCustomer(db, p.code);
+      if (!b3pc2) return { ok: false, error: 'קוד לקוח שגוי' };
+      return b3RequestGuarantee(db, b3pc2.id, p.guarantee_type);
+    }
+    case 'b3SaveGuarantee': return b3SaveGuarantee(db, p, user);
+    case 'b3ApproveGuarantee': return b3ApproveGuarantee(db, p, user);
     case 'b1SetAllocationNumber': {
       var r_b1 = b1SetAllocationNumber(db, p);
       if (r_b1.ok) r_b1.auditNote = r_b1.auditNote;
@@ -2552,4 +2580,225 @@ function portalB2Checkout(db, p) {
   }
 
   return { ok: false, error: 'בחירה לא מוכרת' };
+}
+
+// ============================================================
+//  B3-1: פקדון / אימות אשראי (D5 / D10 · S4)
+//  עקרונות מחייבים:
+//  • לעולם לא נשמרים מספרי כרטיס אשראי — token מספק הסליקה בלבד (PCI-DSS).
+//  • credentials של ספק אמיתי — ScriptProperties בלבד (S4), לעולם לא בגיליון ולא בקוד.
+//  • כרגע מצב stub: אין ספק מחובר. נקודת החיבור לספק אמיתי מסומנת ב-b3GatewayRedirectUrl.
+// ============================================================
+
+// סטטוסים של פרופיל פקדון:
+//   '' / אין רשומה  → טרם החל
+//   'ממתין לאימות'   → נשלח לאימות כרטיס, טרם התקבל callback
+//   'מאומת'          → token התקבל ונשמר
+//   'ממתין לאישור'   → נבחרה ערבות חלופית (שיק/ערב) — ממתין לאישור מנהל (D5)
+//   'מאושר'          → מנהל אישר ערבות חלופית
+
+// שליפת לקוח פורטל לפי קוד (אותה בדיקה כמו portalGetData)
+function b3PortalCustomer(db, code) {
+  return db.customers.find(function (c) {
+    return c.portal_code && String(c.portal_code) === String(code || '').toUpperCase() && c.active !== 'לא';
+  });
+}
+
+// הפרופיל של לקוח (או null)
+function b3Profile(db, customerId) {
+  return db.creditProfiles.find(function (r) { return String(r.customer_id) === String(customerId); }) || null;
+}
+
+// אובייקט מצב פקדון בטוח לשליחה לממשק/פורטל — לעולם לא כולל gateway_token
+function b3DepositObj(db, customerId) {
+  var pr = b3Profile(db, customerId);
+  if (!pr) return { exists: false, status: '', verified: false, has_token: false, guarantee_type: '', approval_pending: false, verified_at: '' };
+  return {
+    exists: true,
+    status: pr.status || '',
+    verified: !!pr.gateway_token && pr.status === 'מאומת',
+    has_token: !!pr.gateway_token,
+    guarantee_type: pr.guarantee_type || '',
+    approval_pending: pr.approval_pending === 'כן',
+    verified_at: pr.verified_at || ''
+  };
+}
+
+// קריאה בלבד: מצב הפקדון של לקוח (למשרד/מנהל). מזהה לפי customer_id.
+function b3DepositContext(db, p) {
+  var c = db.customers.find(function (x) { return x.id === p.customer_id; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var pr = b3Profile(db, c.id);
+  var obj = b3DepositObj(db, c.id);
+  // למשרד נחשפים גם פרטי הערבות (לא ה-token!)
+  if (pr) {
+    obj.check_number = pr.check_number || '';
+    obj.check_bank = pr.check_bank || '';
+    obj.guarantor_name = pr.guarantor_name || '';
+    obj.guarantor_phone = pr.guarantor_phone || '';
+    obj.guarantor_id = pr.guarantor_id || '';
+  }
+  return { ok: true, customer_id: c.id, customer_name: c.name, deposit: obj };
+}
+
+// יצירה/עדכון פרופיל — מחזיר את הרשומה (בלי לכתוב לגיליון; הכתיבה אצל הקורא)
+function b3EnsureProfile(db, customerId) {
+  var pr = b3Profile(db, customerId);
+  if (!pr) {
+    pr = {
+      id: genId('CRPF'), customer_id: customerId, gateway_token: '', verified_at: '',
+      guarantee_type: '', check_number: '', check_bank: '',
+      guarantor_name: '', guarantor_phone: '', guarantor_id: '',
+      status: '', approval_pending: ''
+    };
+    db.creditProfiles.push(pr);
+  }
+  return pr;
+}
+
+// --- נקודת חיבור לספק סליקה אמיתי (S4) ---
+// כשאבי יפתח חשבון ספק: שמור מפתחות ב-ScriptProperties (למשל gateway_api_key),
+// קרא כאן את gateway_provider מ-settings, ובנה את כתובת ה-redirect של הספק
+// (Tranzila / Cardcom / Meshulam...) עם סכום אימות ₪1 ו-callback לכתובת doGet.
+// כרגע — stub: הקישור מוביל ישירות ל-doGet שמדמה חזרה מוצלחת מהספק.
+function b3GatewayRedirectUrl(db, state) {
+  var provider = String(b2Setting(db, 'gateway_provider') || '').trim();
+  var cbUrl = ScriptApp.getService().getUrl();   // כתובת ה-Web App הפרוסה (/exec)
+  if (!cbUrl) return { ok: false, error: 'לא נמצאה כתובת פריסה — ודא שה-Web App פרוס' };
+  // TODO (חיבור אמיתי): switch לפי provider + credentials מ-PropertiesService.getScriptProperties()
+  // return { ok: true, url: <כתובת עמוד התשלום של הספק עם state ו-callback> };
+  return { ok: true, url: cbUrl + '?b3cb=1&state=' + encodeURIComponent(state) + '&stub=1', stub: true };
+}
+
+// התחלת אימות כרטיס (₪1 verification — D5): יוצר/מעדכן פרופיל במצב "ממתין לאימות"
+// ומחזיר קישור redirect. state חד-פעמי נשמר ב-CacheService ל-6 שעות.
+function b3StartVerification(db, customerId) {
+  var c = db.customers.find(function (x) { return x.id === customerId; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var pr = b3EnsureProfile(db, c.id);
+  if (pr.status === 'מאומת' && pr.gateway_token) {
+    return { ok: true, already_verified: true, deposit: b3DepositObj(db, c.id) };
+  }
+  var state = genId('B3ST') + sha256Hex(String(Math.random()) + c.id).substring(0, 12);
+  CacheService.getScriptCache().put('b3state_' + state, String(c.id), 21600);
+  var rd = b3GatewayRedirectUrl(db, state);
+  if (!rd.ok) return rd;
+  pr.status = 'ממתין לאימות';
+  writeTable('credit_profiles', db.creditProfiles);
+  return {
+    ok: true, redirect_url: rd.url, stub: !!rd.stub, deposit: b3DepositObj(db, c.id),
+    auditNote: 'B3 התחלת אימות כרטיס · ' + c.name
+  };
+}
+
+// לקוח בפורטל מבקש ערבות חלופית (שיק בטחון / ערב) — D5:
+// הכרטיס עובר לאישור מנהל (approval_pending) + מופיע בדשבורד אבי (B3-3).
+function b3RequestGuarantee(db, customerId, guaranteeType) {
+  var c = db.customers.find(function (x) { return x.id === customerId; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var gt = String(guaranteeType || '').trim();
+  if (['שיק', 'ערב'].indexOf(gt) === -1) return { ok: false, error: 'סוג ערבות לא תקין (שיק / ערב)' };
+  var pr = b3EnsureProfile(db, c.id);
+  pr.guarantee_type = gt;
+  pr.status = 'ממתין לאישור';
+  pr.approval_pending = 'כן';
+  writeTable('credit_profiles', db.creditProfiles);
+  // התראה למנהלים במייל (עמיד לכשל — sendMail לא שובר פעולה)
+  db.employees.filter(function (e) { return e.role === 'מנהל' && e.active !== 'לא' && e.email; })
+    .forEach(function (m) {
+      sendMail(m.email, 'MAPA-NOBLE: בקשת ערבות חלופית ממתינה לאישור',
+        'הלקוח ' + c.name + ' ביקש ערבות חלופית (' + gt + ').\nיש לאשר בדשבורד המערכת וליצור קשר טלפוני עם הלקוח.');
+    });
+  return { ok: true, deposit: b3DepositObj(db, c.id), auditNote: 'B3 בקשת ערבות חלופית (' + gt + ') · ' + c.name };
+}
+
+// Back office (משרד/מנהל): רישום פרטי שיק בטחון או ערב — D5
+function b3SaveGuarantee(db, p, user) {
+  var role = String(p._verified_role || '');
+  if (db.employees.length && ['מנהל', 'משרד'].indexOf(role) === -1)
+    return { ok: false, error: 'רישום ערבות מותר למנהל/משרד בלבד' };
+  var c = db.customers.find(function (x) { return x.id === p.customer_id; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var gt = String(p.guarantee_type || '').trim();
+  if (['שיק', 'ערב'].indexOf(gt) === -1) return { ok: false, error: 'סוג ערבות לא תקין (שיק / ערב)' };
+  if (gt === 'שיק' && !String(p.check_number || '').trim()) return { ok: false, error: 'חסר מספר שיק' };
+  if (gt === 'ערב' && !String(p.guarantor_name || '').trim()) return { ok: false, error: 'חסר שם ערב' };
+  var pr = b3EnsureProfile(db, c.id);
+  pr.guarantee_type = gt;
+  pr.check_number = gt === 'שיק' ? String(p.check_number || '').trim() : '';
+  pr.check_bank = gt === 'שיק' ? String(p.check_bank || '').trim() : '';
+  pr.guarantor_name = gt === 'ערב' ? String(p.guarantor_name || '').trim() : '';
+  pr.guarantor_phone = gt === 'ערב' ? String(p.guarantor_phone || '').trim() : '';
+  pr.guarantor_id = gt === 'ערב' ? String(p.guarantor_id || '').trim() : '';
+  pr.status = 'ממתין לאישור';
+  pr.approval_pending = 'כן';
+  writeTable('credit_profiles', db.creditProfiles);
+  return { ok: true, deposit: b3DepositObj(db, c.id), auditNote: 'B3 רישום ערבות (' + gt + ') · ' + c.name + ' · ע"י ' + (user || '') };
+}
+
+// מנהל בלבד (נאכף ב-MANAGER_ONLY): אישור ערבות חלופית — D5
+function b3ApproveGuarantee(db, p, user) {
+  var c = db.customers.find(function (x) { return x.id === p.customer_id; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var pr = b3Profile(db, c.id);
+  if (!pr) return { ok: false, error: 'אין פרופיל פקדון ללקוח זה' };
+  if (pr.approval_pending !== 'כן') return { ok: false, error: 'אין בקשת ערבות ממתינה לאישור' };
+  pr.approval_pending = '';
+  pr.status = 'מאושר';
+  if (!pr.verified_at) pr.verified_at = nowTs();
+  writeTable('credit_profiles', db.creditProfiles);
+  return { ok: true, deposit: b3DepositObj(db, c.id), auditNote: 'B3 אישור ערבות (' + (pr.guarantee_type || '') + ') · ' + c.name + ' · מאשר: ' + (user || '') };
+}
+
+// ============================================================
+//  doGet — callback stub מחברת הסליקה (B3-1)
+//  הספק מחזיר את הלקוח לכתובת זו אחרי אימות ₪1, עם token.
+//  במצב stub: הקישור מ-b3StartVerification מגיע ישירות לכאן ומדמה הצלחה.
+//  נשמר token בלבד — לעולם לא מספרי כרטיס (PCI-DSS).
+// ============================================================
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (String(p.b3cb) !== '1') {
+    return HtmlService.createHtmlOutput('<html dir="rtl"><body style="font-family:Arial;text-align:center;padding:40px">MAPA-NOBLE API</body></html>');
+  }
+  var msg, okFlag = false;
+  try {
+    var state = String(p.state || '');
+    var cache = CacheService.getScriptCache();
+    var customerId = state ? cache.get('b3state_' + state) : null;
+    if (!customerId) {
+      msg = 'קישור האימות פג תוקף או שאינו תקין. יש להתחיל אימות מחדש מהפורטל.';
+    } else {
+      // token מהספק (פרמטר token/TranzilaTK וכו'). במצב stub — מייצרים token דמה.
+      var token = String(p.token || '').trim();
+      if (!token && String(p.stub) === '1') token = 'STUB-' + sha256Hex(state + ':' + new Date().getTime()).substring(0, 24);
+      if (!token) {
+        msg = 'לא התקבל אישור מחברת הסליקה. נסו שוב או פנו למשרד.';
+      } else {
+        var lock = LockService.getScriptLock();
+        lock.waitLock(20000);
+        try {
+          var db = loadDb();
+          var pr = b3EnsureProfile(db, customerId);
+          pr.gateway_token = token;              // token בלבד — לא פרטי כרטיס
+          pr.verified_at = nowTs();
+          pr.status = 'מאומת';
+          writeTable('credit_profiles', db.creditProfiles);
+          audit(db, 'callback סליקה', 'b3VerificationCallback', 'B3 אימות כרטיס הושלם · לקוח ' + customerId + (String(p.stub) === '1' ? ' · (stub)' : ''));
+        } finally { lock.releaseLock(); }
+        cache.remove('b3state_' + state);
+        okFlag = true;
+        msg = 'אימות הכרטיס הושלם בהצלחה! ניתן לסגור חלון זה ולחזור לפורטל.';
+      }
+    }
+  } catch (err) { msg = 'אירעה שגיאה: ' + String(err); }
+  var html = '<html dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>' +
+    '<body style="font-family:Arial,sans-serif;background:#F4F6F8;display:flex;align-items:center;justify-content:center;min-height:90vh">' +
+    '<div style="background:#fff;border-radius:12px;padding:36px;max-width:420px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,.08)">' +
+    '<div style="font-size:44px">' + (okFlag ? '✅' : '⚠️') + '</div>' +
+    '<h2 style="color:#1C2B36">' + (okFlag ? 'האימות הושלם' : 'האימות לא הושלם') + '</h2>' +
+    '<p style="color:#4A5A66;font-size:15px">' + msg + '</p>' +
+    (String(p.stub) === '1' ? '<p style="color:#98A6B0;font-size:12px">מצב הדגמה (stub) — טרם חובר ספק סליקה אמיתי</p>' : '') +
+    '</div></body></html>';
+  return HtmlService.createHtmlOutput(html).setTitle('MAPA-NOBLE — אימות כרטיס');
 }
