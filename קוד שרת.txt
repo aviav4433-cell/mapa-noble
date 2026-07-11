@@ -1,0 +1,2555 @@
+// ============================================================
+//  MAPA-NOBLE ERP — Backend v4.0 (Google Apps Script)
+//  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
+//  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
+//  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
+//  אצווה D:  תיוג אוניברסלי (links) · גליון מילון עברי
+//  אצווה F1: טעינה עצלה · appendRow ביומן וביצירה · ללא נעילה בקריאות
+//  אצווה G1: טקסטים ארוכים — getAll שולח תצוגה מקדימה בלבד, שליפה מלאה לפי דרישה (getFullTexts)
+//  אצווה NC2: לוח רצפה חי (nobleBoard) · זמן משוער לפי היסטוריה + עקיפה ידנית · כביסה בפורטל הלקוח
+//  אצווה NC3: חשבונית מכבסה מרוכזת (nobleCreateInvoice) · תשלום לפי חשבונית · ק"ג פנימי בלוח (עמודה חדשה: laundry_intakes.invoice_id — להריץ setupDatabase)
+//  אצווה NC4: יתרות כולל חשבוניות מכבסה · הערות-לביצוע במשימה (commentSetStatus) · מחיקה עם ניקוי תיוגים · חותמות זמן מלאות · עריכת שם משתמש+סיסמה (עמודות חדשות: task_comments.status/handled_by/handled_ts — להריץ setupDatabase)
+//  אצווה NC1: מודול רצפת ייצור NOBLE — קליטות, יומן אירועים, שקילה, משלוח (טבלאות laundry_intakes/intake_carts/laundry_events)
+//  אצווה B1:  תשתית נתונים + חשבוניות/קבלות מורחבות:
+//             • עמודות חדשות: customers (credit_limit/customer_category/notify_pref),
+//               invoices (type/allocation_number/pdf_url/draft_note),
+//               settings (vat_rate/business_id/invoice_prefix/order_center_phone/gateway_provider)
+//             • טבלאות חדשות: credit_profiles / call_logs / notifications
+//             • הפקת מסמך חשבוניות חוקי עם מספר הקצאה (S7)
+//             • שמירת PDF ב-Drive + הגשת קישור
+//             • canary: v4.0-B1
+//  אצווה B2:  מנוע תשלום + אשראי (D9 / D7 / D15 · הכרעות S1, S2, S5):
+//             • עמודות חדשות: payments (customer_id/type/status/txn_id/created_by/created_at/pdf_url),
+//               orders (payment_status) — להריץ setupDatabase
+//             • מנוע אשראי computed בלבד (S5): limit − used = available (D8)
+//             • b2ProcessPayment: תשלום הזמנה + קיזוז חוב FIFO + קבלה מיידית ל-Drive (D15) + idempotency (txn_id)
+//             • portalB2Checkout: הזמנה בתוך המסגרת עוברת ללא כסף (S1) · שני מוצאים לחריגה (D7)
+//             • b2SetCreditLimit (מנהל בלבד — D6) · b2MarkPayLater (מנהל/משרד — S2)
+//             • חסימת approveOrder להזמנת פורטל/חנות שטרם עברה תשלום/מסגרת (D2/S2)
+//             • כל החישובים באגורות (integer); שדות amount בגיליון נשארים בש"ח לתאימות
+//             • canary: v4.0-B2
+//  אחרי הדבקה: (1) הרץ setupDatabase() פעם אחת מהעורך
+//              (2) Deploy → Manage deployments → Edit → New version → Deploy
+// ============================================================
+
+var PASSWORD = 'IMHKK8uQWY2hshWAxav0FHgjac9hrqkzrPJwysFJ'; // סיסמת מערכת ישנה — הוחלפה למחרוזת אקראית, אינה בשימוש בכניסה
+var VAT_RATE = 0.18;       // מע"מ
+
+var TABLES = {
+  // B1: נוספו credit_limit, customer_category, notify_pref (לשימוש B2+)
+  customers: ['id', 'name', 'type', 'payment_terms', 'vat_id', 'address', 'notes', 'portal_code', 'active', 'phone', 'email', 'city', 'warehouse_id', 'deviation_pct', 'price_per_kg', 'credit_limit', 'customer_category', 'notify_pref'],
+  contacts: ['id', 'customer_id', 'name', 'role', 'phone', 'email', 'is_primary', 'note'],
+  customer_prices: ['id', 'customer_id', 'item_id', 'price_type', 'price'],
+  items: ['id', 'name', 'category', 'size', 'color', 'rent_price', 'wash_price', 'barcode', 'min_stock', 'prefix', 'active', 'supplier_id', 'purchase_cost', 'location', 'notes', 'weight_kg', 'deviation_pct', 'replacement_price'],
+  units: ['id', 'item_id', 'barcode', 'status', 'note', 'created'],
+  stock_moves: ['id', 'date', 'item_id', 'type', 'qty', 'ref', 'note', 'warehouse_id'],
+  suppliers: ['id', 'name', 'phone', 'email', 'vat_id', 'notes', 'active', 'address', 'contact_name', 'payment_terms'],
+  purchases: ['id', 'supplier_id', 'date', 'status', 'notes', 'invoice_number', 'receipt_number', 'details'],
+  purchase_lines: ['id', 'purchase_id', 'item_id', 'qty', 'unit_cost'],
+  // B2: payment_status — 'ממתין לתשלום' / 'באשראי מסגרת' / 'ממתין לתשלום הפרש' / 'ממתין לאישור חריגה' / 'תשלום בהמשך' / 'שולם חלקית' / 'שולם'
+  orders: ['id', 'type', 'customer_id', 'start_date', 'end_date', 'status', 'notes', 'created_at', 'warehouse_id', 'delivery_fee', 'shortage_charge', 'order_number', 'payment_status'],
+  order_lines: ['id', 'order_id', 'item_id', 'qty', 'unit_price', 'returned_qty', 'returned_weight'],
+  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url'],
+  // B1: נוספו type, allocation_number, pdf_url, draft_note לחשבוניות
+  invoices: ['id', 'number', 'order_id', 'customer_id', 'date', 'subtotal', 'vat_rate', 'vat', 'total', 'status', 'type', 'allocation_number', 'pdf_url', 'draft_note'],
+  // B2: עמודות חדשות בסוף בלבד (מיגרציה בטוחה). amount נשאר בש"ח לתאימות; חישובים באגורות בשרת בלבד.
+  payments: ['id', 'order_id', 'invoice_id', 'receipt_number', 'date', 'amount', 'method', 'note', 'customer_id', 'type', 'status', 'txn_id', 'created_by', 'created_at', 'pdf_url'],
+  expenses: ['id', 'date', 'category', 'supplier_id', 'amount', 'vat', 'note', 'attachment_url'],
+  laundry_tasks: ['id', 'order_id', 'item_id', 'qty', 'stage', 'cart_id', 'machine_id', 'worker', 'in_date', 'done_date', 'warehouse_id', 'target_date', 'package_barcode'],
+  carts: ['id', 'location', 'status', 'barcode', 'capacity', 'purchase_date', 'notes', 'tare_kg'],
+  laundry_intakes: ['id', 'customer_id', 'internal', 'status', 'net_weight_kg', 'price_per_kg', 'total_charge', 'intake_ts', 'delivered_ts', 'delivery_id', 'notes', 'created_by', 'invoice_id'],
+  intake_carts: ['id', 'intake_id', 'cart_id', 'bind_ts', 'release_ts', 'active'],
+  laundry_events: ['id', 'ts', 'intake_id', 'customer_id', 'cart_id', 'machine_id', 'stage', 'event_type', 'worker_id', 'worker_name', 'gross_kg', 'tare_kg', 'net_kg', 'price_per_kg', 'charge', 'note'],
+  shelves: ['id', 'code', 'barcode', 'location', 'warehouse_id', 'notes', 'active'],
+  links: ['id', 'from_type', 'from_id', 'to_type', 'to_id', 'note', 'created', 'user'],
+  machines: ['id', 'type', 'capacity', 'status', 'last_service', 'next_service', 'manufacturer', 'model', 'serial', 'purchase_date', 'notes', 'auto_stage', 'barcode'],
+  employees: ['id', 'name', 'role', 'phone', 'pin', 'hourly_rate', 'views', 'can_edit', 'active', 'national_id', 'address', 'email', 'start_date', 'emergency_name', 'emergency_phone', 'bank_details', 'notes', 'license_number', 'license_expiry', 'username', 'password_hash'],
+  attendance: ['id', 'employee_id', 'date', 'in_time', 'out_time', 'hours', 'in_date', 'out_date'],
+  payroll: ['id', 'employee_id', 'month', 'hours', 'hourly_rate', 'base_pay', 'bonus', 'bonus_note', 'total', 'status'],
+  tasks: ['id', 'title', 'details', 'assignee_id', 'due_date', 'priority', 'status', 'meeting_id', 'created_by', 'created_at'],
+  task_comments: ['id', 'task_id', 'ts', 'user', 'text', 'status', 'handled_by', 'handled_ts'],
+  meetings: ['id', 'title', 'date', 'time', 'participants', 'protocol', 'created_by', 'location', 'participant_ids'],
+  warehouses: ['id', 'name', 'city', 'address', 'phone', 'active'],
+  vehicles: ['id', 'plate', 'make', 'model', 'year', 'vtype', 'fuel', 'ownership', 'leasing_company', 'insurance_expiry', 'test_date', 'mileage_km', 'last_service_date', 'next_service_date', 'next_service_km', 'assigned_driver_id', 'status', 'purchase_date', 'purchase_cost', 'notes', 'active'],
+  trips: ['id', 'date', 'kind', 'method', 'driver_id', 'vehicle_id', 'external_carrier', 'from_loc', 'to_loc', 'ref', 'start_km', 'end_km', 'cost', 'notes'],
+  notes: ['id', 'ts', 'user', 'entity_type', 'entity_id', 'text', 'attachment_url', 'link_note_id'],
+  settings: ['key', 'value'],
+  counters: ['key', 'value'],
+  audit_log: ['id', 'ts', 'user', 'action', 'details'],
+  // B1: טבלאות תשתית לשימוש B2/B3/B4
+  // credit_profiles — אימות אשראי ופקדונות (B3)
+  credit_profiles: ['id', 'customer_id', 'gateway_token', 'verified_at', 'guarantee_type', 'check_number', 'check_bank', 'guarantor_name', 'guarantor_phone', 'guarantor_id', 'status', 'approval_pending'],
+  // call_logs — תיעוד שיחות נהגים (B5)
+  call_logs: ['id', 'delivery_id', 'driver_id', 'outcome', 'note', 'called_at'],
+  // notifications — התראות (B4)
+  notifications: ['id', 'type', 'recipient', 'channel', 'payload', 'status', 'scheduled_for', 'sent_at']
+};
+
+var UNIT_STATUSES = ['פנוי', 'אצל לקוח', 'בכביסה', 'גרוט'];
+var DEFAULT_SETTINGS = {
+  business_name: 'MAPA·NOBLE', business_address: '', business_phone: '', business_vat: '',
+  logo_url: '', doc_footer: 'תודה שבחרתם בנו!',
+  laundry_days: '2', default_delivery_fee: '0', payment_link: '', default_deviation_pct: '2', ui_theme: 'טורקיז',
+  notify_email: '',
+  // B1: הגדרות חדשות
+  vat_rate: '0.18',               // שיעור מע"מ — ניתן לשינוי בהגדרות
+  business_id: '',                // ח.פ / עוסק מורשה (לחשבוניות)
+  invoice_prefix: '',             // קידומת לחשבוניות (לא חובה)
+  order_center_phone: '',         // טלפון מרכז הזמנות (D7)
+  gateway_provider: '',           // שם ספק סליקה (credentials ב-ScriptProperties — S4)
+  invoice_draft_note: 'מסמך זה הינו טיוטה — לא חשבונית מס רשמית. יש לאשר מול רו"ח לפני שימוש.',
+  agreement_text: 'הסכם שירות\n\n1. הלקוח מתחייב להחזיר את הפריטים במועד ההחזרה שנקבע.\n2. פריטים שלא יוחזרו או יוחזרו פגומים — יחויבו במחיר מלא.\n3. התשלום בהתאם לתנאי התשלום שסוכמו.\n4. אחריות על הפריטים בזמן שהם אצל הלקוח — על הלקוח.'
+};
+
+var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
+var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+  // B1: עדכון מספר הקצאה — מנהל בלבד
+  'b1SetAllocationNumber',
+  // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
+  'b2SetCreditLimit'];
+
+// הרץ פעם אחת מהעורך
+function setupDatabase() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Object.keys(TABLES).forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) {
+      sh = ss.insertSheet(name);
+      sh.getRange(1, 1, 1, TABLES[name].length).setValues([TABLES[name]])
+        .setFontWeight('bold').setBackground('#1F4E78').setFontColor('#FFFFFF');
+      sh.setFrozenRows(1);
+    } else {
+      // מיגרציה: הוספת עמודות חדשות שנוספו בגרסה — לסוף בלבד
+      var cols = TABLES[name];
+      var existing = sh.getRange(1, 1, 1, cols.length).getValues()[0];
+      for (var ci = 0; ci < cols.length; ci++) {
+        if (existing[ci] !== cols[ci]) {
+          sh.getRange(1, ci + 1, 1, 1).setValues([[cols[ci]]])
+            .setFontWeight('bold').setBackground('#1F4E78').setFontColor('#FFFFFF');
+        }
+      }
+    }
+  });
+  var def = ss.getSheetByName('Sheet1') || ss.getSheetByName('גיליון1');
+  if (def && ss.getSheets().length > 1) ss.deleteSheet(def);
+  // אצווה D: גליון מילון עברי — טאב ראשון שמסביר כל גליון (אין לשנות שמות באנגלית!)
+  var DICT = [['customers', 'לקוחות'], ['contacts', 'אנשי קשר'], ['customer_prices', 'מחירונים ללקוח'], ['items', 'פריטים/מלאי'], ['units', 'יחידות ממוספרות'], ['stock_moves', 'תנועות מלאי'], ['suppliers', 'ספקים'], ['purchases', 'הזמנות רכש'], ['purchase_lines', 'שורות רכש'], ['orders', 'הזמנות'], ['order_lines', 'שורות הזמנה'], ['deliveries', 'משלוחים'], ['invoices', 'חשבוניות (B1: סוג/הקצאה/קישור)'], ['payments', 'קבלות/תשלומים'], ['expenses', 'הוצאות'], ['laundry_tasks', 'משימות כביסה'], ['carts', 'עגלות'], ['machines', 'מכונות'], ['shelves', 'מדפים'], ['links', 'תיוגים/קישורים'], ['employees', 'עובדים'], ['attendance', 'נוכחות'], ['payroll', 'שכר'], ['tasks', 'משימות'], ['task_comments', 'הערות משימה'], ['meetings', 'פגישות/אסיפות'], ['warehouses', 'מחסנים'], ['vehicles', 'רכבים'], ['trips', 'נסיעות'], ['notes', 'תרשומות'], ['settings', 'הגדרות'], ['counters', 'מונים'], ['audit_log', 'יומן פעולות'], ['laundry_intakes', 'קליטות מכבסה (NOBLE)'], ['intake_carts', 'שיוך עגלות לקליטה'], ['laundry_events', 'יומן רצפת ייצור (אירועים)'],
+    // B1: טבלאות חדשות
+    ['credit_profiles', 'פרופילי אשראי ופקדונות (B3)'], ['call_logs', 'יומן שיחות נהגים (B5)'], ['notifications', 'התראות ואימיילים (B4)']];
+  var dic = ss.getSheetByName('מילון');
+  if (!dic) dic = ss.insertSheet('מילון', 0);
+  dic.clearContents();
+  dic.getRange(1, 1, 1, 2).setValues([['שם הגליון (לא לשנות!)', 'מה יש בו']]).setFontWeight('bold').setBackground('#1F4E78').setFontColor('#FFFFFF');
+  dic.getRange(2, 1, DICT.length, 2).setValues(DICT);
+  dic.setFrozenRows(1);
+  // זריעת הגדרות ברירת מחדל (מיתוג ומסמכים)
+  var existing = readTable('settings').map(function (s) { return s.key; });
+  var rows = readTable('settings');
+  Object.keys(DEFAULT_SETTINGS).forEach(function (k) {
+    if (existing.indexOf(k) === -1) rows.push({ key: k, value: DEFAULT_SETTINGS[k] });
+  });
+  writeTable('settings', rows);
+}
+
+// ---------- Data access ----------
+function readTable(name) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var cols = TABLES[name];
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, cols.length).getValues();
+  return vals.filter(function (r) { return r[0] !== ''; }).map(function (r) {
+    var o = {};
+    cols.forEach(function (c, i) {
+      var v = r[i];
+      if (v instanceof Date) v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      o[c] = v;
+    });
+    return o;
+  });
+}
+function writeTable(name, rows) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  var cols = TABLES[name];
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, cols.length).clearContent();
+  if (rows.length) {
+    var vals = rows.map(function (o) { return cols.map(function (c) { return o[c] !== undefined ? o[c] : ''; }); });
+    sh.getRange(2, 1, vals.length, cols.length).setValues(vals);
+  }
+}
+var TMAP = {
+  notes: 'notes', customers: 'customers', contacts: 'contacts', customer_prices: 'customerPrices', items: 'items',
+  warehouses: 'warehouses', vehicles: 'vehicles', trips: 'trips',
+  tasks: 'tasks', task_comments: 'taskComments', meetings: 'meetings',
+  units: 'units', stock_moves: 'stockMoves', suppliers: 'suppliers', purchases: 'purchases', purchase_lines: 'purchaseLines',
+  orders: 'orders', order_lines: 'orderLines', deliveries: 'deliveries', invoices: 'invoices', payments: 'payments',
+  expenses: 'expenses', laundry_tasks: 'laundryTasks', carts: 'carts', machines: 'machines', shelves: 'shelves', links: 'links',
+  employees: 'employees', attendance: 'attendance', payroll: 'payroll', settings: 'settings', counters: 'counters', audit_log: 'auditLog',
+  laundry_intakes: 'laundryIntakes', intake_carts: 'intakeCarts', laundry_events: 'laundryEvents',
+  // B1: טבלאות חדשות
+  credit_profiles: 'creditProfiles', call_logs: 'callLogs', notifications: 'notifications'
+};
+
+// F1: טעינה עצלה — כל טבלה נקראת מהגליון רק בגישה הראשונה אליה (getter + מטמון)
+// ה-getters הם enumerable כדי ש-JSON.stringify ב-getAll ימשיך להחזיר את כל הטבלאות,
+// וקיים setter כי חלק מהקוד מבצע השמה ישירה (למשל db.orderLines = db.orderLines.filter(...))
+// G1: שדות טקסט ארוכים — נחתכים בתשובת getAll ונשלפים במלואם רק לפי דרישה.
+// הנתונים בגליון עצמו לעולם אינם נחתכים — הקיצוץ הוא רק בעותק שנשלח לממשק.
+var LONG_TEXT_PREVIEW = 300;
+var LONG_TEXT_FIELDS = { notes: ['text'], tasks: ['details'], meetings: ['protocol'], task_comments: ['text'] };
+
+// G1: בונה את מטען getAll — עותק של הטבלאות שבו שדות ארוכים קוצצו וסומנו ב-<field>_trunc
+function getAllPayload(db) {
+  var out = {};
+  Object.keys(TMAP).forEach(function (t) {
+    var key = TMAP[t];
+    var rows = db[key];
+    var fields = LONG_TEXT_FIELDS[t];
+    if (!fields) { out[key] = rows; return; }
+    out[key] = rows.map(function (r) {
+      var needs = fields.some(function (f) { return typeof r[f] === 'string' && r[f].length > LONG_TEXT_PREVIEW; });
+      if (!needs) return r;
+      var c = {};
+      for (var k in r) c[k] = r[k];
+      fields.forEach(function (f) {
+        if (typeof c[f] === 'string' && c[f].length > LONG_TEXT_PREVIEW) {
+          c[f] = c[f].substring(0, LONG_TEXT_PREVIEW);
+          c[f + '_trunc'] = 1;
+        }
+      });
+      return c;
+    });
+  });
+  return out;
+}
+
+function loadDb() {
+  var db = {};
+  var cache = {};
+  Object.keys(TMAP).forEach(function (t) {
+    var key = TMAP[t];
+    Object.defineProperty(db, key, {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        if (!(key in cache)) cache[key] = readTable(t);
+        return cache[key];
+      },
+      set: function (v) { cache[key] = v; }
+    });
+  });
+  return db;
+}
+// F1: הוספת שורה בודדת לגליון (במקום שכתוב כל הטבלה) — אותה סריאליזציה כמו writeTable
+function appendRowToTable(name, o) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  var cols = TABLES[name];
+  sh.appendRow(cols.map(function (c) { return o[c] !== undefined ? o[c] : ''; }));
+}
+function genId(prefix) {
+  return prefix + '-' + new Date().getTime().toString(36).toUpperCase() + Math.floor(Math.random() * 900 + 100);
+}
+function today() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
+function nowTs() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
+
+// מונה מסמכים רץ (חשבוניות מ-1001, קבלות מ-5001)
+function nextNumber(db, key, start) {
+  var c = db.counters.find(function (x) { return x.key === key; });
+  if (!c) { c = { key: key, value: start }; db.counters.push(c); }
+  else { c.value = Number(c.value) + 1; }
+  writeTable('counters', db.counters);
+  return Number(c.value);
+}
+// F1: כתיבת שורה בודדת ליומן (appendRow) — במקום שכתוב כל גליון היומן בכל פעולה.
+// לא דוחפים ל-db.auditLog כדי לא להכריח טעינה של כל היומן (טעינה עצלה); קריאות יומן עוברות דרך loadDb כרגיל.
+function audit(db, user, action, details) {
+  appendRowToTable('audit_log', { id: genId('LOG'), ts: nowTs(), user: user || '', action: action, details: details || '' });
+}
+
+// C2: שליחת מייל עמידה לכשל — לעולם לא שוברת פעולה עסקית
+function sendMail(to, subject, body) {
+  try { if (to && String(to).indexOf('@') > -1) MailApp.sendEmail({ to: to, subject: subject, body: body }); }
+  catch (e) { /* מכסת מייל/רשת — להתעלם */ }
+}
+
+
+// ---------- Security helpers ----------
+function sha256Hex(str) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, str, Utilities.Charset.UTF_8);
+  return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+}
+
+function sha256WithSalt(password, salt) {
+  return sha256Hex(String(salt || '') + ':' + String(password || ''));
+}
+
+// ---------- API ----------
+function doPost(e) {
+  var out;
+  try {
+    var req = JSON.parse(e.postData.contents);
+    var AUTH_FREE = ['login', 'validateToken', 'loginByRemember', 'rememberLogin'];
+    var verifiedUser = req.user || '';
+    var payload = req.payload || {};
+    var hasValidSession = false;
+    var tk = req.token || payload.token || '';
+    if (tk) {
+      var sessionData = CacheService.getScriptCache().get('session_' + tk);
+      if (sessionData) {
+        var sd = JSON.parse(sessionData);
+        payload._verified_employee_id = sd.employee_id;
+        payload._verified_role = sd.role;
+        verifiedUser = sd.name || sd.role;
+        hasValidSession = true;
+      }
+    }
+    if (String(req.action || '').indexOf('portal') === 0) {
+      out = route(req.action, payload, 'פורטל');
+    } else if (AUTH_FREE.indexOf(req.action) > -1) {
+      out = route(req.action, payload, verifiedUser);
+    } else if (!hasValidSession && req.password !== PASSWORD) {
+      out = { ok: false, error: 'סיסמה שגויה' };
+    } else out = route(req.action, payload, verifiedUser);
+  } catch (err) { out = { ok: false, error: String(err) }; }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// F1: פעולות קריאה בלבד — לא כותבות לגליונות, ולכן אין צורך בנעילה.
+// הערה: getHolidays בכוונה לא כאן — getHolidaySet עשוי לכתוב מטמון חגים ל-settings.
+// פעולות קריאה גם לא נרשמות ביומן הפעולות (כתיבת audit ללא נעילה אינה בטוחה).
+var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'scan', 'reports', 'ordersReport', 'findOrderByScan', 'portalGetData', 'portalCatalog', 'validateToken', 'loginByRemember', 'rememberLogin', 'nobleCartInfo', 'nobleBoard',
+  // B1: פעולות קריאה בלבד
+  'b1GetInvoiceLink',
+  // B2: קריאה בלבד — מצב אשראי והקשר מסך התשלום (D9). שים לב: b2GetReceiptLink היא פעולת כתיבה (שחזור ל-Drive) ולכן לא כאן.
+  'b2CreditStatus', 'b2PaymentContext'];
+
+function route(action, p, user) {
+  var db = loadDb();
+  var lock = null;
+  if (READ_ONLY_ACTIONS.indexOf(action) === -1) {   // F1: נעילה רק לפעולות שמשנות נתונים
+    lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+  }
+  try {
+    // הרשאות: פעולות מנהל דורשות עובד בתפקיד מנהל (אם קיימים עובדים)
+    var READ_ACTIONS = ['getAll', 'getFullTexts', 'availability', 'scan', 'reports', 'ordersReport', 'login', 'clock', 'portalGetData', 'portalCreateOrder'];
+    if (READ_ACTIONS.indexOf(action) === -1 && db.employees.length && user && user !== 'פורטל') {
+      var actor = db.employees.find(function (x) { return x.name === user && x.active !== 'לא'; });
+      if (actor && actor.can_edit === 'לא') return { ok: false, error: 'למשתמש זה הרשאת צפייה בלבד' };
+    }
+    if (MANAGER_ONLY.indexOf(action) > -1 && db.employees.length) {
+      var emp = db.employees.find(function (x) { return x.name === user && x.active !== 'לא'; });
+      if (!emp || emp.role !== 'מנהל') return { ok: false, error: 'פעולה זו מותרת למנהל בלבד' };
+    }
+    var r = handle(action, p, db, user);
+    if (r && r.ok && READ_ONLY_ACTIONS.indexOf(action) === -1)   // F1: audit רק לפעולות כתיבה (שמחזיקות נעילה)
+      audit(db, user, action, r.auditNote || JSON.stringify(p).substring(0, 180));
+    if (r) delete r.auditNote;
+    return r;
+  } finally { if (lock) lock.releaseLock(); }
+}
+
+function handle(action, p, db, user) {
+  switch (action) {
+    case 'getAll': return { ok: true, db: getAllPayload(db) }; // G1: שדות ארוכים נשלחים כתצוגה מקדימה
+
+    // G1: שליפת הטקסט המלא של רשומות ספציפיות (רק שדות הטקסט המוגדרים — לא רשומה שלמה)
+    case 'getFullTexts': {
+      var ftFields = LONG_TEXT_FIELDS[p.table];
+      if (!ftFields) return { ok: false, error: 'טבלה לא נתמכת בשליפת טקסטים' };
+      var ftIds = (p.ids || []).map(String);
+      if (!ftIds.length) return { ok: true, texts: {} };
+      var texts = {};
+      db[TMAP[p.table]].forEach(function (r) {
+        if (ftIds.indexOf(String(r.id)) > -1) {
+          var o = {};
+          ftFields.forEach(function (f) { o[f] = r[f]; });
+          texts[r.id] = o;
+        }
+      });
+      return { ok: true, texts: texts };
+    }
+
+    case 'login': {
+      if (!db.employees.length) return { ok: true, user: 'מנהל', role: 'מנהל' }; // אין עובדים מוגדרים — גישה מלאה
+      // מצב חדש: כניסה לפי username + password
+      if (p.username) {
+        var empU = db.employees.find(function (x) { return x.username && String(x.username) === String(p.username) && x.active !== 'לא'; });
+        if (!empU) return { ok: false, error: 'שם משתמש או סיסמה שגויים' };
+        if (!empU.password_hash) return { ok: false, error: 'סיסמה לא הוגדרה לעובד זה' };
+        if (sha256WithSalt(String(p.password || ''), empU.id) !== String(empU.password_hash)) return { ok: false, error: 'שם משתמש או סיסמה שגויים' };
+        var token = Utilities.getUuid();
+        CacheService.getScriptCache().put('session_' + token, JSON.stringify({ employee_id: empU.id, role: empU.role, name: empU.name }), 21600);
+        return { ok: true, token: token, employee_id: empU.id, role: empU.role, name: empU.name, user: empU.name, views: empU.views || '', can_edit: empU.can_edit !== 'לא' };
+      }
+      // מצב ישן (fallback): כניסה לפי PIN
+      var emp = db.employees.find(function (x) { return String(x.pin) === String(p.pin) && x.active !== 'לא'; });
+      if (!emp) return { ok: false, error: 'קוד עובד שגוי' };
+      return { ok: true, user: emp.name, role: emp.role, views: emp.views || '', can_edit: emp.can_edit !== 'לא' };
+    }
+
+    case 'create': {
+      if (!TABLES[p.table]) return { ok: false, error: 'טבלה לא קיימת' };
+      if (p.table === 'invoices' || p.table === 'audit_log' || p.table === 'counters'
+        || p.table === 'payments')   // B2: קבלה נוצרת רק דרך addPayment / b2ProcessPayment (מספור רציף + idempotency)
+        return { ok: false, error: 'מסמך זה נוצר רק דרך פעולה ייעודית' };
+      var row = p.row || {};
+      if (['carts', 'machines', 'vehicles'].indexOf(p.table) === -1)
+        row.id = row.id || genId(p.table.substring(0, 4).toUpperCase());
+      var NAME_UNIQUE = { customers: 'לקוח', suppliers: 'ספק', items: 'פריט' };
+      if (NAME_UNIQUE[p.table] && row.name) {
+        var nm = String(row.name).trim();
+        row.name = nm;
+        if (db[TMAP[p.table]].some(function (x) { return String(x.name).trim() === nm && x.active !== 'לא'; }))
+          return { ok: false, error: NAME_UNIQUE[p.table] + ' בשם "' + nm + '" כבר קיים במערכת' };
+      }
+      if (p.table === 'customers' && !row.portal_code) {
+        row.portal_code = ('C' + Math.random().toString(36).substring(2, 8)).toUpperCase();
+      }
+      if (p.table === 'notes') {
+        if (!p.row.text || !String(p.row.text).trim()) return { ok: false, error: 'תרשומת ריקה' };
+        if (!p.row.entity_type || !p.row.entity_id) return { ok: false, error: 'תרשומת חייבת להיות מקושרת' };
+        row.ts = nowTs(); row.user = user || '';
+      }
+      if (p.table === 'task_comments') {
+        if (!p.row.task_id || !p.row.text) return { ok: false, error: 'הערה ריקה' };
+        row.ts = nowTs(); row.user = user || '';
+      }
+      if (p.table === 'tasks') {
+        row.status = row.status || 'פתוחה';
+        row.created_by = user || ''; row.created_at = nowTs();
+      }
+      if (p.table === 'meetings') row.created_by = user || '';
+      if (p.table === 'links') {
+        if (!row.from_type || !row.from_id || !row.to_type || !row.to_id)
+          return { ok: false, error: 'תיוג חייב מקור ויעד' };
+        if (String(row.from_type) === String(row.to_type) && String(row.from_id) === String(row.to_id))
+          return { ok: false, error: 'אי אפשר לתייג דבר לעצמו' };
+        if (db.links.some(function (l) { return l.from_type === row.from_type && l.from_id === row.from_id && l.to_type === row.to_type && l.to_id === row.to_id; }))
+          return { ok: false, error: 'התיוג הזה כבר קיים' };
+        row.created = nowTs(); row.user = user || '';
+      }
+      if (p.table === 'orders') {
+        row.status = row.status === 'הצעת מחיר' ? 'הצעת מחיר' : 'טיוטה';
+        row.created_at = nowTs(); // NC4: חותמת זמן מלאה
+        if (!row.warehouse_id) {
+          var wc = db.customers.find(function (x) { return x.id === row.customer_id; });
+          row.warehouse_id = (wc && wc.warehouse_id) || '';
+        }
+        if (!row.start_date || !row.end_date) return { ok: false, error: 'חובה שני תאריכים' };
+        if (row.end_date < row.start_date) return { ok: false, error: 'תאריך ההחזרה לפני תאריך ההתחלה' };
+        row.order_number = nextNumber(db, 'order', 1001);   // CR-16b: מספר הזמנה רץ
+      }
+      if (p.table === 'order_lines') {
+        var po = db.orders.find(function (x) { return x.id === row.order_id; });
+        if (!po) return { ok: false, error: 'הזמנה לא נמצאה' };
+        if (po.status !== 'טיוטה' && po.status !== 'הצעת מחיר') return { ok: false, error: 'מוסיפים פריטים רק בטיוטה או בהצעת מחיר' };
+        if (!(Number(row.qty) > 0)) return { ok: false, error: 'כמות חייבת להיות גדולה מאפס' };
+        if (row.unit_price === '' || row.unit_price === undefined)
+          row.unit_price = linePrice(db, po.customer_id, row.item_id, po.type);
+        row.returned_qty = '';
+      }
+      if (p.table === 'purchases') row.status = 'טיוטה';
+      if (p.table === 'purchase_lines') {
+        var pp = db.purchases.find(function (x) { return x.id === row.purchase_id; });
+        if (!pp) return { ok: false, error: 'הזמנת רכש לא נמצאה' };
+        if (pp.status !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל — אין להוסיף שורות' };
+      }
+      if (p.table === 'carts') {
+        if (!row.id || !String(row.id).trim()) row.id = 'CART-' + ('00' + nextNumber(db, 'cart_seq', 1)).slice(-3);
+        if (!row.status) row.status = 'פנויה';
+      }
+      if (p.table === 'machines' && (!row.id || !String(row.id).trim()))
+        row.id = 'MACH-' + ('00' + nextNumber(db, 'machine_seq', 1)).slice(-3);
+      if (p.table === 'vehicles') {
+        if (!row.id || !String(row.id).trim()) row.id = 'VEH-' + ('00' + nextNumber(db, 'vehicle_seq', 1)).slice(-3);
+        if (!row.status) row.status = 'פעיל';
+        if (row.plate && db.vehicles.some(function (v) { return String(v.plate) === String(row.plate); }))
+          return { ok: false, error: 'רכב עם מספר רישוי זה כבר קיים' };
+      }
+      if (p.table === 'trips' && !row.date) row.date = today();
+      if (p.table === 'items' && row.barcode) {
+        if (db.items.some(function (i) { return i.barcode && String(i.barcode) === String(row.barcode); }))
+          return { ok: false, error: 'ברקוד זה כבר קיים על פריט אחר' };
+      }
+      if (p.table === 'employees' && row.pin) {
+        if (db.employees.some(function (x) { return String(x.pin) === String(row.pin); }))
+          return { ok: false, error: 'קוד עובד זה תפוס' };
+      }
+      db[TMAP[p.table]].push(row);           // עקביות בזיכרון להמשך אותה בקשה
+      appendRowToTable(p.table, row);         // F1: הוספת שורה בודדת במקום שכתוב כל הטבלה
+      // C2: זימון במייל למשתתפי פגישה (participant_ids → contacts)
+      if (p.table === 'meetings') {
+        try {
+          var mIds = String(row.participant_ids || '').split(',').map(function (s) { return s.trim(); }).filter(String);
+          db.contacts.filter(function (c) { return mIds.indexOf(String(c.id)) > -1 && c.email; }).forEach(function (c) {
+            sendMail(c.email, 'זימון לפגישה: ' + (row.title || ''),
+              'שלום ' + (c.name || '') + ',\nנקבעה פגישה: ' + (row.title || '') +
+              '\nתאריך: ' + (row.date || '') + ' שעה: ' + (row.time || '') +
+              (row.location ? '\nמיקום: ' + row.location : ''));
+          });
+        } catch (e) { /* לא שובר יצירה */ }
+      }
+      return { ok: true, row: row, auditNote: p.table + ' ' + row.id };
+    }
+
+    case 'update': {
+      var arr = db[TMAP[p.table]];
+      if (!arr) return { ok: false, error: 'טבלה לא קיימת' };
+      var rec = arr.find(function (x) { return x.id === p.id; });
+      if (!rec) return { ok: false, error: 'רשומה לא נמצאה' };
+      if (p.table === 'orders' && p.row.status && p.row.status !== rec.status)
+        return { ok: false, error: 'שינוי סטטוס רק דרך כפתורי הפעולה' };
+      if (p.table === 'invoices') return { ok: false, error: 'חשבונית אינה ניתנת לעריכה — רק ביטול' };
+      // B2 (D6): מסגרת אשראי נקבעת ידנית ע"י מנהל בלבד — רק דרך b2SetCreditLimit
+      if (p.table === 'customers' && ('credit_limit' in p.row) && String(p.row.credit_limit) !== String(rec.credit_limit == null ? '' : rec.credit_limit))
+        return { ok: false, error: 'מסגרת אשראי מעדכנים רק בכפתור "מסגרת אשראי" בכרטיס הלקוח (מנהל בלבד)' };
+      // B2: סטטוס תשלום משתנה רק דרך פעולות התשלום (b2ProcessPayment / b2MarkPayLater / portalB2Checkout)
+      if (p.table === 'orders' && ('payment_status' in p.row) && String(p.row.payment_status || '') !== String(rec.payment_status || ''))
+        return { ok: false, error: 'סטטוס תשלום משתנה רק דרך מסך התשלום' };
+      if (p.table === 'notes') return { ok: false, error: 'תרשומת אינה ניתנת לעריכה — הוסף תרשומת חדשה עם קישור אליה' };
+      if (p.table === 'items' && p.row.barcode && db.items.some(function (i) { return i.id !== p.id && i.barcode && String(i.barcode) === String(p.row.barcode); }))
+        return { ok: false, error: 'ברקוד זה כבר קיים על פריט אחר' };
+      Object.keys(p.row).forEach(function (k) { if (k !== 'id') rec[k] = p.row[k]; });
+      writeTable(p.table, arr);
+      return { ok: true, row: rec };
+    }
+
+    case 'delete': {
+      var arr2 = db[TMAP[p.table]];
+      if (!arr2) return { ok: false, error: 'טבלה לא קיימת' };
+      var idx = arr2.findIndex(function (x) { return x.id === p.id; });
+      if (idx === -1) return { ok: false, error: 'רשומה לא נמצאה' };
+      if (p.table === 'orders') {
+        var o = arr2[idx];
+        if (['טיוטה', 'הצעת מחיר', 'בוטלה'].indexOf(o.status) === -1) return { ok: false, error: 'מוחקים רק טיוטה, הצעת מחיר או מבוטלת' };
+        db.orderLines = db.orderLines.filter(function (l) { return l.order_id !== p.id; });
+        writeTable('order_lines', db.orderLines);
+      }
+      if (p.table === 'notes') return { ok: false, error: 'תרשומות לא נמחקות לעולם' };
+      if (p.table === 'invoices' || p.table === 'payments' || p.table === 'audit_log')
+        return { ok: false, error: 'מסמכים חשבונאיים לא נמחקים — רק מבוטלים' };
+      if (p.table === 'customers') {
+        if (db.orders.some(function (o) { return o.customer_id === p.id; }))
+          return { ok: false, error: 'ללקוח יש הזמנות — לא ניתן למחוק. אפשר לסמן כלא-פעיל בעריכה.' };
+        db.contacts = db.contacts.filter(function (x) { return x.customer_id !== p.id; });
+        db.customerPrices = db.customerPrices.filter(function (x) { return x.customer_id !== p.id; });
+        writeTable('contacts', db.contacts); writeTable('customer_prices', db.customerPrices);
+      }
+      if (p.table === 'items') {
+        if (db.orderLines.some(function (l) { return l.item_id === p.id; }) || db.laundryTasks.some(function (t) { return t.item_id === p.id; }))
+          return { ok: false, error: 'הפריט בשימוש בהזמנות — לא ניתן למחוק. אפשר לסמן כלא-פעיל.' };
+        db.units = db.units.filter(function (x) { return x.item_id !== p.id; });
+        db.customerPrices = db.customerPrices.filter(function (x) { return x.item_id !== p.id; });
+        db.stockMoves = db.stockMoves.filter(function (x) { return x.item_id !== p.id; });
+        writeTable('units', db.units); writeTable('customer_prices', db.customerPrices); writeTable('stock_moves', db.stockMoves);
+      }
+      if (p.table === 'suppliers' && db.purchases.some(function (x) { return x.supplier_id === p.id; }))
+        return { ok: false, error: 'לספק יש רכש — לא ניתן למחוק' };
+      if (p.table === 'carts' && arr2[idx].status !== 'פנויה')
+        return { ok: false, error: 'העגלה בשימוש — שחרר אותה קודם' };
+      if (p.table === 'employees') {
+        if (db.payroll.some(function (x) { return x.employee_id === p.id; }) || db.attendance.some(function (x) { return x.employee_id === p.id; }))
+          return { ok: false, error: 'לעובד יש נוכחות/שכר — סמן כלא-פעיל במקום למחוק' };
+      }
+      if (p.table === 'tasks') { // NC4: מחיקת משימה גוררת את הערותיה
+        db.taskComments = db.taskComments.filter(function (c) { return c.task_id !== p.id; });
+        writeTable('task_comments', db.taskComments);
+      }
+      if (p.table === 'meetings') { // NC4: משימות שנוצרו מהפגישה נשארות — רק הקישור לפגישה מתנתק
+        var mDet = false;
+        db.tasks.forEach(function (t) { if (t.meeting_id === p.id) { t.meeting_id = ''; mDet = true; } });
+        if (mDet) writeTable('tasks', db.tasks);
+      }
+      // NC4: ניקוי תיוגים (links) שמצביעים על הרשומה הנמחקת — מונע תיוג יתום
+      var LINK_TYPES = { customers: 'customer', contacts: 'contact', suppliers: 'supplier', orders: 'order', tasks: 'task', meetings: 'meeting', employees: 'employee', items: 'item', purchases: 'purchase', vehicles: 'vehicle', notes: 'note' };
+      var lt = LINK_TYPES[p.table];
+      if (lt) {
+        var before = db.links.length;
+        db.links = db.links.filter(function (l) {
+          return !((l.from_type === lt && String(l.from_id) === String(p.id)) || (l.to_type === lt && String(l.to_id) === String(p.id)));
+        });
+        if (db.links.length !== before) writeTable('links', db.links);
+      }
+      arr2.splice(idx, 1);
+      writeTable(p.table, arr2);
+      return { ok: true };
+    }
+
+    // ---- מחזור הזמנה ----
+    case 'convertQuote': {
+      var oq = db.orders.find(function (x) { return x.id === p.order_id; });
+      if (!oq) return { ok: false, error: 'הזמנה לא נמצאה' };
+      if (oq.status !== 'הצעת מחיר') return { ok: false, error: 'רק הצעת מחיר ניתן להמיר' };
+      oq.status = 'טיוטה'; writeTable('orders', db.orders);
+      return { ok: true };
+    }
+    case 'approveOrder': {
+      var r = approveOrder(db, p.order_id);
+      if (r.ok) {
+        writeTable('orders', db.orders);
+        // אוטומציה: יצירת משלוחי אספקה ואיסוף
+        var oo = r.order;
+        if (oo.type === 'השכרה') {
+          db.deliveries.push({ id: genId('DELV'), order_id: oo.id, kind: 'אספקה', date: oo.start_date, driver: '', status: 'מתוכנן', note: '' });
+          db.deliveries.push({ id: genId('DELV'), order_id: oo.id, kind: 'איסוף', date: oo.end_date, driver: '', status: 'מתוכנן', note: '' });
+          writeTable('deliveries', db.deliveries);
+        }
+        // C2: עדכון ללקוח במייל
+        try {
+          var cAp = db.customers.find(function (x) { return x.id === oo.customer_id; });
+          if (cAp && cAp.email) sendMail(cAp.email, 'הזמנתך אושרה' + (oo.order_number ? ' — הזמנה #' + oo.order_number : ''),
+            'שלום ' + (cAp.name || '') + ',\nההזמנה שלך אושרה.\nתאריך אספקה: ' + oo.start_date + '\nתאריך איסוף: ' + oo.end_date);
+        } catch (e) { }
+      }
+      return r;
+    }
+    case 'deliverOrder': {
+      var r2 = deliverOrder(db, p.order_id);
+      if (r2.ok) {
+        writeTable('orders', db.orders);
+        db.deliveries.forEach(function (d) { if (d.order_id === p.order_id && d.kind === 'אספקה' && d.status === 'מתוכנן') { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
+        writeTable('deliveries', db.deliveries);
+        // C2: עדכון ללקוח במייל
+        try {
+          var oDv = r2.order;
+          var cDv = db.customers.find(function (x) { return x.id === oDv.customer_id; });
+          if (cDv && cDv.email) sendMail(cDv.email, 'הזמנתך סופקה' + (oDv.order_number ? ' — הזמנה #' + oDv.order_number : ''),
+            'שלום ' + (cDv.name || '') + ',\nההזמנה שלך סופקה.\nתאריך איסוף מתוכנן: ' + oDv.end_date);
+        } catch (e) { }
+      }
+      return r2;
+    }
+    case 'cancelOrder': {
+      var oc = db.orders.find(function (x) { return x.id === p.order_id; });
+      if (!oc) return { ok: false, error: 'הזמנה לא נמצאה' };
+      if (['סופקה', 'הוחזרה', 'הושלמה'].indexOf(oc.status) > -1) return { ok: false, error: 'אי אפשר לבטל הזמנה שכבר סופקה' };
+      if (db.invoices.some(function (v) { return v.order_id === oc.id && v.status !== 'בוטלה'; }))
+        return { ok: false, error: 'קיימת חשבונית פתוחה — בטל אותה קודם' };
+      oc.status = 'בוטלה'; writeTable('orders', db.orders);
+      db.deliveries.forEach(function (d) { if (d.order_id === oc.id && d.status === 'מתוכנן') d.status = 'בוטל'; });
+      writeTable('deliveries', db.deliveries);
+      return { ok: true };
+    }
+    case 'receiveReturn': {
+      var r3 = receiveReturn(db, p.order_id, p.returns, today(), genId);
+      if (r3.ok) {
+        writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
+        writeTable('stock_moves', db.stockMoves); writeTable('laundry_tasks', db.laundryTasks);
+        db.deliveries.forEach(function (d) { if (d.order_id === p.order_id && d.kind === 'איסוף' && d.status === 'מתוכנן') { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
+        writeTable('deliveries', db.deliveries);
+      }
+      return r3;
+    }
+
+    // ---- כביסה ----
+    case 'assignCart': { var r4 = assignCart(db, p.task_id, p.cart_id); if (r4.ok) { writeTable('laundry_tasks', db.laundryTasks); writeTable('carts', db.carts); } return r4; }
+    case 'advanceLaundry': {
+      var r5 = advanceLaundry(db, p.task_id, today());
+      if (r5.ok) {
+        // C3: הנפקת ברקוד אריזה אוטומטי במעבר ל'מוכן'
+        if (r5.stage === 'מוכן') {
+          try {
+            var tPk = db.laundryTasks.find(function (x) { return x.id === p.task_id; });
+            if (tPk && !tPk.package_barcode) tPk.package_barcode = 'PKG-' + nextNumber(db, 'pkg', 1);
+            r5.package_barcode = tPk ? tPk.package_barcode : '';
+          } catch (e) { }
+        }
+        writeTable('laundry_tasks', db.laundryTasks); writeTable('carts', db.carts); writeTable('orders', db.orders);
+      }
+      return r5;
+    }
+
+    // ---- חשבונאות ----
+    case 'createInvoice': {
+      var oi = db.orders.find(function (x) { return x.id === p.order_id; });
+      if (!oi) return { ok: false, error: 'הזמנה לא נמצאה' };
+      if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oi.status) > -1) return { ok: false, error: 'חשבונית מפיקים רק להזמנה מאושרת ומעלה' };
+      if (db.invoices.some(function (v) { return v.order_id === oi.id && v.status !== 'בוטלה'; }))
+        return { ok: false, error: 'כבר קיימת חשבונית פעילה להזמנה זו' };
+      var sub = orderTotal(db, oi.id);
+      if (!(sub > 0)) return { ok: false, error: 'אין שורות בהזמנה — אין מה לחייב' };
+      var vat = Math.round(sub * VAT_RATE * 100) / 100;
+      var inv = {
+        id: genId('INV'), number: nextNumber(db, 'invoice', 1001), order_id: oi.id, customer_id: oi.customer_id,
+        date: today(), subtotal: sub, vat_rate: VAT_RATE, vat: vat, total: Math.round((sub + vat) * 100) / 100, status: 'פתוחה'
+      };
+      db.invoices.push(inv); writeTable('invoices', db.invoices);
+      return { ok: true, invoice: inv, auditNote: 'חשבונית ' + inv.number };
+    }
+    case 'cancelInvoice': {
+      var iv = db.invoices.find(function (x) { return x.id === p.invoice_id; });
+      if (!iv) return { ok: false, error: 'חשבונית לא נמצאה' };
+      if (db.payments.some(function (x) { return x.invoice_id === iv.id; })) return { ok: false, error: 'יש קבלות על חשבונית זו — לא ניתן לבטל' };
+      iv.status = 'בוטלה'; writeTable('invoices', db.invoices);
+      return { ok: true };
+    }
+    case 'addPayment': {
+      if (!(Number(p.amount) > 0)) return { ok: false, error: 'סכום חובה' };
+      // NC3: תשלום על חשבונית מכבסה מרוכזת (ללא הזמנה) — לפי invoice_id
+      if (!p.order_id && p.invoice_id) {
+        var ivL = db.invoices.find(function (v) { return v.id === p.invoice_id && v.status !== 'בוטלה'; });
+        if (!ivL) return { ok: false, error: 'חשבונית לא נמצאה' };
+        var paidL = db.payments.filter(function (x) { return x.invoice_id === ivL.id; }).reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0);
+        var balL = nRound2(Number(ivL.total) - paidL);
+        if (Number(p.amount) > balL + 0.01) return { ok: false, error: 'הסכום גבוה מהיתרה (' + balL + ' ₪)' };
+        var payL = {
+          id: genId('PAY'), order_id: '', invoice_id: ivL.id,
+          receipt_number: nextNumber(db, 'receipt', 5001), date: p.date || today(),
+          amount: Number(p.amount), method: p.method || '', note: p.note || ''
+        };
+        db.payments.push(payL); writeTable('payments', db.payments);
+        if (balL - Number(p.amount) <= 0.01) { ivL.status = 'שולמה'; writeTable('invoices', db.invoices); }
+        return { ok: true, row: payL, balance: nRound2(balL - Number(p.amount)), auditNote: 'קבלה ' + payL.receipt_number + ' · חשבונית ' + ivL.number };
+      }
+      if (!p.order_id) return { ok: false, error: 'סכום והזמנה חובה' };
+      var bal = orderBalance(db, p.order_id);
+      if (Number(p.amount) > bal + 0.01) return { ok: false, error: 'הסכום גבוה מהיתרה (' + bal + ' ₪)' };
+      var inv2 = db.invoices.find(function (v) { return v.order_id === p.order_id && v.status !== 'בוטלה'; });
+      var pay = {
+        id: genId('PAY'), order_id: p.order_id, invoice_id: inv2 ? inv2.id : '',
+        receipt_number: nextNumber(db, 'receipt', 5001), date: p.date || today(),
+        amount: Number(p.amount), method: p.method || '', note: p.note || ''
+      };
+      db.payments.push(pay); writeTable('payments', db.payments);
+      if (inv2 && orderBalance(db, p.order_id) <= 0.01) { inv2.status = 'שולמה'; writeTable('invoices', db.invoices); }
+      return { ok: true, row: pay, balance: orderBalance(db, p.order_id), auditNote: 'קבלה ' + pay.receipt_number };
+    }
+
+    // ---- רכש ----
+    case 'receivePurchase': {
+      var pu = db.purchases.find(function (x) { return x.id === p.purchase_id; });
+      if (!pu) return { ok: false, error: 'רכש לא נמצא' };
+      if (pu.status !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל' };
+      var lines = db.purchaseLines.filter(function (l) { return l.purchase_id === pu.id; });
+      if (!lines.length) return { ok: false, error: 'אין שורות ברכש' };
+      lines.forEach(function (l) {
+        db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: l.item_id, type: 'קניה', qty: Number(l.qty), ref: pu.id, note: 'קבלת רכש', warehouse_id: p.warehouse_id || '' });
+        db.expenses.push({
+          id: genId('EXP'), date: today(), category: 'רכש מלאי', supplier_id: pu.supplier_id,
+          amount: Number(l.qty) * Number(l.unit_cost), vat: Math.round(Number(l.qty) * Number(l.unit_cost) * VAT_RATE * 100) / 100, note: 'רכש ' + pu.id
+        });
+      });
+      pu.status = 'התקבלה';
+      writeTable('purchases', db.purchases); writeTable('stock_moves', db.stockMoves); writeTable('expenses', db.expenses);
+      return { ok: true };
+    }
+
+    // ---- ברקוד ----
+    case 'scan': {
+      var bc = String(p.barcode || '').trim();
+      if (!bc) return { ok: false, error: 'ברקוד ריק' };
+      var it = db.items.find(function (i) { return String(i.barcode) === bc; });
+      if (it) return {
+        ok: true, kind: 'item', entity: it,
+        stock: totalStock(db, it.id), inLaundry: inLaundryQty(db, it.id)
+      };
+      var un = db.units.find(function (u) { return String(u.barcode) === bc || String(u.id) === bc; });
+      if (un) {
+        var uit = db.items.find(function (i) { return i.id === un.item_id; });
+        return { ok: true, kind: 'unit', entity: un, item: uit || null };
+      }
+      var ct = db.carts.find(function (c) { return String(c.barcode) === bc; });
+      if (ct) {
+        var tsk = db.laundryTasks.find(function (t) { return t.cart_id === ct.id && t.stage !== 'מוכן'; });
+        return { ok: true, kind: 'cart', entity: ct, task: tsk || null };
+      }
+      var pk = db.laundryTasks.find(function (t) { return String(t.package_barcode) === bc; });
+      if (pk) {
+        var pkIt = db.items.find(function (i) { return i.id === pk.item_id; });
+        return { ok: true, kind: 'package', entity: pk, item: pkIt || null };
+      }
+      return { ok: false, error: 'ברקוד לא נמצא במערכת' };
+    }
+
+    // ---- זמינות ודוחות ----
+    case 'availability':
+      return {
+        ok: true, available: availableQty(db, p.item_id, p.start_date, p.end_date),
+        total: totalStock(db, p.item_id), inLaundry: inLaundryQty(db, p.item_id),
+        reserved: reservedQty(db, p.item_id, p.start_date, p.end_date)
+      };
+
+    case 'reports': {
+      var rev = {}; // הכנסות לפי חודש (מחשבוניות פעילות)
+      db.invoices.filter(function (v) { return v.status !== 'בוטלה'; }).forEach(function (v) {
+        var m = String(v.date).substring(0, 7);
+        rev[m] = Math.round(((rev[m] || 0) + Number(v.subtotal)) * 100) / 100;
+      });
+      var exp = {}; // הוצאות לפי חודש
+      db.expenses.forEach(function (x) {
+        var m = String(x.date).substring(0, 7);
+        exp[m] = Math.round(((exp[m] || 0) + Number(x.amount)) * 100) / 100;
+      });
+      var aging = db.customers.map(function (c) { // יתרות לקוחות
+        var b = customerBalance(db, c.id);
+        return { customer: c.name, balance: Math.round(b * 100) / 100 };
+      }).filter(function (x) { return x.balance > 0; }).sort(function (a, b) { return b.balance - a.balance; });
+      var low = db.items.filter(function (i) { // מלאי נמוך
+        return i.min_stock !== '' && (totalStock(db, i.id) - inLaundryQty(db, i.id)) < Number(i.min_stock);
+      }).map(function (i) { return { item: i.name, available: totalStock(db, i.id) - inLaundryQty(db, i.id), min: Number(i.min_stock) }; });
+      return { ok: true, revenueByMonth: rev, expensesByMonth: exp, aging: aging, lowStock: low };
+    }
+
+
+    // ---- העברת מלאי בין מחסנים ----
+    case 'transferStock': {
+      var ti = db.items.find(function (i) { return i.id === p.item_id; });
+      if (!ti) return { ok: false, error: 'פריט לא נמצא' };
+      var q = Number(p.qty);
+      if (!(q > 0)) return { ok: false, error: 'כמות חייבת להיות חיובית' };
+      if (String(p.from || '') === String(p.to || '')) return { ok: false, error: 'בחר שני מחסנים שונים' };
+      var availSrc = totalStock(db, p.item_id, p.from || '') - inLaundryQty(db, p.item_id, p.from || '');
+      if (q > availSrc) return { ok: false, error: 'במחסן המקור יש רק ' + availSrc + ' זמינים' };
+      var trip = null;
+      if (p.method) {
+        if (p.method === 'נהג שלנו' && !p.driver_id) return { ok: false, error: 'בחר נהג לנסיעה' };
+        if (p.method === 'שליח חיצוני' && !p.external_carrier) return { ok: false, error: 'ציין את שם השליח/חברת ההובלה' };
+        if (p.vehicle_id) {
+          var tv = db.vehicles.find(function (v) { return v.id === p.vehicle_id; });
+          if (tv && tv.status !== 'פעיל') return { ok: false, error: 'הרכב ' + (tv.plate || tv.id) + ' אינו פעיל (' + tv.status + ')' };
+        }
+        trip = {
+          id: genId('TRIP'), date: today(), kind: 'העברת מלאי', method: p.method,
+          driver_id: p.driver_id || '', vehicle_id: p.vehicle_id || '', external_carrier: p.external_carrier || '',
+          from_loc: whName(db, p.from), to_loc: whName(db, p.to), ref: '', start_km: p.start_km || '', end_km: '', cost: Number(p.cost) || 0, notes: p.notes || ''
+        };
+        db.trips.push(trip);
+        writeTable('trips', db.trips);
+      }
+      var refId = trip ? trip.id : '';
+      db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: p.item_id, type: 'העברה', qty: -q, ref: refId, note: 'העברה אל ' + whName(db, p.to), warehouse_id: p.from || '' });
+      db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: p.item_id, type: 'העברה', qty: q, ref: refId, note: 'העברה מ' + whName(db, p.from), warehouse_id: p.to || '' });
+      writeTable('stock_moves', db.stockMoves);
+      return { ok: true, trip_id: refId, auditNote: ti.name + ' ' + q + ' יח\' ' + whName(db, p.from) + ' ← ' + whName(db, p.to) };
+    }
+
+    // ---- לוח חגים (לשימוש היומן בממשק) ----
+    case 'getHolidays': {
+      var hs = getHolidaySet(db, p.from || today(), p.to || today());
+      return { ok: true, holidays: Object.keys(hs) };
+    }
+
+    // ---- הגדרות ומיתוג ----
+    case 'updateSetting': {
+      var st = db.settings.find(function (x) { return x.key === p.key; });
+      if (st) st.value = p.value; else db.settings.push({ key: p.key, value: p.value });
+      writeTable('settings', db.settings);
+      return { ok: true };
+    }
+
+    // ---- יחידות ממוספרות + ברקוד אוטומטי ----
+    case 'createUnits': {
+      var uit2 = db.items.find(function (i) { return i.id === p.item_id; });
+      if (!uit2) return { ok: false, error: 'פריט לא נמצא' };
+      var qty = Number(p.qty);
+      if (!(qty > 0) || qty > 500) return { ok: false, error: 'כמות בין 1 ל-500' };
+      var prefix = String(uit2.prefix || '').trim();
+      if (!prefix) return { ok: false, error: 'לפריט אין קידומת (prefix) — הגדר אותה בעריכת הפריט, למשל MAPA' };
+      if (!String(uit2.barcode || '').trim()) return { ok: false, error: 'לפריט אין ברקוד — הגדר ברקוד לפריט (ברקוד אחד משותף לכל היחידות)' };
+      var created = [];
+      for (var u = 0; u < qty; u++) {
+        var num = nextNumber(db, 'unit_' + prefix, 1);
+        var uid = prefix + ('0000' + num).slice(-4);
+        db.units.push({ id: uid, item_id: uit2.id, barcode: uit2.barcode, status: 'פנוי', note: '', created: nowTs() });
+        created.push(uid);
+      }
+      writeTable('units', db.units);
+      return { ok: true, created: created, auditNote: qty + ' יחידות ' + prefix };
+    }
+    case 'setUnitStatus': {
+      var un2 = db.units.find(function (x) { return x.id === p.unit_id; });
+      if (!un2) return { ok: false, error: 'יחידה לא נמצאה' };
+      if (UNIT_STATUSES.indexOf(p.status) === -1) return { ok: false, error: 'סטטוס לא חוקי' };
+      if (un2.status === 'גרוט') return { ok: false, error: 'יחידה גרוטה — סופית' };
+      var was = un2.status;
+      un2.status = p.status;
+      if (p.status === 'גרוט') {
+        db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: un2.item_id, type: 'גריעה', qty: -1, ref: un2.id, note: 'גריטת יחידה' });
+        writeTable('stock_moves', db.stockMoves);
+      }
+      writeTable('units', db.units);
+      return { ok: true, auditNote: un2.id + ': ' + was + ' ← ' + p.status };
+    }
+
+    // ---- נוכחות ----
+    case 'clock': {
+      var ce = db.employees.find(function (x) { return String(x.pin) === String(p.pin) && x.active !== 'לא'; });
+      if (!ce) return { ok: false, error: 'קוד עובד שגוי' };
+      var t = today();
+      var open = db.attendance.find(function (a) { return a.employee_id === ce.id && a.date === t && !a.out_time; });
+      var hhmm = nowTs().substring(11, 16);
+      if (open) {
+        open.out_time = hhmm;
+        open.hours = calcHours(open.in_time, open.out_time);
+        writeTable('attendance', db.attendance);
+        return { ok: true, mode: 'out', name: ce.name, hours: open.hours };
+      }
+      db.attendance.push({ id: genId('ATT'), employee_id: ce.id, date: t, in_time: hhmm, out_time: '', hours: '' });
+      writeTable('attendance', db.attendance);
+      return { ok: true, mode: 'in', name: ce.name };
+    }
+    case 'addAttendance': {
+      if (!p.employee_id || !p.in_date || !p.in_time || !p.out_time)
+        return { ok: false, error: 'שדות חובה חסרים' };
+      var inDate = p.in_date, outDate = p.out_date || p.in_date;
+      var h = calcHoursSpan(inDate, p.in_time, outDate, p.out_time);
+      if (h <= 0) return { ok: false, error: 'שעת יציאה חייבת להיות אחרי הכניסה' };
+      db.attendance.push({
+        id: genId('ATT'), employee_id: p.employee_id, date: inDate,
+        in_date: inDate, out_date: outDate, in_time: p.in_time, out_time: p.out_time, hours: h
+      });
+      writeTable('attendance', db.attendance);
+      return { ok: true, hours: h };
+    }
+
+    // ---- שכר ----
+    case 'buildPayroll': {
+      if (!/^\d{4}-\d{2}$/.test(p.month || '')) return { ok: false, error: 'חודש בפורמט YYYY-MM' };
+      var built = 0;
+      db.employees.filter(function (e) { return e.active !== 'לא'; }).forEach(function (e) {
+        var hrs = db.attendance.filter(function (a) { return a.employee_id === e.id && String(a.date).substring(0, 7) === p.month && a.hours !== ''; })
+          .reduce(function (s, a) { return s + Number(a.hours); }, 0);
+        hrs = Math.round(hrs * 100) / 100;
+        var ex = db.payroll.find(function (x) { return x.employee_id === e.id && x.month === p.month; });
+        if (ex && ex.status === 'אושר') return;
+        var rate = Number(e.hourly_rate) || 0;
+        var base = Math.round(hrs * rate * 100) / 100;
+        if (ex) { ex.hours = hrs; ex.hourly_rate = rate; ex.base_pay = base; ex.total = Math.round((base + Number(ex.bonus || 0)) * 100) / 100; }
+        else db.payroll.push({ id: genId('PAYR'), employee_id: e.id, month: p.month, hours: hrs, hourly_rate: rate, base_pay: base, bonus: 0, bonus_note: '', total: base, status: 'טיוטה' });
+        built++;
+      });
+      writeTable('payroll', db.payroll);
+      return { ok: true, built: built };
+    }
+    case 'setBonus': {
+      var pr = db.payroll.find(function (x) { return x.id === p.payroll_id; });
+      if (!pr) return { ok: false, error: 'רשומת שכר לא נמצאה' };
+      if (pr.status === 'אושר') return { ok: false, error: 'השכר כבר אושר' };
+      pr.bonus = Number(p.bonus) || 0;
+      pr.bonus_note = p.note || '';
+      pr.total = Math.round((Number(pr.base_pay) + pr.bonus) * 100) / 100;
+      writeTable('payroll', db.payroll);
+      return { ok: true, total: pr.total };
+    }
+    case 'approvePayroll': {
+      var pr2 = db.payroll.find(function (x) { return x.id === p.payroll_id; });
+      if (!pr2) return { ok: false, error: 'רשומת שכר לא נמצאה' };
+      if (pr2.status === 'אושר') return { ok: false, error: 'כבר אושר' };
+      pr2.status = 'אושר';
+      var emp2 = db.employees.find(function (x) { return x.id === pr2.employee_id; });
+      db.expenses.push({
+        id: genId('EXP'), date: today(), category: 'שכר', supplier_id: '',
+        amount: Number(pr2.total), vat: 0, note: 'שכר ' + (emp2 ? emp2.name : '') + ' ' + pr2.month
+      });
+      writeTable('payroll', db.payroll); writeTable('expenses', db.expenses);
+      return { ok: true, auditNote: 'שכר ' + pr2.month + ' ' + (emp2 ? emp2.name : '') + ' ' + pr2.total };
+    }
+
+    // ---- דוח הזמנות עם פילטרים (לדשבורד הדוחות) ----
+    case 'ordersReport': {
+      var rows = db.orders.filter(function (o) {
+        if (p.from && o.start_date < p.from) return false;
+        if (p.to && o.start_date > p.to) return false;
+        if (p.customer_id && o.customer_id !== p.customer_id) return false;
+        if (p.status && o.status !== p.status) return false;
+        if (p.type && o.type !== p.type) return false;
+        return true;
+      }).map(function (o) {
+        return {
+          id: o.id, date: o.start_date, end: o.end_date, customer: (db.customers.find(function (c) { return c.id === o.customer_id; }) || {}).name || '',
+          type: o.type, status: o.status, total: orderTotal(db, o.id), paid: orderPaid(db, o.id), balance: Math.round(orderBalance(db, o.id) * 100) / 100
+        };
+      });
+      var sum = rows.reduce(function (s, r) { return s + r.total; }, 0);
+      return { ok: true, rows: rows, total: Math.round(sum * 100) / 100 };
+    }
+
+    // ---- פורטל לקוחות (מאומת בקוד לקוח בלבד) ----
+    case 'portalGetData': {
+      var pc = db.customers.find(function (c) { return c.portal_code && String(c.portal_code) === String(p.code).toUpperCase() && c.active !== 'לא'; });
+      if (!pc) return { ok: false, error: 'קוד לקוח שגוי' };
+      var items = db.items.filter(function (i) { return i.active !== 'לא' && Number(i.rent_price) > 0; }).map(function (i) {
+        return { id: i.id, name: i.name, size: i.size, color: i.color, price: linePrice(db, pc.id, i.id, 'השכרה') };
+      });
+      var myOrders = db.orders.filter(function (o) { return o.customer_id === pc.id; }).map(function (o) {
+        // B2: נוספו id / number / payment_status לתצוגת סטטוס תשלום בפורטל (D11)
+        return { id: o.id, number: o.order_number || '', start: o.start_date, end: o.end_date, status: o.status, payment_status: o.payment_status || '', total: orderTotal(db, o.id) };
+      });
+      // NC2: הכביסה של הלקוח בפורטל — שלב נוכחי, זמן משוער, משקל וחיוב
+      var myIntakes = db.laundryIntakes.filter(function (i) { return i.customer_id === pc.id; });
+      var laundry = [];
+      if (myIntakes.length) {
+        var pAvgs = nobleStageAvgs(db);
+        myIntakes.sort(function (a, b) { return String(a.intake_ts) < String(b.intake_ts) ? 1 : -1; }).slice(0, 10).forEach(function (ik) {
+          var roll = nobleWeighRollup(db, ik.id);
+          laundry.push({
+            id: ik.id, ts: ik.intake_ts, status: ik.status, net: roll.net, charge: roll.charge,
+            eta_min: nobleEtaMin(db, ik, pAvgs), delivered_ts: ik.delivered_ts || ''
+          });
+        });
+      }
+      // B2 (D11): מסגרת אשראי, חוב פתוח, קבלות להורדה קבועה (D15) וחשבוניות
+      var pgCredit = b2CreditStatusObj(db, pc.id);
+      var pgOrderIds = {}; db.orders.forEach(function (o) { if (o.customer_id === pc.id) pgOrderIds[o.id] = 1; });
+      var pgInvIds = {}; db.invoices.forEach(function (v) { if (v.customer_id === pc.id) pgInvIds[v.id] = 1; });
+      var pgRecMap = {};
+      db.payments.forEach(function (x) {
+        if (!(x.customer_id === pc.id || pgOrderIds[x.order_id] || pgInvIds[x.invoice_id])) return;
+        var k = String(x.receipt_number);
+        if (!pgRecMap[k]) pgRecMap[k] = { number: x.receipt_number, date: x.date, amount: 0, method: x.method || '', url: '' };
+        pgRecMap[k].amount = nRound2(pgRecMap[k].amount + Number(x.amount || 0));
+        if (x.pdf_url && !pgRecMap[k].url) pgRecMap[k].url = x.pdf_url;
+      });
+      var pgReceipts = Object.keys(pgRecMap).map(function (k) { return pgRecMap[k]; })
+        .sort(function (a, b) { return Number(b.number) - Number(a.number); }).slice(0, 20);
+      var pgInvoices = db.invoices.filter(function (v) { return v.customer_id === pc.id && v.status !== 'בוטלה'; })
+        .sort(function (a, b) { return Number(b.number) - Number(a.number); }).slice(0, 20)
+        .map(function (v) { return { number: v.number, type: v.type || 'חשבונית', date: v.date, total: v.total, status: v.status, url: v.pdf_url || '' }; });
+      return {
+        ok: true, customer: { id: pc.id, name: pc.name }, items: items, orders: myOrders, laundry: laundry,
+        credit: pgCredit, debt: agIls(pgCredit.used_ag), receipts: pgReceipts, invoices: pgInvoices,
+        payment_link: b2Setting(db, 'payment_link'), order_center_phone: b2Setting(db, 'order_center_phone')
+      };
+    }
+    case 'portalCreateOrder': {
+      var pc2 = db.customers.find(function (c) { return c.portal_code && String(c.portal_code) === String(p.code).toUpperCase() && c.active !== 'לא'; });
+      if (!pc2) return { ok: false, error: 'קוד לקוח שגוי' };
+      if (!p.start_date || !p.end_date || p.end_date < p.start_date) return { ok: false, error: 'תאריכים לא תקינים' };
+      var lines2 = (p.lines || []).filter(function (l) { return Number(l.qty) > 0; });
+      if (!lines2.length) return { ok: false, error: 'לא נבחרו פריטים' };
+      var ord = {
+        id: genId('ORDE'), type: 'השכרה', customer_id: pc2.id, start_date: p.start_date, end_date: p.end_date,
+        status: 'הצעת מחיר', notes: 'הוזמן מהפורטל' + (p.notes ? ' · ' + p.notes : ''), created_at: nowTs(),
+        payment_status: 'ממתין לתשלום'   // B2 (D2): נחסמת לאישור עד השלמת checkout / תשלום / "תשלום בהמשך"
+      };
+      ord.order_number = nextNumber(db, 'order', 1001);   // CR-16b
+      db.orders.push(ord);
+      lines2.forEach(function (l) {
+        db.orderLines.push({
+          id: genId('LINE'), order_id: ord.id, item_id: l.item_id, qty: Number(l.qty),
+          unit_price: linePrice(db, pc2.id, l.item_id, 'השכרה'), returned_qty: ''
+        });
+      });
+      writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
+      audit(db, 'פורטל: ' + pc2.name, 'portalCreateOrder', ord.id);
+      // B2: נתוני checkout לתצוגת מסך התשלום בפורטל (S1/D7)
+      var pcTot = orderTotal(db, ord.id);
+      return {
+        ok: true, order_id: ord.id, total: pcTot, total_ag: toAg(pcTot),
+        credit: b2CreditStatusObj(db, pc2.id),
+        order_center_phone: b2Setting(db, 'order_center_phone'),
+        payment_link: b2Setting(db, 'payment_link')
+      };
+    }
+
+    // ---- החזרה בשקילה ----
+    case 'findOrderByScan': {
+      var code2 = String(p.code || '').trim();
+      if (!code2) return { ok: false, error: 'סרוק או הקלד מספר תעודה / הזמנה' };
+      var ord3 = null;
+      var dlv = db.deliveries.find(function (d) { return String(d.note_number) === code2; });
+      if (dlv) ord3 = db.orders.find(function (o) { return o.id === dlv.order_id; });
+      if (!ord3) ord3 = db.orders.find(function (o) { return o.id === code2; });
+      if (!ord3) return { ok: false, error: 'לא נמצאה הזמנה לתעודה/מזהה: ' + code2 };
+      if (ord3.status !== 'סופקה') return { ok: false, error: 'ההזמנה בסטטוס "' + ord3.status + '" — רק הזמנה שסופקה נקלטת בהחזרה' };
+      var defDev = Number((db.settings.find(function (s) { return s.key === 'default_deviation_pct'; }) || {}).value || 2);
+      var custD = db.customers.find(function (c) { return c.id === ord3.customer_id; }) || {};
+      var lines4 = db.orderLines.filter(function (l) { return l.order_id === ord3.id; }).map(function (l) {
+        var it2 = db.items.find(function (i) { return i.id === l.item_id; }) || {};
+        var w = Number(it2.weight_kg) || 0;
+        var dev = custD.deviation_pct !== '' && custD.deviation_pct !== undefined && custD.deviation_pct !== null && String(custD.deviation_pct) !== '' ? Number(custD.deviation_pct)
+          : (it2.deviation_pct !== '' && it2.deviation_pct !== undefined && String(it2.deviation_pct) !== '' ? Number(it2.deviation_pct) : defDev);
+        return {
+          line_id: l.id, item_id: l.item_id, item_name: it2.name || l.item_id, qty: Number(l.qty),
+          unit_weight: w, expected_weight: Math.round(Number(l.qty) * w * 100) / 100, allowed_dev: dev
+        };
+      });
+      return { ok: true, order: { id: ord3.id, customer: (custD.name || ''), start: ord3.start_date, end: ord3.end_date }, lines: lines4 };
+    }
+    case 'returnByWeight': {
+      var ow = db.orders.find(function (x) { return x.id === p.order_id; });
+      if (!ow) return { ok: false, error: 'הזמנה לא נמצאה' };
+      if (ow.status !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
+      var defDev2 = Number((db.settings.find(function (s) { return s.key === 'default_deviation_pct'; }) || {}).value || 2);
+      var custD2 = db.customers.find(function (c) { return c.id === ow.customer_id; }) || {};
+      var returns2 = {}, needCount = [], weights = {};
+      var olines = db.orderLines.filter(function (l) { return l.order_id === ow.id; });
+      for (var li = 0; li < olines.length; li++) {
+        var l2 = olines[li];
+        var it3 = db.items.find(function (i) { return i.id === l2.item_id; }) || {};
+        var uw = Number(it3.weight_kg) || 0;
+        var measured = p.weights && p.weights[l2.id] !== undefined && p.weights[l2.id] !== '' ? Number(p.weights[l2.id]) : null;
+        var counted = p.counts && p.counts[l2.id] !== undefined && p.counts[l2.id] !== '' ? Number(p.counts[l2.id]) : null;
+        if (counted !== null) { returns2[l2.id] = counted; weights[l2.id] = measured !== null ? measured : ''; continue; }
+        if (uw <= 0) { needCount.push({ line_id: l2.id, item: it3.name, reason: 'לפריט לא הוגדר משקל — נדרשת ספירה ידנית' }); continue; }
+        if (measured === null) { needCount.push({ line_id: l2.id, item: it3.name, reason: 'חסר משקל' }); continue; }
+        var expW = Number(l2.qty) * uw;
+        var dev2 = custD2.deviation_pct !== undefined && String(custD2.deviation_pct) !== '' ? Number(custD2.deviation_pct)
+          : (it3.deviation_pct !== undefined && String(it3.deviation_pct) !== '' ? Number(it3.deviation_pct) : defDev2);
+        var devPct = expW > 0 ? Math.abs(expW - measured) / expW * 100 : 100;
+        if (devPct <= dev2) { returns2[l2.id] = Number(l2.qty); weights[l2.id] = measured; }
+        else needCount.push({ line_id: l2.id, item: it3.name, reason: 'סטייה ' + (Math.round(devPct * 10) / 10) + '% מעל המותר (' + dev2 + '%) — נדרשת ספירה ידנית', measured: measured });
+      }
+      if (needCount.length) return { ok: false, need_count: needCount, error: 'נדרשת ספירה ידנית לחלק מהפריטים' };
+      var rr = receiveReturn(db, ow.id, returns2, today(), genId);
+      if (!rr.ok) return rr;
+      olines.forEach(function (l3) { if (weights[l3.id] !== undefined) l3.returned_weight = weights[l3.id]; });
+      writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
+      writeTable('stock_moves', db.stockMoves); writeTable('laundry_tasks', db.laundryTasks);
+      db.deliveries.forEach(function (d) { if (d.order_id === ow.id && d.kind === 'איסוף' && d.status === 'מתוכנן') { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
+      writeTable('deliveries', db.deliveries);
+      return { ok: true, shortages: rr.shortages, shortage_charge: rr.shortage_charge };
+    }
+    // C3: צילום נהג באספקה — נשמר ב-Drive ומקושר למשלוח
+    case 'deliverPhoto': {
+      var dvP = db.deliveries.find(function (x) { return x.id === p.delivery_id; });
+      if (!dvP) return { ok: false, error: 'משלוח לא נמצא' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      var fnD = 'MAPA-NOBLE אספקות';
+      var flsD = DriveApp.getFoldersByName(fnD);
+      var fldD = flsD.hasNext() ? flsD.next() : DriveApp.createFolder(fnD);
+      var fD = fldD.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, 'אספקה_' + dvP.id));
+      fD.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      dvP.photo_url = fD.getUrl();
+      writeTable('deliveries', db.deliveries);
+      return { ok: true, url: dvP.photo_url };
+    }
+    case 'attachNoteFile': {
+      var nt2 = db.notes.find(function (x) { return x.id === p.note_id; });
+      if (!nt2) return { ok: false, error: 'תרשומת לא נמצאה' };
+      if (nt2.attachment_url) return { ok: false, error: 'לתרשומת כבר מצורף קובץ' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      var fn2 = 'MAPA-NOBLE תרשומות';
+      var fl2 = DriveApp.getFoldersByName(fn2);
+      var folder2 = fl2.hasNext() ? fl2.next() : DriveApp.createFolder(fn2);
+      var file2 = folder2.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, (p.name || 'מסמך') + '_' + nt2.id));
+      file2.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      nt2.attachment_url = file2.getUrl();
+      writeTable('notes', db.notes);
+      return { ok: true, url: nt2.attachment_url };
+    }
+
+    // ---- חנות ציבורית (דף נחיתה) — ללא סיסמה ----
+    case 'portalCatalog': {
+      var items3 = db.items.filter(function (i) { return i.active !== 'לא' && Number(i.rent_price) > 0; }).map(function (i) {
+        return { id: i.id, name: i.name, size: i.size, color: i.color, price: Number(i.rent_price) };
+      });
+      var fee = Number((db.settings.find(function (s) { return s.key === 'default_delivery_fee'; }) || {}).value || 0);
+      var bn = (db.settings.find(function (s) { return s.key === 'business_name'; }) || {}).value || '';
+      return { ok: true, items: items3, delivery_fee: fee, vat_rate: VAT_RATE, business_name: bn };
+    }
+    case 'portalRegisterOrder': {
+      var nm2 = String(p.name || '').trim(), ph2 = String(p.phone || '').trim();
+      if (!nm2 || !ph2) return { ok: false, error: 'שם וטלפון הם שדות חובה' };
+      if (!p.start_date || !p.end_date || p.end_date < p.start_date) return { ok: false, error: 'תאריכים לא תקינים' };
+      var lines3 = (p.lines || []).filter(function (l) { return Number(l.qty) > 0; });
+      if (!lines3.length) return { ok: false, error: 'לא נבחרו פריטים' };
+      // איתור לקוח קיים לפי טלפון — מניעת כפילויות
+      var pcust = db.customers.find(function (c) { return String(c.phone || '').replace(/\D/g, '') === ph2.replace(/\D/g, '') && ph2; });
+      if (!pcust) {
+        var finalName = nm2;
+        if (db.customers.some(function (c) { return String(c.name).trim() === finalName; })) finalName = nm2 + ' (' + ph2 + ')';
+        pcust = {
+          id: genId('CUST'), name: finalName, type: 'אירועים', payment_terms: '', vat_id: p.vat_id || '',
+          address: p.address || '', notes: 'נרשם מהאתר', portal_code: ('C' + Math.random().toString(36).substring(2, 8)).toUpperCase(),
+          active: 'כן', phone: ph2, email: p.email || '', city: p.city || '', warehouse_id: ''
+        };
+        db.customers.push(pcust);
+        writeTable('customers', db.customers);
+      }
+      var fee2 = Number((db.settings.find(function (s) { return s.key === 'default_delivery_fee'; }) || {}).value || 0);
+      var ord2 = {
+        id: genId('ORDE'), type: 'השכרה', customer_id: pcust.id, start_date: p.start_date, end_date: p.end_date,
+        status: 'הצעת מחיר', notes: 'הוזמן מהאתר' + (p.notes ? ' · ' + p.notes : ''), created_at: nowTs(), warehouse_id: pcust.warehouse_id || '', delivery_fee: fee2,
+        payment_status: 'ממתין לתשלום'   // B2 (D2): הזמנת חנות חסומה לאישור עד תשלום / "תשלום בהמשך"
+      };
+      ord2.order_number = nextNumber(db, 'order', 1001);   // CR-16b
+      db.orders.push(ord2);
+      lines3.forEach(function (l) {
+        db.orderLines.push({
+          id: genId('LINE'), order_id: ord2.id, item_id: l.item_id, qty: Number(l.qty),
+          unit_price: linePrice(db, pcust.id, l.item_id, 'השכרה'), returned_qty: ''
+        });
+      });
+      writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
+      audit(db, 'אתר: ' + pcust.name, 'portalRegisterOrder', ord2.id);
+      // C2: התראה לעסק על הזמנה חדשה מהאתר (לפי הגדרת notify_email)
+      try {
+        var nEm = (db.settings.find(function (s) { return s.key === 'notify_email'; }) || {}).value;
+        sendMail(nEm, 'הזמנה חדשה מהאתר' + (ord2.order_number ? ' — #' + ord2.order_number : ''),
+          'לקוח: ' + pcust.name + '\nטלפון: ' + ph2 + '\nתאריכים: ' + p.start_date + ' עד ' + p.end_date +
+          '\nסה"כ (לפני מע"מ): ' + orderTotal(db, ord2.id) + ' ₪');
+      } catch (e) { }
+      var tot = orderTotal(db, ord2.id);
+      var payLink = (db.settings.find(function (s) { return s.key === 'payment_link'; }) || {}).value || '';
+      return {
+        ok: true, order_id: ord2.id, subtotal: tot, vat: Math.round(tot * VAT_RATE * 100) / 100,
+        total: Math.round(tot * (1 + VAT_RATE) * 100) / 100, portal_code: pcust.portal_code, payment_link: payLink
+      };
+    }
+
+    // ---- משימות: הערות עם תיעוד מלא ----
+    case 'moveTask': {
+      var tk = db.tasks.find(function (x) { return x.id === p.task_id; });
+      if (!tk) return { ok: false, error: 'משימה לא נמצאה' };
+      if (['פתוחה', 'בתהליך', 'הושלמה'].indexOf(p.status) === -1) return { ok: false, error: 'סטטוס לא חוקי' };
+      tk.status = p.status;
+      writeTable('tasks', db.tasks);
+      db.taskComments.push({ id: genId('TCOM'), task_id: tk.id, ts: nowTs(), user: user || '', text: '— סטטוס שונה ל: ' + p.status });
+      writeTable('task_comments', db.taskComments);
+      return { ok: true };
+    }
+
+    // ---- פגישה: יצירת משימה מתוך האסיפה ----
+    case 'taskFromMeeting': {
+      var mt = db.meetings.find(function (x) { return x.id === p.meeting_id; });
+      if (!mt) return { ok: false, error: 'פגישה לא נמצאה' };
+      if (!p.title) return { ok: false, error: 'כותרת חובה' };
+      var nt = {
+        id: genId('TASK'), title: p.title, details: p.details || '', assignee_id: p.assignee_id || '',
+        due_date: p.due_date || '', priority: p.priority || 'רגילה', status: 'פתוחה',
+        meeting_id: mt.id, created_by: user || '', created_at: nowTs()
+      };
+      db.tasks.push(nt);
+      db.taskComments.push({ id: genId('TCOM'), task_id: nt.id, ts: nowTs(), user: user || '', text: '— נוצרה מתוך האסיפה: ' + mt.title + ' (' + mt.date + ')' });
+      writeTable('tasks', db.tasks); writeTable('task_comments', db.taskComments);
+      return { ok: true, task: nt };
+    }
+
+    // ---- צירוף קבלה/חשבונית להוצאה (נשמר ב-Drive) ----
+    case 'uploadReceipt': {
+      var ex2 = db.expenses.find(function (x) { return x.id === p.expense_id; });
+      if (!ex2) return { ok: false, error: 'הוצאה לא נמצאה' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      var folderName = 'MAPA-NOBLE קבלות';
+      var folders = DriveApp.getFoldersByName(folderName);
+      var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+      var blob = Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, (p.name || 'קבלה') + '_' + ex2.id);
+      var file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      ex2.attachment_url = file.getUrl();
+      writeTable('expenses', db.expenses);
+      return { ok: true, url: ex2.attachment_url };
+    }
+    case 'setPassword': {
+      if (!p.new_password || String(p.new_password).trim().length < 6)
+        return { ok: false, error: 'סיסמה חייבת להכיל לפחות 6 תווים' };
+      var callerIsManager = p._verified_role === 'מנהל';
+      var callerIsSelf = p._verified_employee_id === p.employee_id;
+      if (!callerIsManager && !callerIsSelf) return { ok: false, error: 'אין הרשאה לשנות סיסמה' };
+      var empSP = db.employees.find(function (x) { return x.id === p.employee_id; });
+      if (!empSP) return { ok: false, error: 'עובד לא נמצא' };
+      if (p.username !== undefined && p.username !== null) { // NC4: עדכון שם משתמש — למנהל בלבד, ייחודי
+        var unNew = String(p.username).trim().toLowerCase();
+        if (unNew !== String(empSP.username || '')) {
+          if (!callerIsManager) return { ok: false, error: 'שינוי שם משתמש מותר למנהל בלבד' };
+          if (unNew && db.employees.some(function (x) { return x.id !== empSP.id && String(x.username || '') === unNew; }))
+            return { ok: false, error: 'שם המשתמש כבר תפוס על ידי עובד אחר' };
+          empSP.username = unNew;
+        }
+      }
+      empSP.password_hash = sha256WithSalt(String(p.new_password || ''), p.employee_id);
+      writeTable('employees', db.employees);
+      return { ok: true };
+    }
+
+    // NC4: הערת משימה "לביצוע" — הצפה בתוך המשימה; "טופל" מחזיר אותה להערה רגילה עם תיעוד מי ומתי
+    case 'commentSetStatus': {
+      var VALID_CS = ['', 'לביצוע', 'טופל'];
+      if (VALID_CS.indexOf(String(p.status || '')) === -1) return { ok: false, error: 'סטטוס לא חוקי' };
+      var tc = db.taskComments.find(function (x) { return x.id === p.comment_id; });
+      if (!tc) return { ok: false, error: 'הערה לא נמצאה' };
+      tc.status = String(p.status || '');
+      if (tc.status === 'טופל') { tc.handled_by = user || ''; tc.handled_ts = nowTs(); }
+      else { tc.handled_by = ''; tc.handled_ts = ''; }
+      writeTable('task_comments', db.taskComments);
+      return { ok: true, row: tc };
+    }
+
+    case 'validateToken': {
+      var cached = CacheService.getScriptCache().get('session_' + p.token);
+      if (!cached) return { ok: false };
+      var sess = JSON.parse(cached);
+      return { ok: true, employee_id: sess.employee_id, role: sess.role };
+    }
+
+    case 'rememberLogin': {
+      var cachedR = CacheService.getScriptCache().get('session_' + p.token);
+      if (!cachedR) return { ok: false, error: 'טוקן לא תקף' };
+      var sessR = JSON.parse(cachedR);
+      var remember_token = Utilities.getUuid();
+      PropertiesService.getScriptProperties().setProperty(
+        'remember_' + sha256Hex(remember_token),
+        JSON.stringify({ employee_id: sessR.employee_id, role: sessR.role, expires: Date.now() + 30 * 24 * 3600 * 1000 })
+      );
+      return { ok: true, remember_token: remember_token };
+    }
+
+    case 'loginByRemember': {
+      var stored = PropertiesService.getScriptProperties().getProperty('remember_' + sha256Hex(String(p.remember_token || '')));
+      if (!stored) return { ok: false };
+      var mem = JSON.parse(stored);
+      if (Date.now() > mem.expires) return { ok: false };
+      var empLBR = db.employees.find(function (x) { return x.id === mem.employee_id && x.active !== 'לא'; });
+      if (!empLBR) return { ok: false };
+      var tokenLBR = Utilities.getUuid();
+      CacheService.getScriptCache().put('session_' + tokenLBR, JSON.stringify({ employee_id: empLBR.id, role: empLBR.role, name: empLBR.name }), 21600);
+      return { ok: true, token: tokenLBR, employee_id: empLBR.id, role: empLBR.role, name: empLBR.name, user: empLBR.name, views: empLBR.views || '', can_edit: empLBR.can_edit !== 'לא' };
+    }
+
+    // ===== NC1: מודול רצפת ייצור NOBLE — קליטה, שלבים, שקילה, משלוח =====
+    case 'nobleCartInfo': return nobleCartInfo(db, p);
+    case 'nobleIntake': return nobleIntake(db, p, user);
+    case 'nobleStageStart': return nobleStageStart(db, p, user);
+    case 'nobleStageEnd': return nobleStageEnd(db, p, user);
+    case 'nobleWeigh': return nobleWeigh(db, p, user);
+    case 'nobleMarkReady': return nobleMarkReady(db, p, user);
+    case 'nobleDriverScan': return nobleDriverScan(db, p, user);
+    case 'nobleDeliver': return nobleDeliver(db, p, user);
+    case 'nobleCreateInvoice': return nobleCreateInvoice(db, p, user);
+
+    // ---- B1: חשבוניות מורחבות ----
+    case 'b1CreateInvoice': return b1CreateInvoice(db, p, user);
+    case 'b1GetInvoiceLink': return b1GetInvoiceLink(db, p);
+
+    // ---- B2: מנוע תשלום + אשראי ----
+    case 'b2CreditStatus': return b2CreditStatus(db, p);
+    case 'b2PaymentContext': return b2PaymentContext(db, p);
+    case 'b2ProcessPayment': return b2ProcessPayment(db, p, user);
+    case 'b2SetCreditLimit': return b2SetCreditLimit(db, p);
+    case 'b2MarkPayLater': return b2MarkPayLater(db, p);
+    case 'b2GetReceiptLink': return b2GetReceiptLink(db, p);
+    case 'portalB2Checkout': return portalB2Checkout(db, p);
+    case 'b1SetAllocationNumber': {
+      var r_b1 = b1SetAllocationNumber(db, p);
+      if (r_b1.ok) r_b1.auditNote = r_b1.auditNote;
+      return r_b1;
+    }
+
+    default: return { ok: false, error: 'פעולה לא מוכרת: ' + action };
+  }
+}
+
+function getHolidaySet(db, fromDate, toDate) {
+  var years = {}; years[fromDate.substring(0, 4)] = 1; years[toDate.substring(0, 4)] = 1;
+  var set = {};
+  Object.keys(years).forEach(function (y) {
+    var st = db.settings.find(function (s) { return s.key === 'holidays_' + y; });
+    if (!st) {
+      var dates = [];
+      try {
+        var resp = UrlFetchApp.fetch('https://www.hebcal.com/hebcal?v=1&cfg=json&maj=on&min=off&mod=off&nx=off&mf=off&ss=off&i=on&year=' + y);
+        var data = JSON.parse(resp.getContentText());
+        (data.items || []).forEach(function (it) {
+          if (it.category === 'holiday' && it.yomtov) dates.push(String(it.date).substring(0, 10));
+        });
+      } catch (e) { /* אין רשת — שבתות בלבד */ }
+      st = { key: 'holidays_' + y, value: dates.join(',') };
+      db.settings.push(st);
+      writeTable('settings', db.settings);
+    }
+    String(st.value || '').split(',').forEach(function (d) { if (d) set[d] = 1; });
+  });
+  return set;
+}
+function isBusinessDay(iso, holSet) {
+  var d = new Date(iso + 'T12:00:00');
+  return d.getDay() !== 6 && !holSet[iso]; // שבת או חג — לא יום עסקים
+}
+function addBusinessDays(db, startIso, n) {
+  var holSet = getHolidaySet(db, startIso, String(Number(startIso.substring(0, 4)) + 1) + '-01-01');
+  var d = new Date(startIso + 'T12:00:00');
+  var added = 0;
+  while (added < n) {
+    d.setDate(d.getDate() + 1);
+    var iso = d.toISOString().slice(0, 10);
+    if (isBusinessDay(iso, holSet)) added++;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+function calcHours(inT, outT) {
+  var a = String(inT).split(':'), b = String(outT).split(':');
+  var mins = (Number(b[0]) * 60 + Number(b[1])) - (Number(a[0]) * 60 + Number(a[1]));
+  return Math.round((mins / 60) * 100) / 100;
+}
+
+// CR-14: חישוב שעות חוצה-חצות (משמרת לילה)
+function calcHoursSpan(inDate, inT, outDate, outT) {
+  var a = new Date(inDate + 'T' + inT + ':00');
+  var b = new Date(outDate + 'T' + outT + ':00');
+  return Math.round(((b - a) / 3600000) * 100) / 100;
+}
+
+// מחירון: מחיר מיוחד ללקוח גובר על מחיר הפריט
+function linePrice(db, customerId, itemId, orderType) {
+  var priceType = orderType === 'כביסה' ? 'כביסה' : 'השכרה';
+  var special = db.customerPrices.find(function (x) { return x.customer_id === customerId && x.item_id === itemId && x.price_type === priceType; });
+  if (special) return Number(special.price);
+  var it = db.items.find(function (i) { return i.id === itemId; });
+  if (!it) return 0;
+  return Number(priceType === 'כביסה' ? it.wash_price : it.rent_price) || 0;
+}
+
+// ============================================================
+//  ליבה עסקית — עברה בדיקות רגרסיה. לא לערוך ידנית.
+// ============================================================
+var STAGES = ['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'מוכן'];
+var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
+
+function totalStock(db, itemId, wh) {
+  return db.stockMoves.filter(function (m) { return m.item_id === itemId && (wh === undefined || String(m.warehouse_id || '') === String(wh || '')); })
+    .reduce(function (s, m) { return s + Number(m.qty); }, 0);
+}
+function datesOverlap(aStart, aEnd, bStart, bEnd) { return aStart <= bEnd && aEnd >= bStart; }
+function reservedQty(db, itemId, start, end, excludeOrderId, wh) {
+  var qty = 0;
+  db.orderLines.forEach(function (l) {
+    if (l.item_id !== itemId) return;
+    var o = db.orders.find(function (x) { return x.id === l.order_id; });
+    if (!o || o.type !== 'השכרה') return;
+    if (wh !== undefined && String(o.warehouse_id || '') !== String(wh || '')) return;
+    if (excludeOrderId && o.id === excludeOrderId) return;
+    if (RESERVING_STATUSES.indexOf(o.status) === -1) return;
+    if (datesOverlap(o.start_date, o.end_date, start, end)) qty += Number(l.qty);
+  });
+  return qty;
+}
+function inLaundryQty(db, itemId, wh) {
+  return db.laundryTasks.filter(function (t) { return t.item_id === itemId && t.stage !== 'מוכן' && (wh === undefined || String(t.warehouse_id || '') === String(wh || '')); })
+    .reduce(function (s, t) { return s + Number(t.qty); }, 0);
+}
+function availableQty(db, itemId, start, end, excludeOrderId, wh) {
+  return totalStock(db, itemId, wh) - reservedQty(db, itemId, start, end, excludeOrderId, wh) - inLaundryQty(db, itemId, wh);
+}
+function approveOrder(db, orderId) {
+  var o = db.orders.find(function (x) { return x.id === orderId; });
+  if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+  if (o.status !== 'טיוטה') return { ok: false, error: 'רק טיוטה ניתן לאשר. סטטוס נוכחי: ' + o.status };
+  // B2 (D2/S2): הזמנת פורטל/חנות שטרם עברה תשלום או מסגרת אשראי — חסומה לאישור.
+  // המוצא למשרד/מנהל: גביית תשלום במסך התשלום, או סימון "תשלום בהמשך" (b2MarkPayLater).
+  if (['ממתין לתשלום', 'ממתין לתשלום הפרש', 'ממתין לאישור חריגה'].indexOf(String(o.payment_status || '')) > -1)
+    return { ok: false, error: 'ההזמנה טרם עברה תשלום/מסגרת אשראי. גבה תשלום במסך התשלום או סמן "תשלום בהמשך" (מנהל/משרד)' };
+  if (!db.orderLines.some(function (l) { return l.order_id === orderId; })) return { ok: false, error: 'אין פריטים בהזמנה' };
+  var problems = [];
+  if (o.type === 'השכרה') {
+    db.orderLines.filter(function (l) { return l.order_id === orderId; }).forEach(function (l) {
+      var useWh = db.warehouses.length > 0;
+      var avail = availableQty(db, l.item_id, o.start_date, o.end_date, orderId, useWh ? (o.warehouse_id || '') : undefined);
+      if (Number(l.qty) > avail) {
+        var item = db.items.find(function (i) { return i.id === l.item_id; });
+        var msg = (item ? item.name : l.item_id) + ': מבוקש ' + l.qty + ', פנוי ' + avail + (useWh ? ' במחסן ' + whName(db, o.warehouse_id) : '');
+        if (useWh) {
+          var alts = db.warehouses.filter(function (w) { return w.id !== o.warehouse_id && w.active !== 'לא'; })
+            .map(function (w) { var a = availableQty(db, l.item_id, o.start_date, o.end_date, orderId, w.id); return a > 0 ? w.name + ': ' + a : null; })
+            .filter(function (x) { return x; });
+          if (alts.length) msg += '. פנוי במחסנים אחרים — ' + alts.join(', ') + ' (בצע העברת מלאי ואשר שוב)';
+        }
+        problems.push(msg);
+      }
+    });
+  }
+  if (problems.length) return { ok: false, error: 'אין מספיק מלאי פנוי — ' + problems.join(' | ') };
+  o.status = 'מאושרת';
+  return { ok: true, order: o };
+}
+function whName(db, wid) {
+  if (!wid) return 'ראשי';
+  var w = db.warehouses.find(function (x) { return x.id === wid; });
+  return w ? w.name : wid;
+}
+function deliverOrder(db, orderId) {
+  var o = db.orders.find(function (x) { return x.id === orderId; });
+  if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+  if (o.status !== 'מאושרת') return { ok: false, error: 'רק הזמנה מאושרת ניתן לסמן כסופקה' };
+  o.status = 'סופקה';
+  return { ok: true, order: o };
+}
+function receiveReturn(db, orderId, returns, todayStr, genIdFn) {
+  var o = db.orders.find(function (x) { return x.id === orderId; });
+  if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+  if (o.status !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
+  var shortages = [];
+  db.orderLines.filter(function (l) { return l.order_id === orderId; }).forEach(function (l) {
+    var ret = returns && returns[l.id] !== undefined ? Number(returns[l.id]) : Number(l.qty);
+    if (ret < 0 || ret > Number(l.qty)) { ret = Math.max(0, Math.min(ret, Number(l.qty))); }
+    l.returned_qty = ret;
+    var missing = Number(l.qty) - ret;
+    if (missing > 0) {
+      db.stockMoves.push({ id: genIdFn('MOV'), date: todayStr, item_id: l.item_id, type: 'גריעה', qty: -missing, ref: orderId, note: 'חוסר בהחזרה' });
+      var chItem = db.items.find(function (i) { return i.id === l.item_id; }) || {};
+      var chPrice = Number(chItem.replacement_price) || Number(chItem.rent_price) || Number(l.unit_price) || 0;
+      shortages.push({ item_id: l.item_id, missing: missing, charge: missing * chPrice });
+    }
+    if (ret > 0) {
+      db.laundryTasks.push({
+        id: genIdFn('WASH'), order_id: orderId, item_id: l.item_id, qty: ret, stage: 'התקבל', cart_id: '', machine_id: '', worker: '', in_date: todayStr, done_date: '',
+        warehouse_id: o.warehouse_id || '', target_date: addBusinessDays(db, todayStr, Number((db.settings.find(function (s) { return s.key === 'laundry_days'; }) || {}).value || 2))
+      });
+    }
+  });
+  o.status = 'הוחזרה';
+  o.shortage_charge = Math.round(shortages.reduce(function (s, x) { return s + x.charge; }, 0) * 100) / 100;
+  return { ok: true, shortages: shortages, shortage_charge: o.shortage_charge };
+}
+function assignCart(db, taskId, cartId) {
+  var t = db.laundryTasks.find(function (x) { return x.id === taskId; });
+  var c = db.carts.find(function (x) { return x.id === cartId; });
+  if (!t || !c) return { ok: false, error: 'משימה או עגלה לא נמצאו' };
+  if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + cartId + ' אינה פנויה' };
+  if (t.cart_id) { releaseCart(db, t.cart_id); }
+  t.cart_id = cartId;
+  c.status = 'בשימוש';
+  return { ok: true };
+}
+function releaseCart(db, cartId) {
+  var c = db.carts.find(function (x) { return x.id === cartId; });
+  if (c) c.status = 'פנויה';
+}
+function advanceLaundry(db, taskId, todayStr) {
+  var t = db.laundryTasks.find(function (x) { return x.id === taskId; });
+  if (!t) return { ok: false, error: 'משימה לא נמצאה' };
+  var idx = STAGES.indexOf(t.stage);
+  if (idx === -1 || idx === STAGES.length - 1) return { ok: false, error: 'המשימה כבר בשלב מוכן' };
+  t.stage = STAGES[idx + 1];
+  if (t.stage === 'מוכן') {
+    t.done_date = todayStr;
+    if (t.cart_id) { releaseCart(db, t.cart_id); t.cart_id = ''; }
+    var o = db.orders.find(function (x) { return x.id === t.order_id; });
+    if (o) {
+      var open = db.laundryTasks.filter(function (x) { return x.order_id === o.id && x.stage !== 'מוכן'; });
+      if (open.length === 0 && o.status === 'הוחזרה') o.status = 'הושלמה';
+    }
+  }
+  return { ok: true, stage: t.stage };
+}
+function orderTotal(db, orderId) {
+  var o = db.orders.find(function (x) { return x.id === orderId; });
+  var lines = db.orderLines.filter(function (l) { return l.order_id === orderId; })
+    .reduce(function (s, l) { return s + Number(l.qty) * Number(l.unit_price); }, 0);
+  return lines + Number((o && o.delivery_fee) || 0) + Number((o && o.shortage_charge) || 0);
+}
+function orderPaid(db, orderId) {
+  return db.payments.filter(function (p) { return p.order_id === orderId; })
+    .reduce(function (s, p) { return s + Number(p.amount); }, 0);
+}
+function orderBalance(db, orderId) {
+  // כשקיימת חשבונית פעילה — היתרה היא מול סכום החשבונית (כולל מע"מ); אחרת מול סכום ההזמנה
+  var inv = db.invoices ? db.invoices.find(function (v) { return v.order_id === orderId && v.status !== 'בוטלה'; }) : null;
+  var base = inv ? Number(inv.total) : orderTotal(db, orderId);
+  return base - orderPaid(db, orderId);
+}
+function customerBalance(db, customerId) {
+  var b = db.orders.filter(function (o) { return o.customer_id === customerId && o.status !== 'בוטלה' && o.status !== 'טיוטה' && o.status !== 'הצעת מחיר'; })
+    .reduce(function (s, o) { return s + orderBalance(db, o.id); }, 0);
+  // NC4: חשבוניות מכבסה מרוכזות (ללא הזמנה) נכללות ביתרת הלקוח — כמו בממשק
+  db.invoices.filter(function (v) { return v.customer_id === customerId && !v.order_id && v.status !== 'בוטלה'; }).forEach(function (v) {
+    var paid = db.payments.filter(function (x) { return x.invoice_id === v.id; }).reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0);
+    b += Math.max(0, Number(v.total) - paid);
+  });
+  return b;
+}
+// ============================================================
+//  NC1: מודול רצפת ייצור NOBLE (מכבסה תעשייתית)
+//  ארכיטקטורת יומן אירועים: כל פעולת רצפה = שורה ביומן laundry_events
+//  (append-only — לעולם לא משכתבים היסטוריה). המצב הנוכחי נגזר מהיומן.
+//  חוק ברזל: אין לקרוא writeTable('laundry_events') לעולם — רק appendRowToTable.
+//  שלב נקבע ע"י המכונה (auto_stage) — העובד לא בוחר שלב מתפריט.
+//  מחיר לק"ג מוקפא באירוע השקילה — שינוי מחיר עתידי לא משנה חיוב היסטורי.
+// ============================================================
+var NOBLE_STAGES = ['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'באריזה', 'מוכן', 'במשלוח', 'נמסר'];
+var NOBLE_MACHINE_STAGES = ['בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'באריזה']; // ערכים חוקיים ל-auto_stage
+
+function nRound2(n) { return Math.round(Number(n) * 100) / 100; }
+
+// זיהוי העובד המבצע: קוד אישי (מצב טאבלט משותף) גובר על סשן אישי
+function nobleWorker(db, p, user) {
+  if (p.worker_pin !== undefined && String(p.worker_pin) !== '') {
+    var byPin = db.employees.find(function (x) { return String(x.pin) === String(p.worker_pin) && x.active !== 'לא'; });
+    if (!byPin) return { ok: false, error: 'קוד עובד שגוי' };
+    return { ok: true, id: byPin.id, name: byPin.name };
+  }
+  if (p._verified_employee_id) {
+    var bySess = db.employees.find(function (x) { return x.id === p._verified_employee_id; });
+    if (bySess) return { ok: true, id: bySess.id, name: bySess.name };
+  }
+  if (db.employees.length) {
+    var byName = db.employees.find(function (x) { return x.name === user && x.active !== 'לא'; });
+    if (byName) return { ok: true, id: byName.id, name: byName.name };
+    return { ok: false, error: 'נדרש זיהוי עובד — הזן קוד אישי' };
+  }
+  return { ok: true, id: '', name: user || 'מנהל' }; // אין עובדים מוגדרים — מצב הקמה
+}
+
+function nobleFindCart(db, bc) {
+  var s = String(bc || '').trim();
+  if (!s) return null;
+  return db.carts.find(function (c) { return String(c.barcode) === s || String(c.id) === s; }) || null;
+}
+function nobleActiveBinding(db, cartId) {
+  return db.intakeCarts.find(function (b) { return b.cart_id === cartId && b.active === 'כן'; }) || null;
+}
+function nobleIntakeById(db, id) {
+  return db.laundryIntakes.find(function (i) { return i.id === id; }) || null;
+}
+// פענוח קלט: ברקוד עגלה או מזהה קליטה → הקליטה הפעילה (+העגלה אם נסרקה)
+function nobleResolveIntake(db, p) {
+  if (p.intake_id) {
+    var ik = nobleIntakeById(db, p.intake_id);
+    return ik ? { intake: ik, cart: null } : { error: 'קליטה לא נמצאה' };
+  }
+  var cart = nobleFindCart(db, p.cart_barcode);
+  if (!cart) return { error: 'עגלה לא נמצאה — בדוק את הברקוד' };
+  var bind = nobleActiveBinding(db, cart.id);
+  if (!bind) return { error: 'העגלה ' + cart.id + ' אינה משויכת לקליטה פעילה' };
+  var intake = nobleIntakeById(db, bind.intake_id);
+  if (!intake) return { error: 'הקליטה של העגלה לא נמצאה' };
+  return { intake: intake, cart: cart };
+}
+// הוספת אירוע ליומן: גם לזיכרון (להמשך אותה בקשה) וגם לגליון (append בלבד)
+function nobleEvent(db, ev) {
+  ev.id = genId('EVT');
+  ev.ts = nowTs();
+  TABLES.laundry_events.forEach(function (c) { if (ev[c] === undefined) ev[c] = ''; });
+  db.laundryEvents.push(ev);
+  appendRowToTable('laundry_events', ev);
+  return ev;
+}
+function nobleEventsOf(db, intakeId, cartId) {
+  return db.laundryEvents.filter(function (e) {
+    return e.intake_id === intakeId && (cartId === undefined || e.cart_id === cartId);
+  });
+}
+// אירוע "התחלה" פתוח (ללא "סיום" תואם) עבור עגלה בקליטה — לפי סדר היומן
+function nobleOpenStart(db, intakeId, cartId) {
+  var open = null;
+  nobleEventsOf(db, intakeId, cartId).forEach(function (e) {
+    if (e.event_type === 'התחלה') open = e;
+    else if (e.event_type === 'סיום' && open && e.stage === open.stage) open = null;
+  });
+  return open;
+}
+// חישוב סיכום שקילות מהיומן: השקילה האחרונה של כל עגלה קובעת (שקילה חוזרת מחליפה)
+function nobleWeighRollup(db, intakeId) {
+  var lastByCart = {};
+  nobleEventsOf(db, intakeId).forEach(function (e) {
+    if (e.event_type === 'שקילה') lastByCart[e.cart_id] = e;
+  });
+  var net = 0, charge = 0, count = 0;
+  Object.keys(lastByCart).forEach(function (c) {
+    net += Number(lastByCart[c].net_kg) || 0;
+    charge += Number(lastByCart[c].charge) || 0;
+    count++;
+  });
+  return { net: nRound2(net), charge: nRound2(charge), count: count };
+}
+
+// --- פעולת קריאה: מידע לעגלה סרוקה (למסך הרצפה) ---
+function nobleCartInfo(db, p) {
+  var cart = nobleFindCart(db, p.barcode);
+  if (!cart) return { ok: false, error: 'עגלה לא נמצאה — בדוק את הברקוד' };
+  var bind = nobleActiveBinding(db, cart.id);
+  if (!bind) return { ok: true, cart: cart, intake: null };
+  var intake = nobleIntakeById(db, bind.intake_id);
+  var cust = intake && intake.customer_id ? db.customers.find(function (c) { return c.id === intake.customer_id; }) : null;
+  var carts = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן'; }).map(function (b) { return b.cart_id; });
+  var open = nobleOpenStart(db, intake.id, cart.id);
+  var roll = nobleWeighRollup(db, intake.id);
+  return {
+    ok: true, cart: cart, intake: intake,
+    customer_name: cust ? cust.name : (intake.internal === 'כן' ? 'פנימי — MAPA' : ''),
+    price_per_kg: intake.internal === 'כן' ? 0 : Number(cust && cust.price_per_kg) || 0,
+    bound_carts: carts, open_stage: open ? open.stage : '', open_machine: open ? open.machine_id : '',
+    weighed: roll
+  };
+}
+
+// --- קליטה: פתיחת אצווה ושיוך עגלות ---
+function nobleIntake(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var internal = p.internal === 'כן' || p.internal === true;
+  var cust = null;
+  if (!internal) {
+    cust = db.customers.find(function (c) { return c.id === p.customer_id && c.active !== 'לא'; });
+    if (!cust) return { ok: false, error: 'יש לבחור לקוח (או לסמן כביסה פנימית)' };
+  }
+  var bcs = (p.cart_barcodes || []).map(String).filter(function (s) { return s.trim() !== ''; });
+  if (!bcs.length) return { ok: false, error: 'יש לסרוק לפחות עגלה אחת' };
+  var carts = [], seen = {};
+  for (var i = 0; i < bcs.length; i++) {
+    var c = nobleFindCart(db, bcs[i]);
+    if (!c) return { ok: false, error: 'עגלה לא נמצאה: ' + bcs[i] };
+    if (seen[c.id]) return { ok: false, error: 'העגלה ' + c.id + ' נסרקה פעמיים' };
+    seen[c.id] = 1;
+    if (nobleActiveBinding(db, c.id)) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה פעילה' };
+    if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
+    carts.push(c);
+  }
+  var intake = {
+    id: genId('INTK'), customer_id: internal ? '' : cust.id, internal: internal ? 'כן' : '',
+    status: 'התקבל', net_weight_kg: '', price_per_kg: '', total_charge: '',
+    intake_ts: nowTs(), delivered_ts: '', delivery_id: '', notes: p.notes || '', created_by: w.name
+  };
+  db.laundryIntakes.push(intake);
+  carts.forEach(function (c) {
+    db.intakeCarts.push({ id: genId('IC'), intake_id: intake.id, cart_id: c.id, bind_ts: nowTs(), release_ts: '', active: 'כן' });
+    c.status = 'בשימוש';
+    nobleEvent(db, {
+      intake_id: intake.id, customer_id: intake.customer_id, cart_id: c.id,
+      stage: 'התקבל', event_type: 'קליטה', worker_id: w.id, worker_name: w.name, note: p.notes || ''
+    });
+  });
+  writeTable('laundry_intakes', db.laundryIntakes);
+  writeTable('intake_carts', db.intakeCarts);
+  writeTable('carts', db.carts);
+  return { ok: true, intake: intake, auditNote: 'קליטה ' + intake.id + ' · ' + (internal ? 'פנימי' : cust.name) + ' · ' + carts.length + ' עגלות' };
+}
+
+// --- סריקת עגלה + מכונה: תחילת שלב (המכונה קובעת את השלב) ---
+function nobleStageStart(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
+  var intake = r.intake, cart = r.cart;
+  if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
+  if (intake.status === 'במשלוח' || intake.status === 'נמסר') return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  var mbc = String(p.machine_barcode || '').trim();
+  var mach = db.machines.find(function (m) { return String(m.barcode) === mbc || String(m.id) === mbc; });
+  if (!mach) return { ok: false, error: 'מכונה לא נמצאה — בדוק את הברקוד' };
+  if (mach.status && mach.status !== 'פעילה') return { ok: false, error: 'המכונה ' + mach.id + ' אינה פעילה (סטטוס: ' + mach.status + ')' };
+  var stage = String(mach.auto_stage || '').trim();
+  if (NOBLE_MACHINE_STAGES.indexOf(stage) === -1) return { ok: false, error: 'למכונה ' + mach.id + ' לא הוגדר שלב אוטומטי — עדכן במסך עגלות ומכונות' };
+  var open = nobleOpenStart(db, intake.id, cart.id);
+  if (open) return { ok: false, error: 'לעגלה יש שלב פתוח (' + open.stage + ') — סיים אותו לפני תחילת שלב חדש' };
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: cart.id, machine_id: mach.id,
+    stage: stage, event_type: 'התחלה', worker_id: w.id, worker_name: w.name
+  });
+  intake.status = stage;
+  writeTable('laundry_intakes', db.laundryIntakes);
+  return { ok: true, stage: stage, machine_id: mach.id, intake_id: intake.id, auditNote: 'התחלת ' + stage + ' · ' + cart.id + ' → ' + mach.id };
+}
+
+// --- סיום השלב הפתוח של עגלה ---
+function nobleStageEnd(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
+  var intake = r.intake, cart = r.cart;
+  if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
+  var open = nobleOpenStart(db, intake.id, cart.id);
+  if (!open) return { ok: false, error: 'אין שלב פתוח לעגלה ' + cart.id };
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: cart.id, machine_id: open.machine_id,
+    stage: open.stage, event_type: 'סיום', worker_id: w.id, worker_name: w.name
+  });
+  return { ok: true, stage: open.stage, auditNote: 'סיום ' + open.stage + ' · ' + cart.id };
+}
+
+// --- שקילה (בשלב האריזה): ברוטו − משקל עצמי = נטו × מחיר לק"ג ---
+function nobleWeigh(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
+  var intake = r.intake, cart = r.cart;
+  if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
+  if (intake.status === 'במשלוח' || intake.status === 'נמסר') return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  var gross = Number(p.gross_kg);
+  if (!(gross > 0)) return { ok: false, error: 'יש להזין משקל ברוטו תקין (ק"ג)' };
+  var tare = Number(cart.tare_kg) || 0;
+  var net = nRound2(gross - tare);
+  if (!(net > 0)) return { ok: false, error: 'משקל נטו אינו חיובי (ברוטו ' + gross + ' − משקל עצמי ' + tare + ') — בדוק את משקל העגלה' };
+  var price = 0;
+  if (intake.internal !== 'כן') {
+    var cust = db.customers.find(function (c) { return c.id === intake.customer_id; });
+    price = Number(cust && cust.price_per_kg) || 0;
+    if (!(price > 0)) return { ok: false, error: 'ללקוח לא הוגדר מחיר לק"ג — עדכן בכרטיס הלקוח לפני שקילה' };
+  }
+  var charge = nRound2(net * price); // פנימי: מחיר 0 → חיוב 0 (נספר במשקלים, לא בהכנסות)
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: cart.id,
+    stage: 'באריזה', event_type: 'שקילה', worker_id: w.id, worker_name: w.name,
+    gross_kg: gross, tare_kg: tare, net_kg: net, price_per_kg: price, charge: charge
+  });
+  var roll = nobleWeighRollup(db, intake.id); // שקילה חוזרת של אותה עגלה מחליפה את הקודמת
+  intake.net_weight_kg = roll.net;
+  intake.total_charge = roll.charge;
+  intake.price_per_kg = price;
+  if (['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול'].indexOf(intake.status) > -1) intake.status = 'באריזה';
+  writeTable('laundry_intakes', db.laundryIntakes);
+  return { ok: true, net_kg: net, tare_kg: tare, charge: charge, intake_total_net: roll.net, intake_total_charge: roll.charge, auditNote: 'שקילה ' + cart.id + ' · נטו ' + net + ' ק"ג · ₪' + charge };
+}
+
+// --- סימון "מוכן למשלוח" (אחרי שקילה) ---
+function nobleMarkReady(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
+  var intake = r.intake;
+  if (intake.status === 'מוכן') return { ok: false, error: 'הקליטה כבר מסומנת כמוכנה' };
+  if (intake.status === 'במשלוח' || intake.status === 'נמסר') return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  var roll = nobleWeighRollup(db, intake.id);
+  if (!roll.count) return { ok: false, error: 'לא ניתן לסמן מוכן — לא בוצעה שקילה לאף עגלה' };
+  var openCarts = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן'; })
+    .map(function (b) { return b.cart_id; })
+    .filter(function (cid) { return nobleOpenStart(db, intake.id, cid); });
+  if (openCarts.length) return { ok: false, error: 'יש שלבים פתוחים לעגלות: ' + openCarts.join(', ') + ' — סיים אותם קודם' };
+  intake.status = 'מוכן';
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: r.cart ? r.cart.id : '',
+    stage: 'מוכן', event_type: 'סטטוס', worker_id: w.id, worker_name: w.name
+  });
+  writeTable('laundry_intakes', db.laundryIntakes);
+  return { ok: true, intake: intake, auditNote: 'מוכן למשלוח · ' + intake.id };
+}
+
+// --- סריקת נהג בהעמסה: יצירת רשומת משלוח אמיתית במודול המשלוחים ---
+function nobleDriverScan(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
+  var intake = r.intake;
+  if (intake.status !== 'מוכן') return { ok: false, error: 'ניתן להעמיס רק קליטה במצב "מוכן" (מצב נוכחי: ' + intake.status + ')' };
+  var cust = intake.customer_id ? db.customers.find(function (c) { return c.id === intake.customer_id; }) : null;
+  var dlv = {
+    id: genId('DELI'), order_id: '', kind: 'משלוח מכבסה', date: today(), driver: w.name,
+    status: 'מתוכנן', note: 'קליטת מכבסה ' + intake.id + (cust ? ' · ' + cust.name : ' · פנימי MAPA'),
+    note_number: '', vehicle_id: p.vehicle_id || '', photo_url: ''
+  };
+  db.deliveries.push(dlv);
+  intake.status = 'במשלוח';
+  intake.delivery_id = dlv.id;
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: r.cart ? r.cart.id : '',
+    stage: 'במשלוח', event_type: 'העמסה', worker_id: w.id, worker_name: w.name, note: dlv.id
+  });
+  writeTable('deliveries', db.deliveries);
+  writeTable('laundry_intakes', db.laundryIntakes);
+  return { ok: true, delivery: dlv, auditNote: 'העמסה ' + intake.id + ' → משלוח ' + dlv.id };
+}
+
+// --- מסירה ללקוח: סגירת הקליטה ושחרור העגלות ---
+function nobleDeliver(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
+  var intake = r.intake;
+  if (intake.status !== 'במשלוח') return { ok: false, error: 'ניתן לסמן נמסר רק לקליטה במצב "במשלוח" (מצב נוכחי: ' + intake.status + ')' };
+  intake.status = 'נמסר';
+  intake.delivered_ts = nowTs();
+  db.intakeCarts.forEach(function (b) {
+    if (b.intake_id === intake.id && b.active === 'כן') {
+      b.active = 'לא'; b.release_ts = nowTs();
+      var c = db.carts.find(function (x) { return x.id === b.cart_id; });
+      if (c) c.status = 'פנויה';
+    }
+  });
+  if (intake.delivery_id) {
+    var dlv = db.deliveries.find(function (d) { return d.id === intake.delivery_id; });
+    if (dlv && dlv.status === 'מתוכנן') { dlv.status = 'בוצע'; if (!dlv.note_number) dlv.note_number = nextNumber(db, 'delivery_note', 3001); writeTable('deliveries', db.deliveries); }
+  }
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: '',
+    stage: 'נמסר', event_type: 'מסירה', worker_id: w.id, worker_name: w.name
+  });
+  writeTable('laundry_intakes', db.laundryIntakes);
+  writeTable('intake_carts', db.intakeCarts);
+  writeTable('carts', db.carts);
+  return { ok: true, intake: intake, auditNote: 'נמסר · ' + intake.id + ' · ₪' + (intake.total_charge || 0) };
+}
+
+// ============================================================
+//  NC2: לוח רצפה חי · זמן משוער (ETA) · נתוני פורטל
+// ============================================================
+var NOBLE_WORK_STAGES = ['בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'באריזה'];
+var NOBLE_ETA_DEFAULT_MIN = 60; // דקות לשלב כשאין עדיין היסטוריה ואין עקיפה ידנית
+
+function nobleParseTs(s) { var d = new Date(String(s || '').replace(' ', 'T')); return isNaN(d.getTime()) ? null : d; }
+
+// ממוצע משך לכל שלב מתוך זוגות התחלה→סיום ביומן. עקיפה ידנית מההגדרות גוברת.
+function nobleStageAvgs(db) {
+  var sums = {}, counts = {}, open = {};
+  db.laundryEvents.forEach(function (e) {
+    var k = e.intake_id + '|' + e.cart_id + '|' + e.stage;
+    if (e.event_type === 'התחלה') open[k] = e.ts;
+    else if (e.event_type === 'סיום' && open[k]) {
+      var a = nobleParseTs(open[k]), b = nobleParseTs(e.ts);
+      if (a && b && b > a) {
+        var m = (b - a) / 60000;
+        if (m >= 1 && m <= 1440) { sums[e.stage] = (sums[e.stage] || 0) + m; counts[e.stage] = (counts[e.stage] || 0) + 1; }
+      }
+      delete open[k];
+    }
+  });
+  var ovRaw = (db.settings.find(function (s) { return s.key === 'noble_eta_override'; }) || {}).value || '';
+  var ov = {};
+  String(ovRaw).split(',').forEach(function (pair) {
+    var kv = pair.split('=');
+    if (kv.length === 2) { var n = Number(kv[1]); if (n > 0) ov[kv[0].trim()] = n; }
+  });
+  var out = {};
+  NOBLE_WORK_STAGES.forEach(function (st) {
+    if (ov[st]) out[st] = { min: Math.round(ov[st]), src: 'ידני' };
+    else if (counts[st]) out[st] = { min: Math.round(sums[st] / counts[st]), src: 'היסטוריה (' + counts[st] + ')' };
+    else out[st] = { min: NOBLE_ETA_DEFAULT_MIN, src: 'ברירת מחדל' };
+  });
+  return out;
+}
+
+// התקדמות עגלה בקליטה: אילו שלבים הושלמו, איזה שלב פתוח כרגע ובאיזו מכונה
+function nobleCartProgress(db, intakeId, cartId) {
+  var done = {}, open = null, openTs = '', mach = '';
+  nobleEventsOf(db, intakeId, cartId).forEach(function (e) {
+    if (e.event_type === 'התחלה') { open = e.stage; openTs = e.ts; mach = e.machine_id; }
+    else if (e.event_type === 'סיום' && open === e.stage) { done[e.stage] = 1; open = null; openTs = ''; mach = ''; }
+  });
+  return { done: done, open: open, open_ts: openTs, machine: mach };
+}
+
+// זמן משוער (בדקות) לסיום קליטה: לכל עגלה — חצי מהשלב הפתוח + השלבים שטרם בוצעו; הקובע הוא האיטי מבין העגלות
+function nobleEtaMin(db, intake, avgs) {
+  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(intake.status) > -1) return 0;
+  var binds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן'; });
+  var eta = 0;
+  binds.forEach(function (b) {
+    var pr = nobleCartProgress(db, intake.id, b.cart_id), m = 0;
+    NOBLE_WORK_STAGES.forEach(function (st) {
+      if (pr.done[st]) return;
+      m += pr.open === st ? avgs[st].min / 2 : avgs[st].min;
+    });
+    if (m > eta) eta = m;
+  });
+  return Math.round(eta);
+}
+
+// --- פעולת קריאה: תמונת מצב מלאה ללוח החי ---
+function nobleBoard(db) {
+  var avgs = nobleStageAvgs(db);
+  function custName(id) {
+    if (!id) return 'פנימי MAPA';
+    var c = db.customers.find(function (x) { return x.id === id; });
+    return c ? c.name : id;
+  }
+  var active = db.laundryIntakes.filter(function (i) { return i.status !== 'נמסר'; });
+  var intakes = active.map(function (ik) {
+    var binds = db.intakeCarts.filter(function (b) { return b.intake_id === ik.id && b.active === 'כן'; });
+    var carts = binds.map(function (b) {
+      var pr = nobleCartProgress(db, ik.id, b.cart_id);
+      return { cart_id: b.cart_id, open: pr.open, open_ts: pr.open_ts, machine: pr.machine, done: Object.keys(pr.done) };
+    });
+    var roll = nobleWeighRollup(db, ik.id);
+    return {
+      id: ik.id, customer: custName(ik.customer_id), internal: ik.internal === 'כן', status: ik.status,
+      intake_ts: ik.intake_ts, carts: carts, net: roll.net, charge: roll.charge, eta_min: nobleEtaMin(db, ik, avgs)
+    };
+  });
+  var busy = {};
+  active.forEach(function (ik) {
+    db.intakeCarts.forEach(function (b) {
+      if (b.intake_id !== ik.id || b.active !== 'כן') return;
+      var pr = nobleCartProgress(db, ik.id, b.cart_id);
+      if (pr.open && pr.machine) busy[pr.machine] = { intake: ik.id, customer: custName(ik.customer_id), cart: b.cart_id, since: pr.open_ts, stage: pr.open };
+    });
+  });
+  var machines = db.machines.map(function (m) {
+    return { id: m.id, type: m.type, status: m.status, auto_stage: m.auto_stage, busy: busy[m.id] || null };
+  });
+  var td = today(), kg = 0, kgInt = 0, evCount = 0;
+  var internalSet = {};
+  db.laundryIntakes.forEach(function (i) { if (i.internal === 'כן') internalSet[i.id] = 1; });
+  db.laundryEvents.forEach(function (e) {
+    if (String(e.ts).slice(0, 10) !== td) return;
+    evCount++;
+    if (e.event_type === 'שקילה') { var nk = Number(e.net_kg) || 0; kg += nk; if (internalSet[e.intake_id]) kgInt += nk; }
+  });
+  return {
+    ok: true, intakes: intakes, machines: machines, avgs: avgs, stages: NOBLE_STAGES,
+    today: {
+      events: evCount, kg: nRound2(kg), kg_internal: nRound2(kgInt),
+      opened: db.laundryIntakes.filter(function (i) { return String(i.intake_ts).slice(0, 10) === td; }).length,
+      delivered: db.laundryIntakes.filter(function (i) { return String(i.delivered_ts).slice(0, 10) === td; }).length
+    }
+  };
+}
+
+// ============================================================
+//  NC3: חיוב וחשבונית מרוכזת למכבסה
+// ============================================================
+// כל שקילה כבר רושמת חיוב על הקליטה (total_charge). כשהקליטה נמסרת — היא "חיוב פתוח".
+// פעולה זו מרכזת את כל החיובים הפתוחים של לקוח לחשבונית אחת ומחתימה עליהם invoice_id.
+function nobleCreateInvoice(db, p, user) {
+  var cust = db.customers.find(function (c) { return c.id === p.customer_id; });
+  if (!cust) return { ok: false, error: 'לקוח לא נמצא' };
+  var open = db.laundryIntakes.filter(function (i) {
+    return i.customer_id === cust.id && i.internal !== 'כן' && i.status === 'נמסר' &&
+      !String(i.invoice_id || '').trim() && Number(i.total_charge) > 0;
+  });
+  if (!open.length) return { ok: false, error: 'אין חיובי מכבסה פתוחים ללקוח זה' };
+  var sub = nRound2(open.reduce(function (s2, i) { return s2 + Number(i.total_charge); }, 0));
+  var vat = nRound2(sub * VAT_RATE);
+  var inv = {
+    id: genId('INV'), number: nextNumber(db, 'invoice', 1001), order_id: '', customer_id: cust.id,
+    date: today(), subtotal: sub, vat_rate: VAT_RATE, vat: vat, total: nRound2(sub + vat), status: 'פתוחה'
+  };
+  db.invoices.push(inv);
+  open.forEach(function (i) { i.invoice_id = inv.id; });
+  writeTable('invoices', db.invoices);
+  writeTable('laundry_intakes', db.laundryIntakes);
+  return { ok: true, invoice: inv, count: open.length, auditNote: 'חשבונית מכבסה ' + inv.number + ' · ' + cust.name + ' · ' + open.length + ' קליטות · ₪' + inv.total };
+}
+
+// ============================================================
+//  B1: חשבוניות מורחבות — סוג מסמך, מספר הקצאה, שמירה ב-Drive
+// ============================================================
+
+// סוגי מסמכים חוקיים
+var INVOICE_TYPES = ['חשבונית מס', 'קבלה', 'חשבונית מס-קבלה', 'חשבונית עסקה'];
+
+// B1: שמירת HTML → PDF ב-Drive והחזרת URL ציבורי
+// הערה: Apps Script אינו תומך ב-PDF מ-HTML ישירות — שומרים HTML ב-Drive
+// (בשלב ייצור ניתן להמיר ע"י Google Docs API — כאן שומרים כ-HTML עם סיומת .html)
+function invoiceSaveToDrive(db, invId, htmlContent) {
+  try {
+    var folderName = 'MAPA-NOBLE חשבוניות';
+    var folders = DriveApp.getFoldersByName(folderName);
+    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+    // המרה ל-PDF דרך Google Docs API (הדרך היחידה ב-Apps Script)
+    var htmlBlob = Utilities.newBlob(htmlContent, 'text/html', 'invoice_' + invId);
+    var docFile = Drive.Files.insert(
+      { title: 'invoice_' + invId, mimeType: 'application/vnd.google-apps.document',
+        parents: [{ id: folder.getId() }] },
+      htmlBlob, { convert: true }
+    );
+    var pdfBlob = DriveApp.getFileById(docFile.id).getAs('application/pdf');
+    pdfBlob.setName('invoice_' + invId + '.pdf');
+    var pdfFile = folder.createFile(pdfBlob);
+    pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    try { DriveApp.getFileById(docFile.id).setTrashed(true); } catch(e2) {}
+    return pdfFile.getUrl();
+  } catch (e) {
+    // Fallback: HTML אם Drive API לא מופעל
+    try {
+      var f2 = DriveApp.getFoldersByName('MAPA-NOBLE חשבוניות');
+      var fld2 = f2.hasNext() ? f2.next() : DriveApp.createFolder('MAPA-NOBLE חשבוניות');
+      var b2 = Utilities.newBlob(htmlContent, 'text/html', 'invoice_' + invId + '.html');
+      var file2 = fld2.createFile(b2);
+      file2.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      return file2.getUrl();
+    } catch(e3) { return ''; }
+  }
+}
+
+// B1: בניית HTML חשבונית/קבלה תקני לפי הגדרות העסק
+function buildInvoiceHtml(db, inv, lines, customer, settings) {
+  var sGet = function(k) {
+    var s = settings.find(function(x) { return x.key === k; });
+    return s ? String(s.value || '') : '';
+  };
+  var draftNote = (inv.draft_note && String(inv.draft_note).trim()) ? inv.draft_note : sGet('invoice_draft_note');
+  var isDraft = draftNote && String(draftNote).trim();
+  var prefix = sGet('invoice_prefix') ? sGet('invoice_prefix') + '-' : '';
+  var vatRate = parseFloat(sGet('vat_rate') || '0.18');
+  var vatPct = Math.round(vatRate * 100);
+
+  var linesRows = (lines || []).map(function(l) {
+    var itemTotal = Number(l.qty || 0) * Number(l.unit_price || 0);
+    return '<tr>' +
+      '<td style="padding:6px 8px;border-bottom:1px solid #ddd">' + esc2(l.item_name || l.item_id || '') + '</td>' +
+      '<td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">' + (l.qty || '') + '</td>' +
+      '<td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:left">₪' + Number(l.unit_price || 0).toFixed(2) + '</td>' +
+      '<td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:left">₪' + itemTotal.toFixed(2) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  var custBlock = customer ? (
+    '<p style="margin:4px 0"><strong>לקוח:</strong> ' + esc2(customer.name || '') +
+    (customer.vat_id ? ' | ח.פ: ' + esc2(customer.vat_id) : '') +
+    (customer.address ? '<br>' + esc2(customer.address) : '') +
+    (customer.city ? ' ' + esc2(customer.city) : '') +
+    '</p>'
+  ) : '';
+
+  var allocationRow = inv.allocation_number ?
+    '<tr><td style="color:#888;font-size:12px">מספר הקצאה (מס הכנסה):</td><td><strong>' + esc2(inv.allocation_number) + '</strong></td></tr>' : '';
+
+  return '<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="UTF-8">' +
+    '<title>' + esc2(inv.type || 'חשבונית') + ' ' + prefix + inv.number + '</title>' +
+    '<style>body{font-family:Arial,sans-serif;color:#1C2B36;padding:28px;max-width:720px;margin:0 auto;font-size:14px}' +
+    '.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #16324F;padding-bottom:14px;margin-bottom:18px}' +
+    '.biz-name{font-size:20px;font-weight:800;color:#16324F}' +
+    '.biz-sub{font-size:12px;color:#666;margin-top:2px}' +
+    '.doc-title{font-size:22px;font-weight:800;color:#16324F;text-align:left}' +
+    '.doc-num{font-size:14px;color:#444;text-align:left}' +
+    'table{width:100%;border-collapse:collapse;margin:12px 0}' +
+    'th{background:#16324F;color:#fff;padding:7px 8px;text-align:right;font-size:13px}' +
+    '.totals-table td{padding:5px 8px;font-size:14px}' +
+    '.total-row td{font-weight:800;font-size:16px;border-top:2px solid #16324F}' +
+    '.draft-banner{background:#FFF3CD;border:2px solid #E8A33D;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#7D4E00}' +
+    '.footer{margin-top:30px;text-align:center;font-size:12px;color:#888;border-top:1px solid #ddd;padding-top:10px}' +
+    '@media print{body{padding:0}.draft-banner{border:1px solid #ccc}}' +
+    '</style></head><body>' +
+    (isDraft ? '<div class="draft-banner">⚠️ ' + esc2(draftNote) + '</div>' : '') +
+    '<div class="header">' +
+      '<div>' +
+        '<div class="biz-name">' + esc2(sGet('business_name') || 'MAPA·NOBLE') + '</div>' +
+        '<div class="biz-sub">' +
+          (sGet('business_address') ? esc2(sGet('business_address')) + ' | ' : '') +
+          (sGet('business_phone') ? 'טל׳ ' + esc2(sGet('business_phone')) + ' | ' : '') +
+          (sGet('business_vat') || sGet('business_id') ? 'ח.פ/ע.מ ' + esc2(sGet('business_vat') || sGet('business_id')) : '') +
+        '</div>' +
+      '</div>' +
+      '<div>' +
+        '<div class="doc-title">' + esc2(inv.type || 'חשבונית') + '</div>' +
+        '<div class="doc-num">מס׳ ' + prefix + inv.number + '</div>' +
+        '<div class="doc-num">תאריך: ' + esc2(inv.date || '') + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<table style="margin-bottom:14px;width:auto"><tbody>' +
+      (custBlock ? '<tr><td colspan="2">' + custBlock + '</td></tr>' : '') +
+      allocationRow +
+    '</tbody></table>' +
+    (linesRows ? '<table><thead><tr><th>תיאור</th><th>כמות</th><th style="text-align:left">מחיר יח׳</th><th style="text-align:left">סה"כ</th></tr></thead><tbody>' + linesRows + '</tbody></table>' : '') +
+    '<table class="totals-table" style="width:280px;margin-right:auto"><tbody>' +
+      '<tr><td>סכום לפני מע"מ:</td><td style="text-align:left">₪' + Number(inv.subtotal || 0).toFixed(2) + '</td></tr>' +
+      '<tr><td>מע"מ ' + vatPct + '%:</td><td style="text-align:left">₪' + Number(inv.vat || 0).toFixed(2) + '</td></tr>' +
+      '<tr class="total-row"><td>סה"כ לתשלום:</td><td style="text-align:left">₪' + Number(inv.total || 0).toFixed(2) + '</td></tr>' +
+    '</tbody></table>' +
+    (inv.status === 'בוטלה' ? '<p style="color:#C44536;font-weight:800;font-size:18px;margin-top:16px">— מסמך זה בוטל —</p>' : '') +
+    '<div class="footer">' + esc2(sGet('doc_footer') || 'תודה שבחרתם בנו!') + '</div>' +
+    '</body></html>';
+}
+
+// B1: מחרוזת escape לשימוש בתוך HTML (כדי לא לייבא תלות חיצונית)
+function esc2(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// B1: יצירת חשבונית מורחבת — פעולה חדשה (מחליפה את createInvoice הישנה בהדרגה)
+// תומכת ב: סוג מסמך, מספר הקצאה, שמירת PDF ב-Drive
+function b1CreateInvoice(db, p, user) {
+  var invoiceType = p.invoice_type || 'חשבונית עסקה';
+  if (INVOICE_TYPES.indexOf(invoiceType) === -1) return { ok: false, error: 'סוג חשבונית לא חוקי' };
+
+  // חישוב סכומים
+  var sub, lines = [], cust = null;
+
+  if (p.order_id) {
+    // חשבונית על הזמנה
+    var oi = db.orders.find(function(x) { return x.id === p.order_id; });
+    if (!oi) return { ok: false, error: 'הזמנה לא נמצאה' };
+    if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oi.status) > -1)
+      return { ok: false, error: 'חשבונית מפיקים רק להזמנה מאושרת ומעלה' };
+    if (db.invoices.some(function(v) { return v.order_id === oi.id && v.status !== 'בוטלה'; }))
+      return { ok: false, error: 'כבר קיימת חשבונית פעילה להזמנה זו' };
+    sub = orderTotal(db, oi.id);
+    if (!(sub > 0)) return { ok: false, error: 'אין שורות בהזמנה — אין מה לחייב' };
+    cust = db.customers.find(function(c) { return c.id === oi.customer_id; });
+    lines = db.orderLines.filter(function(l) { return l.order_id === oi.id; }).map(function(l) {
+      var it = db.items.find(function(i) { return i.id === l.item_id; }) || {};
+      return { item_id: l.item_id, item_name: it.name || l.item_id, qty: l.qty, unit_price: l.unit_price };
+    });
+  } else {
+    return { ok: false, error: 'יש לספק order_id ליצירת חשבונית. לחשבונית מכבסה השתמש ב-nobleCreateInvoice.' };
+  }
+
+  var vatRate = parseFloat((db.settings.find(function(s) { return s.key === 'vat_rate'; }) || { value: '0.18' }).value || '0.18');
+  var vat = Math.round(sub * vatRate * 100) / 100;
+  var draftNote = (db.settings.find(function(s) { return s.key === 'invoice_draft_note'; }) || { value: '' }).value || '';
+
+  var inv = {
+    id: genId('INV'),
+    number: nextNumber(db, 'invoice', 1001),
+    order_id: p.order_id || '',
+    customer_id: cust ? cust.id : '',
+    date: today(),
+    subtotal: sub,
+    vat_rate: vatRate,
+    vat: vat,
+    total: Math.round((sub + vat) * 100) / 100,
+    status: 'פתוחה',
+    // B1: שדות חדשים
+    type: invoiceType,
+    allocation_number: p.allocation_number || '',
+    pdf_url: '',
+    draft_note: draftNote
+  };
+
+  // שמירת HTML ב-Drive
+  var html = buildInvoiceHtml(db, inv, lines, cust, db.settings);
+  inv.pdf_url = invoiceSaveToDrive(db, inv.id, html);
+
+  db.invoices.push(inv);
+  writeTable('invoices', db.invoices);
+
+  return {
+    ok: true,
+    invoice: inv,
+    auditNote: invoiceType + ' ' + inv.number + ' · ' + (cust ? cust.name : '') + ' · ₪' + inv.total +
+      (inv.allocation_number ? ' · הקצאה ' + inv.allocation_number : '')
+  };
+}
+
+// B1: שליפת קישור HTML ל-Drive עבור חשבונית קיימת (לפורטל לקוח)
+function b1GetInvoiceLink(db, p) {
+  var inv = db.invoices.find(function(v) { return v.id === p.invoice_id; });
+  if (!inv) return { ok: false, error: 'חשבונית לא נמצאה' };
+  if (!inv.pdf_url) {
+    // יצירה מחדש אם חסר קישור
+    var lines = db.orderLines.filter(function(l) { return l.order_id === inv.order_id; }).map(function(l) {
+      var it = db.items.find(function(i) { return i.id === l.item_id; }) || {};
+      return { item_id: l.item_id, item_name: it.name || l.item_id, qty: l.qty, unit_price: l.unit_price };
+    });
+    var cust = db.customers.find(function(c) { return c.id === inv.customer_id; }) || null;
+    var html = buildInvoiceHtml(db, inv, lines, cust, db.settings);
+    inv.pdf_url = invoiceSaveToDrive(db, inv.id, html);
+    if (inv.pdf_url) writeTable('invoices', db.invoices);
+  }
+  return { ok: true, url: inv.pdf_url, number: inv.number, type: inv.type };
+}
+
+// B1: עדכון מספר הקצאה לחשבונית קיימת (מנהל בלבד)
+function b1SetAllocationNumber(db, p) {
+  var inv = db.invoices.find(function(v) { return v.id === p.invoice_id; });
+  if (!inv) return { ok: false, error: 'חשבונית לא נמצאה' };
+  if (inv.status === 'בוטלה') return { ok: false, error: 'לא ניתן לעדכן חשבונית מבוטלת' };
+  inv.allocation_number = String(p.allocation_number || '').trim();
+  // עדכון גם ב-Drive HTML
+  var lines = db.orderLines.filter(function(l) { return l.order_id === inv.order_id; }).map(function(l) {
+    var it = db.items.find(function(i) { return i.id === l.item_id; }) || {};
+    return { item_id: l.item_id, item_name: it.name || l.item_id, qty: l.qty, unit_price: l.unit_price };
+  });
+  var cust = db.customers.find(function(c) { return c.id === inv.customer_id; }) || null;
+  var html = buildInvoiceHtml(db, inv, lines, cust, db.settings);
+  inv.pdf_url = invoiceSaveToDrive(db, inv.id, html);
+  writeTable('invoices', db.invoices);
+  return { ok: true, auditNote: 'מספר הקצאה ' + inv.allocation_number + ' שויך לחשבונית ' + inv.number };
+}
+// ============================================================
+//  B2: מנוע תשלום + אשראי (D9 / D7 / D15 · הכרעות S1, S2, S5)
+//  עקרונות:
+//  • כל החישובים באגורות (integer) — toAg/agIls בגבולות בלבד. אין float בלוגיקה.
+//  • credit_used = computed בלבד (S5): sum(יתרות הזמנות פתוחות) + חשבוניות מכבסה
+//    פתוחות — זהה להגדרת customerBalance. לעולם לא שדה persistent (מונע drift).
+//  • שדות amount בגיליון נשארים בש"ח — תאימות מלאה לכל המסכים הקיימים.
+//  • idempotency: txn_id ייחודי נוצר בממשק עם פתיחת מסך התשלום; שליחה חוזרת
+//    של אותו txn_id מחזירה את הקבלה הקיימת ואינה מחייבת שוב.
+//  • קבלה אחת לטרנזקציה: קיזוז חוב על כמה הזמנות = כמה שורות payments עם אותו
+//    receipt_number ואותו txn_id. מסמך הקבלה מפרט את כל ההקצאות.
+// ============================================================
+
+function toAg(n) { return Math.round(Number(n || 0) * 100); }
+function agIls(ag) { return Math.round(Number(ag || 0)) / 100; }
+function b2Setting(db, key) {
+  var s = db.settings.find(function (x) { return x.key === key; });
+  return s ? String(s.value || '') : '';
+}
+
+// יתרת הזמנה באגורות — אותה סמנטיקה כמו orderBalance: חשבונית פעילה גוברת על סכום ההזמנה
+function b2OrderBalanceAg(db, orderId) {
+  var inv = db.invoices.find(function (v) { return v.order_id === orderId && v.status !== 'בוטלה'; });
+  var baseAg = inv ? toAg(inv.total) : toAg(orderTotal(db, orderId));
+  var paidAg = db.payments.filter(function (x) { return x.order_id === orderId; })
+    .reduce(function (s, x) { return s + toAg(x.amount); }, 0);
+  return baseAg - paidAg;
+}
+
+// יתרת חשבונית ללא הזמנה (מכבסה מרוכזת — NC3) באגורות
+function b2InvoiceBalanceAg(db, inv) {
+  var paidAg = db.payments.filter(function (x) { return x.invoice_id === inv.id; })
+    .reduce(function (s, x) { return s + toAg(x.amount); }, 0);
+  return toAg(inv.total) - paidAg;
+}
+
+// S5: credit_used מחושב תמיד — לעולם לא נשמר בגיליון
+function b2CreditUsedAg(db, customerId) {
+  var used = 0;
+  db.orders.filter(function (o) {
+    return o.customer_id === customerId && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
+  }).forEach(function (o) { used += b2OrderBalanceAg(db, o.id); });
+  db.invoices.filter(function (v) { return v.customer_id === customerId && !v.order_id && v.status !== 'בוטלה'; })
+    .forEach(function (v) { used += Math.max(0, b2InvoiceBalanceAg(db, v)); });
+  return used;
+}
+
+// D8: limit − used = available. מסגרת צמיתה (revolving), לא מתחדשת חודשית.
+function b2CreditStatusObj(db, customerId) {
+  var c = db.customers.find(function (x) { return x.id === customerId; });
+  var limitAg = toAg(c ? c.credit_limit : 0);
+  var usedAg = b2CreditUsedAg(db, customerId);
+  var pct = limitAg > 0 ? Math.round(usedAg * 100 / limitAg) : (usedAg > 0 ? 100 : 0);
+  return { customer_id: customerId, limit_ag: limitAg, used_ag: usedAg, available_ag: limitAg - usedAg, pct: pct };
+}
+
+// פעולת קריאה: מצב אשראי של לקוח
+function b2CreditStatus(db, p) {
+  if (!p.customer_id) return { ok: false, error: 'customer_id חובה' };
+  if (!db.customers.some(function (c) { return c.id === p.customer_id; })) return { ok: false, error: 'לקוח לא נמצא' };
+  return { ok: true, credit: b2CreditStatusObj(db, p.customer_id) };
+}
+
+// פעולת קריאה: הקשר מלא למסך התשלום (D9) — יתרת הזמנה, חוב קודם, מצב אשראי
+function b2PaymentContext(db, p) {
+  var o = null;
+  if (p.order_id) {
+    o = db.orders.find(function (x) { return x.id === p.order_id; });
+    if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+  }
+  var cid = o ? o.customer_id : p.customer_id;
+  if (!cid || !db.customers.some(function (c) { return c.id === cid; })) return { ok: false, error: 'לקוח לא נמצא' };
+  var credit = b2CreditStatusObj(db, cid);
+  var orderBalAg = o ? Math.max(0, b2OrderBalanceAg(db, o.id)) : 0;
+  // חוב קודם = החוב הכולל בניכוי יתרת ההזמנה הנוכחית (אם היא כבר נספרת בחוב)
+  var counted = o && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
+  var priorAg = credit.used_ag - (counted ? b2OrderBalanceAg(db, o.id) : 0);
+  if (priorAg < 0) priorAg = 0;
+  return {
+    ok: true, customer_id: cid, credit: credit,
+    order_balance_ag: orderBalAg, prior_debt_ag: priorAg,
+    order_center_phone: b2Setting(db, 'order_center_phone'),
+    payment_link: b2Setting(db, 'payment_link')
+  };
+}
+
+// D6: מסגרת אשראי נקבעת ידנית ע"י מנהל בלבד (נאכף ב-MANAGER_ONLY)
+function b2SetCreditLimit(db, p) {
+  var c = db.customers.find(function (x) { return x.id === p.customer_id; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var lim = Number(p.credit_limit);
+  if (!(lim >= 0) || !isFinite(lim)) return { ok: false, error: 'מסגרת אשראי חייבת להיות מספר 0 ומעלה' };
+  c.credit_limit = lim;
+  writeTable('customers', db.customers);
+  return { ok: true, credit: b2CreditStatusObj(db, c.id), auditNote: 'מסגרת אשראי ' + c.name + ' → ₪' + lim };
+}
+
+// S2: מנהל/משרד מסמנים "תשלום בהמשך" — לאחר אישור, ההזמנה נכנסת ל-credit_used אוטומטית
+// (כי credit_used מחושב מיתרות הזמנות מאושרות שלא שולמו — S5)
+function b2MarkPayLater(db, p) {
+  var role = String(p._verified_role || '');
+  if (db.employees.length && ['מנהל', 'משרד'].indexOf(role) === -1)
+    return { ok: false, error: 'סימון "תשלום בהמשך" מותר למנהל/משרד בלבד' };
+  var o = db.orders.find(function (x) { return x.id === p.order_id; });
+  if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+  if (o.status === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת' };
+  if (o.payment_status === 'שולם') return { ok: false, error: 'ההזמנה כבר שולמה במלואה' };
+  if (o.payment_status === 'תשלום בהמשך') return { ok: true, order: o, credit: b2CreditStatusObj(db, o.customer_id) };
+  o.payment_status = 'תשלום בהמשך';
+  // הזמנת פורטל שטרם אושרה (הצעת מחיר) — מקדמת לטיוטה כדי שניתן לאשר אחר כך
+  if (o.status === 'הצעת מחיר') o.status = 'טיוטה';
+  writeTable('orders', db.orders);
+  return { ok: true, order: o, credit: b2CreditStatusObj(db, o.customer_id), auditNote: 'תשלום בהמשך — הזמנה ' + (o.order_number || o.id) };
+}
+
+// D15: מסמך קבלה — נבנה ונשמר ב-Drive מיד עם התשלום, זמין לצמיתות בפורטל
+function b2BuildReceiptHtml(db, rc) {
+  var sGet = function (k) { return b2Setting(db, k); };
+  var rows = (rc.lines || []).map(function (l) {
+    return '<tr>' +
+      '<td style="padding:6px 8px;border-bottom:1px solid #ddd">' + esc2(l.desc) + '</td>' +
+      '<td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:left">₪' + Number(l.amount || 0).toFixed(2) + '</td></tr>';
+  }).join('');
+  return '<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="UTF-8">' +
+    '<title>קבלה ' + rc.number + '</title>' +
+    '<style>body{font-family:Arial,sans-serif;color:#1C2B36;padding:28px;max-width:720px;margin:0 auto;font-size:14px}' +
+    '.header{display:flex;justify-content:space-between;border-bottom:3px solid #16324F;padding-bottom:14px;margin-bottom:18px}' +
+    '.biz-name{font-size:20px;font-weight:800;color:#16324F}.biz-sub{font-size:12px;color:#666;margin-top:2px}' +
+    '.doc-title{font-size:22px;font-weight:800;color:#16324F;text-align:left}.doc-num{font-size:14px;color:#444;text-align:left}' +
+    'table{width:100%;border-collapse:collapse;margin:12px 0}' +
+    'th{background:#16324F;color:#fff;padding:7px 8px;text-align:right;font-size:13px}' +
+    '.total-row td{font-weight:800;font-size:16px;border-top:2px solid #16324F;padding:6px 8px}' +
+    '.footer{margin-top:30px;text-align:center;font-size:12px;color:#888;border-top:1px solid #ddd;padding-top:10px}' +
+    '@media print{body{padding:0}}</style></head><body>' +
+    '<div class="header"><div>' +
+    '<div class="biz-name">' + esc2(sGet('business_name') || 'MAPA·NOBLE') + '</div>' +
+    '<div class="biz-sub">' +
+    (sGet('business_address') ? esc2(sGet('business_address')) + ' | ' : '') +
+    (sGet('business_phone') ? 'טל׳ ' + esc2(sGet('business_phone')) + ' | ' : '') +
+    (sGet('business_vat') || sGet('business_id') ? 'ח.פ/ע.מ ' + esc2(sGet('business_vat') || sGet('business_id')) : '') +
+    '</div></div><div>' +
+    '<div class="doc-title">קבלה</div>' +
+    '<div class="doc-num">מס׳ ' + rc.number + '</div>' +
+    '<div class="doc-num">תאריך: ' + esc2(rc.date || '') + '</div></div></div>' +
+    (rc.customer ? '<p style="margin:4px 0 12px"><strong>התקבל מ:</strong> ' + esc2(rc.customer.name || '') +
+      (rc.customer.vat_id ? ' | ח.פ: ' + esc2(rc.customer.vat_id) : '') + '</p>' : '') +
+    '<table><thead><tr><th>פירוט</th><th style="text-align:left">סכום</th></tr></thead><tbody>' + rows +
+    '<tr class="total-row"><td>סה"כ התקבל' + (rc.method ? ' (' + esc2(rc.method) + ')' : '') + ':</td><td style="text-align:left">₪' + Number(rc.total || 0).toFixed(2) + '</td></tr>' +
+    '</tbody></table>' +
+    (rc.note ? '<p style="font-size:13px;color:#555">' + esc2(rc.note) + '</p>' : '') +
+    '<div class="footer">' + esc2(sGet('doc_footer') || 'תודה שבחרתם בנו!') + '</div>' +
+    '</body></html>';
+}
+
+// לב המנוע (D9 + D15): תשלום על הזמנה ו/או קיזוז חוב קודם — קבלה אחת לכל הטרנזקציה
+// payload: { customer_id, order_id?, order_amount_ag?, debt_amount_ag?, method, txn_id, note?, date? }
+function b2ProcessPayment(db, p, user) {
+  var cust = db.customers.find(function (c) { return c.id === p.customer_id; });
+  if (!cust) return { ok: false, error: 'לקוח לא נמצא' };
+  var txn = String(p.txn_id || '').trim();
+  if (!txn) return { ok: false, error: 'txn_id חסר — סגור ופתח מחדש את מסך התשלום' };
+
+  // idempotency: לחיצה כפולה / שליחה חוזרת — מחזירים את הקבלה הקיימת, לא מחייבים שוב
+  var dup = db.payments.find(function (x) { return String(x.txn_id || '') === txn; });
+  if (dup) return { ok: true, duplicate: true, receipt_number: dup.receipt_number, pdf_url: dup.pdf_url || '', total: '', credit: b2CreditStatusObj(db, cust.id) };
+
+  var orderAg = Math.round(Number(p.order_amount_ag || 0));
+  var debtAg = Math.round(Number(p.debt_amount_ag || 0));
+  if (!(orderAg >= 0) || !(debtAg >= 0) || orderAg + debtAg <= 0) return { ok: false, error: 'סכום לתשלום חובה' };
+
+  var o = null;
+  if (orderAg > 0) {
+    o = db.orders.find(function (x) { return x.id === p.order_id; });
+    if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+    if (o.customer_id !== cust.id) return { ok: false, error: 'ההזמנה אינה של לקוח זה' };
+    if (o.status === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת' };
+    var oBal = b2OrderBalanceAg(db, o.id);
+    if (orderAg > oBal) return { ok: false, error: 'הסכום גבוה מיתרת ההזמנה (₪' + agIls(Math.max(0, oBal)) + ')' };
+  }
+
+  // D15: קיזוז חוב — מותר רק במסגרת יתרת החוב הקודם (לא כולל ההזמנה הנוכחית). הקצאה FIFO — הישן קודם.
+  var debts = [];
+  if (debtAg > 0) {
+    db.orders.filter(function (x) {
+      return x.customer_id === cust.id && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(x.status) === -1 && (!o || x.id !== o.id);
+    }).forEach(function (x) {
+      var b = b2OrderBalanceAg(db, x.id);
+      if (b > 0) debts.push({ kind: 'order', id: x.id, label: 'הזמנה ' + (x.order_number || x.id), bal: b, sort: String(x.created_at || x.start_date || '') });
+    });
+    db.invoices.filter(function (v) { return v.customer_id === cust.id && !v.order_id && v.status !== 'בוטלה'; }).forEach(function (v) {
+      var b = b2InvoiceBalanceAg(db, v);
+      if (b > 0) debts.push({ kind: 'invoice', id: v.id, label: 'חשבונית ' + v.number, bal: b, sort: String(v.date || '') });
+    });
+    debts.sort(function (a, b) { return a.sort < b.sort ? -1 : 1; });
+    var debtTotal = debts.reduce(function (s, d) { return s + d.bal; }, 0);
+    if (debtAg > debtTotal) return { ok: false, error: 'קיזוז החוב גבוה מהחוב הקודם (₪' + agIls(debtTotal) + ')' };
+  }
+
+  var rcptNum = nextNumber(db, 'receipt', 5001);
+  var newRows = [], docLines = [];
+
+  if (orderAg > 0) {
+    var invO = db.invoices.find(function (v) { return v.order_id === o.id && v.status !== 'בוטלה'; });
+    newRows.push({
+      id: genId('PAY'), order_id: o.id, invoice_id: invO ? invO.id : '', receipt_number: rcptNum,
+      date: p.date || today(), amount: agIls(orderAg), method: p.method || '', note: p.note || '',
+      customer_id: cust.id, type: 'תשלום הזמנה', status: 'שולם', txn_id: txn, created_by: user || '', created_at: nowTs(), pdf_url: ''
+    });
+    docLines.push({ desc: 'תשלום על הזמנה ' + (o.order_number || o.id), amount: agIls(orderAg) });
+  }
+
+  var remain = debtAg;
+  debts.forEach(function (d) {
+    if (remain <= 0) return;
+    var take = Math.min(remain, d.bal); remain -= take;
+    var linkedInv = '';
+    if (d.kind === 'invoice') linkedInv = d.id;
+    else { var iv2 = db.invoices.find(function (v) { return v.order_id === d.id && v.status !== 'בוטלה'; }); if (iv2) linkedInv = iv2.id; }
+    newRows.push({
+      id: genId('PAY'), order_id: d.kind === 'order' ? d.id : '', invoice_id: linkedInv,
+      receipt_number: rcptNum, date: p.date || today(), amount: agIls(take), method: p.method || '', note: p.note || '',
+      customer_id: cust.id, type: 'קיזוז חוב', status: 'שולם', txn_id: txn, created_by: user || '', created_at: nowTs(), pdf_url: ''
+    });
+    docLines.push({ desc: 'קיזוז חוב — ' + d.label, amount: agIls(take) });
+  });
+
+  newRows.forEach(function (r) { db.payments.push(r); });
+
+  // עדכון סטטוסי חשבוניות ("שולמה") שנגעו בהן בטרנזקציה זו
+  var invTouched = false;
+  db.invoices.forEach(function (v) {
+    if (v.status === 'בוטלה' || v.status === 'שולמה') return;
+    var mine = newRows.some(function (r) { return r.invoice_id === v.id; });
+    if (!mine) return;
+    var bal = v.order_id ? b2OrderBalanceAg(db, v.order_id) : b2InvoiceBalanceAg(db, v);
+    if (bal <= 0) { v.status = 'שולמה'; invTouched = true; }
+  });
+  // סטטוס תשלום של ההזמנה הנוכחית
+  var ordTouched = false;
+  if (o) { o.payment_status = b2OrderBalanceAg(db, o.id) <= 0 ? 'שולם' : 'שולם חלקית'; ordTouched = true; }
+
+  // D15: הפקת קבלה מיד — HTML ל-Drive, קישור קבוע (מוצג גם בפורטל)
+  var totalIls = agIls(orderAg + debtAg);
+  var html = b2BuildReceiptHtml(db, { number: rcptNum, date: p.date || today(), customer: cust, method: p.method || '', lines: docLines, total: totalIls, note: p.note || '' });
+  var url = invoiceSaveToDrive(db, 'RCPT-' + rcptNum, html);
+  if (url) newRows.forEach(function (r) { r.pdf_url = url; });
+
+  writeTable('payments', db.payments);
+  if (invTouched) writeTable('invoices', db.invoices);
+  if (ordTouched) writeTable('orders', db.orders);
+
+  return {
+    ok: true, receipt_number: rcptNum, pdf_url: url, total: totalIls,
+    order_balance_ag: o ? b2OrderBalanceAg(db, o.id) : 0,
+    credit: b2CreditStatusObj(db, cust.id),
+    auditNote: 'קבלה ' + rcptNum + ' · ' + cust.name + ' · ₪' + totalIls + (o ? ' · הזמנה ' + (o.order_number || o.id) : '') + ' · txn ' + txn
+  };
+}
+
+// שליפה/שחזור קישור קבלה (פעולת כתיבה — עשויה לשמור מחדש ב-Drive, לכן לא ב-READ_ONLY)
+function b2GetReceiptLink(db, p) {
+  var rows = db.payments.filter(function (x) { return String(x.receipt_number) === String(p.receipt_number); });
+  if (!rows.length) return { ok: false, error: 'קבלה לא נמצאה' };
+  var withUrl = rows.find(function (x) { return x.pdf_url; });
+  if (withUrl) return { ok: true, url: withUrl.pdf_url, receipt_number: p.receipt_number, auditNote: 'קישור קבלה ' + p.receipt_number };
+  var cust = db.customers.find(function (c) { return c.id === rows[0].customer_id; }) || null;
+  if (!cust && rows[0].order_id) {
+    var oo = db.orders.find(function (x) { return x.id === rows[0].order_id; });
+    if (oo) cust = db.customers.find(function (c) { return c.id === oo.customer_id; }) || null;
+  }
+  var lines = rows.map(function (r) { return { desc: (r.type || 'תשלום') + (r.order_id ? ' — הזמנה ' + r.order_id : ''), amount: Number(r.amount || 0) }; });
+  var total = nRound2(rows.reduce(function (s, r) { return s + Number(r.amount || 0); }, 0));
+  var html = b2BuildReceiptHtml(db, { number: p.receipt_number, date: rows[0].date, customer: cust, method: rows[0].method || '', lines: lines, total: total, note: rows[0].note || '' });
+  var url = invoiceSaveToDrive(db, 'RCPT-' + p.receipt_number, html);
+  if (url) { rows.forEach(function (r) { r.pdf_url = url; }); writeTable('payments', db.payments); }
+  return { ok: true, url: url, receipt_number: p.receipt_number, auditNote: 'שחזור קבלה ' + p.receipt_number };
+}
+
+// checkout פורטל — הכרעת S1 (מסגרת אשראי = תשלום תקף ל-D2) ושני מוצאי D7
+// payload: { code, order_id, choice: 'credit' | 'partial' | 'approval' }
+function portalB2Checkout(db, p) {
+  var pc = db.customers.find(function (c) { return c.portal_code && String(c.portal_code) === String(p.code || '').toUpperCase() && c.active !== 'לא'; });
+  if (!pc) return { ok: false, error: 'קוד לקוח שגוי' };
+  var o = db.orders.find(function (x) { return x.id === p.order_id; });
+  if (!o || o.customer_id !== pc.id) return { ok: false, error: 'הזמנה לא נמצאה' };
+  if (o.status !== 'הצעת מחיר') return { ok: false, error: 'ההזמנה כבר בטיפול המשרד' };
+
+  var totalAg = Math.max(0, b2OrderBalanceAg(db, o.id));
+  var credit = b2CreditStatusObj(db, pc.id);
+  var phone = b2Setting(db, 'order_center_phone');
+  var payLink = b2Setting(db, 'payment_link');
+  var notifyEmail = b2Setting(db, 'notify_email');
+
+  if (p.choice === 'credit') {
+    // S1: הזמנה בתוך המסגרת עוברת ללא כסף — חיוב המסגרת נחשב תשלום תקף (D2)
+    if (totalAg > credit.available_ag)
+      return { ok: false, over: true, gap_ag: totalAg - Math.max(0, credit.available_ag), credit: credit, order_center_phone: phone, payment_link: payLink, error: 'ההזמנה חורגת מיתרת האשראי' };
+    o.status = 'טיוטה';                      // נכנסת לתור אישור המלאי של המשרד
+    o.payment_status = 'באשראי מסגרת';
+    writeTable('orders', db.orders);
+    sendMail(notifyEmail, 'הזמנת פורטל אושרה במסגרת אשראי — #' + (o.order_number || o.id),
+      'לקוח: ' + pc.name + '\nסכום (לפני מע"מ): ₪' + agIls(totalAg) + '\nיתרת מסגרת לאחר אישור: ₪' + agIls(credit.available_ag - totalAg));
+    return { ok: true, mode: 'credit', credit: b2CreditStatusObj(db, pc.id), auditNote: 'checkout אשראי מסגרת · הזמנה ' + (o.order_number || o.id) + ' · ₪' + agIls(totalAg) + ' · ' + pc.name };
+  }
+
+  if (p.choice === 'partial') {
+    // D7-א: תשלום ההפרש בכסף + היתרה במסגרת. הסליקה בפועל — B3; כאן נרשמת הכוונה ומוחזר קישור תשלום.
+    var gap = Math.max(0, totalAg - Math.max(0, credit.available_ag));
+    o.payment_status = 'ממתין לתשלום הפרש';
+    writeTable('orders', db.orders);
+    sendMail(notifyEmail, 'הזמנת פורטל ממתינה לתשלום הפרש — #' + (o.order_number || o.id),
+      'לקוח: ' + pc.name + '\nסכום הזמנה: ₪' + agIls(totalAg) + '\nהפרש לגבייה: ₪' + agIls(gap) + '\nלאחר גבייה — לרשום במסך התשלום של ההזמנה.');
+    return { ok: true, mode: 'partial', gap_ag: gap, payment_link: payLink, order_center_phone: phone, auditNote: 'checkout בקשת תשלום הפרש ₪' + agIls(gap) + ' · הזמנה ' + (o.order_number || o.id) + ' · ' + pc.name };
+  }
+
+  if (p.choice === 'approval') {
+    // D7-ב: בקשת אישור חריגה — התראה למשרד (רשומת notification + מייל) + טלפון מרכז הזמנות ללקוח
+    o.payment_status = 'ממתין לאישור חריגה';
+    writeTable('orders', db.orders);
+    db.notifications.push({
+      id: genId('NTF'), type: 'בקשת חריגת אשראי', recipient: notifyEmail, channel: 'email',
+      payload: JSON.stringify({ order_id: o.id, order_number: o.order_number || '', customer: pc.name, total: agIls(totalAg), available: agIls(credit.available_ag) }),
+      status: 'נשלח', scheduled_for: '', sent_at: nowTs()
+    });
+    writeTable('notifications', db.notifications);
+    sendMail(notifyEmail, 'בקשת אישור חריגת אשראי — #' + (o.order_number || o.id),
+      'לקוח: ' + pc.name + '\nסכום הזמנה: ₪' + agIls(totalAg) + '\nיתרת מסגרת: ₪' + agIls(credit.available_ag) + '\nהלקוח ממתין לשיחה ממרכז ההזמנות.');
+    return { ok: true, mode: 'approval', order_center_phone: phone, auditNote: 'checkout בקשת אישור חריגה · הזמנה ' + (o.order_number || o.id) + ' · ' + pc.name };
+  }
+
+  return { ok: false, error: 'בחירה לא מוכרת' };
+}
