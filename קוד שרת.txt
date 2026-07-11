@@ -35,8 +35,18 @@
 //             • b3SaveGuarantee (משרד: רישום שיק/ערב) · b3ApproveGuarantee (מנהל בלבד)
 //             • portalGetData מחזיר deposit (מצב פקדון — ללא token)
 //             • credentials של ספק אמיתי: ScriptProperties בלבד (S4). כרגע stub — אין ספק מחובר.
-//  אחרי הדבקה: (1) אין צורך ב-setupDatabase — אין שינוי סכימה ב-B3-1
+//  אצווה B4:  Notifications (אימייל) + הרחבת שימוש ב-Audit הקיים + Backup יומי:
+//             • טבלת notifications (מ-B1) — תור התראות עם דדופ, opt-out (customers.notify_pref), טיפול בכשל מכסה (S6)
+//             • b4DailyScan (טריגר יומי, 08:00): תזכורת החזרה יום לפני · תזכורת חוב פתוח · בטיחות-רשת חריגת אשראי
+//             • b4NotifyOrderInTransit / b4NotifyAddressRemoved — מוכנות לחיבור מ-B5 (Driver-Lite), אין קורא כרגע
+//             • b4RunNow — הרצה ידנית מהממשק (מנהל בלבד), לבדיקות בלי להמתין לטריגר
+//             • b4DailyBackup (טריגר יומי, 03:00): גיבוי הגיליון ל-Drive + rotate לפי backup_keep_count
+//             • b4SetupTriggers — להרצה חד-פעמית מעורך Apps Script (לא מה-Web App) כדי להתקין את שני הטריגרים
+//             • audit_log לא השתנה — הוא כבר רושם כל פעולת כתיבה אוטומטית; מסך הצפייה החדש הוא ב-index.html בלבד
+//             • canary: v4.0-B4
+//  אחרי הדבקה: (1) אין צורך ב-setupDatabase — אין שינוי סכימה ב-B4
 //              (2) Deploy → Manage deployments → Edit → New version → Deploy
+//              (3) חובה להריץ פעם אחת בעורך: לבחור פונקציה b4SetupTriggers מהתפריט ← להריץ (להתקין את הטריגרים היומיים)
 // ============================================================
 
 var PASSWORD = 'IMHKK8uQWY2hshWAxav0FHgjac9hrqkzrPJwysFJ'; // סיסמת מערכת ישנה — הוחלפה למחרוזת אקראית, אינה בשימוש בכניסה
@@ -105,6 +115,11 @@ var DEFAULT_SETTINGS = {
   order_center_phone: '',         // טלפון מרכז הזמנות (D7)
   gateway_provider: '',           // שם ספק סליקה (credentials ב-ScriptProperties — S4)
   invoice_draft_note: 'מסמך זה הינו טיוטה — לא חשבונית מס רשמית. יש לאשר מול רו"ח לפני שימוש.',
+  // B4: הגדרות מנוע ההתראות והגיבוי
+  notify_return_days_before: '1',  // כמה ימים לפני מועד ההחזרה לשלוח תזכורת
+  notify_debt_after_days: '7',     // כמה ימים אחרי מועד ההחזרה לשלוח תזכורת חוב (חוזרת אחת לשבוע)
+  backup_folder_id: '',            // תיקיית הגיבוי ב-Drive (נוצרת אוטומטית בגיבוי הראשון אם ריקה)
+  backup_keep_count: '30',         // כמה עותקי גיבוי אחרונים לשמור (rotate)
   agreement_text: 'הסכם שירות\n\n1. הלקוח מתחייב להחזיר את הפריטים במועד ההחזרה שנקבע.\n2. פריטים שלא יוחזרו או יוחזרו פגומים — יחויבו במחיר מלא.\n3. התשלום בהתאם לתנאי התשלום שסוכמו.\n4. אחריות על הפריטים בזמן שהם אצל הלקוח — על הלקוח.'
 };
 
@@ -115,7 +130,9 @@ var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'setBonus', 'appr
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
   'b2SetCreditLimit',
   // B3-1: אישור ערבות חלופית — מנהל בלבד (D5)
-  'b3ApproveGuarantee'];
+  'b3ApproveGuarantee',
+  // B4: הרצה ידנית של סריקת התראות — מנהל בלבד (למניעת שימוש לרעה/spam)
+  'b4RunNow'];
 
 // הרץ פעם אחת מהעורך
 function setupDatabase() {
@@ -1351,6 +1368,9 @@ function handle(action, p, db, user) {
     }
     case 'b3SaveGuarantee': return b3SaveGuarantee(db, p, user);
     case 'b3ApproveGuarantee': return b3ApproveGuarantee(db, p, user);
+
+    // ---- B4: Notifications (הרצה ידנית מהממשק, לבדיקות — הסריקה האמיתית רצה בטריגר היומי) ----
+    case 'b4RunNow': return b4RunNow(db, user);
     case 'b1SetAllocationNumber': {
       var r_b1 = b1SetAllocationNumber(db, p);
       if (r_b1.ok) r_b1.auditNote = r_b1.auditNote;
@@ -2801,4 +2821,243 @@ function doGet(e) {
     (String(p.stub) === '1' ? '<p style="color:#98A6B0;font-size:12px">מצב הדגמה (stub) — טרם חובר ספק סליקה אמיתי</p>' : '') +
     '</div></body></html>';
   return HtmlService.createHtmlOutput(html).setTitle('MAPA-NOBLE — אימות כרטיס');
+}
+
+// ============================================================
+//  אצווה B4: Notifications (Email) · הרחבת שימוש ב-Audit הקיים · Backup יומי
+//  (חלק ג' במסמך FEASIBILITY · חלק 1.4/1.6 במסמך האב)
+//  • טבלת notifications כבר קיימת מ-B1 (type/recipient/channel/payload/status/scheduled_for/sent_at) — אין שינוי סכימה.
+//  • audit_log כבר רושם אוטומטית כל פעולת כתיבה (route()) — לא נבנה מחדש. B4 מוסיפה רק מסך צפייה בממשק (index.html),
+//    שקורא ישירות מ-DB.auditLog שכבר מגיע ב-getAll — אין צורך בפעולת שרת נוספת לכך.
+//  • שלוש התראות מסך מלא בסריקה יומית: תזכורת החזרה יום לפני, תזכורת חוב פתוח, בטיחות-רשת חריגת אשראי.
+//  • שתי התראות שתלויות ב-B5 (Driver-Lite — טרם נבנה): "הזמנתך בדרך"+ETA, "נהג הסיר כתובת".
+//    הפונקציות b4NotifyOrderInTransit / b4NotifyAddressRemoved מוכנות ומחכות לחיבור מ-B5 (אין קורא להן כרגע).
+//  • S6 (מכסת מייל): b4SendMailSafe תופס כשל שליחה (מכסה/רשת) ומסמן את ההתראה כ'נכשל' — תנוסה שוב בסריקה הבאה.
+//  • opt-out: customers.notify_pref==='לא' מדלג על שליחה ללקוח (קיים מ-B1).
+//  • דדופ: מפתח ייחודי נשמר בתוך payload (JSON) ונבדק לפני יצירת רשומת התראה כפולה לאותו אירוע.
+//  • canary: v4.0-B4
+// ============================================================
+
+var B4_TEMPLATES = {
+  return_reminder: {
+    subject: 'תזכורת: החזרה מתוכננת מחר — הזמנה #{order_number}',
+    body: 'שלום {customer_name},\nתזכורת ידידותית — מועד ההחזרה המתוכנן להזמנה שלך הוא מחר, {end_date}.\nלתיאום או שאלות נשמח שתפנו אלינו.\nתודה, {business_name}'
+  },
+  debt_reminder: {
+    subject: 'תזכורת תשלום — יתרת חוב פתוחה',
+    body: 'שלום {customer_name},\nקיימת יתרת חוב פתוחה בסך {amount} ₪ (מעל {days} ימים ממועד ההחזרה).\nניתן להסדיר את התשלום דרך הפורטל האישי או בפנייה למשרד.\nתודה, {business_name}'
+  },
+  credit_overlimit: {
+    subject: 'התראה: חריגת מסגרת אשראי — לקוח {customer_name}',
+    body: 'לקוח {customer_name} חורג ממסגרת האשראי שנקבעה לו.\nמסגרת: {limit} ₪ · בשימוש כרגע: {used} ₪ · חריגה: {over} ₪.\nמומלץ לבדוק את הלקוח ולפעול בהתאם (D7).'
+  },
+  order_in_transit: {
+    subject: 'הזמנתך בדרך — #{order_number}',
+    body: 'שלום {customer_name},\nההזמנה שלך בדרך אליך. זמן הגעה משוער: {eta}.\nתודה, {business_name}'
+  },
+  address_removed: {
+    subject: 'נהג הסיר כתובת ממסלול — דורש בדיקה',
+    body: 'הנהג {driver_name} הסיר כתובת ממסלול המשלוח (הזמנה #{order_number}).\nפירוט שנרשם: {reason}\nיש לבדוק ולתאם מול הלקוח.'
+  }
+};
+
+function b4Fill(tpl, vars) {
+  return String(tpl || '').replace(/\{(\w+)\}/g, function (m, k) {
+    return (vars[k] !== undefined && vars[k] !== null) ? String(vars[k]) : '';
+  });
+}
+
+// שליחת מייל עמידה לכשל (S6: מכסה/רשת) — מחזיר true/false, לעולם לא זורק
+function b4SendMailSafe(to, subject, body) {
+  try {
+    if (!to || String(to).indexOf('@') === -1) return false;
+    MailApp.sendEmail({ to: to, subject: subject, body: body });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function b4OptedOut(c) {
+  return String((c && c.notify_pref) || '').trim() === 'לא';
+}
+
+// יצירת רשומת התראה בתור, עם דדופ לפי dedupKey (נשמר בתוך payload) — מונע שכפול לאותו אירוע
+function b4Queue(db, type, recipient, channel, vars, dedupKey) {
+  var marker = '"dedup":"' + dedupKey + '"';
+  var exists = db.notifications.some(function (n) { return n.type === type && String(n.payload || '').indexOf(marker) > -1; });
+  if (exists) return null;
+  var payloadObj = { dedup: dedupKey };
+  Object.keys(vars || {}).forEach(function (k) { payloadObj[k] = vars[k]; });
+  var row = {
+    id: genId('NTF'), type: type, recipient: recipient, channel: channel || 'email',
+    payload: JSON.stringify(payloadObj), status: 'ממתין', scheduled_for: today(), sent_at: ''
+  };
+  db.notifications.push(row);
+  appendRowToTable('notifications', row);
+  return row;
+}
+
+// שליחת כל ההתראות שבתור (status==='ממתין') — Phase 1: אימייל בלבד
+function b4SendQueued(db) {
+  var changed = false, sentCount = 0;
+  db.notifications.forEach(function (n) {
+    if (n.status !== 'ממתין') return;
+    if (n.channel && n.channel !== 'email') return; // ערוצים נוספים (SMS/וואטסאפ) — לא ב-Phase 1
+    var vars = {};
+    try { vars = JSON.parse(n.payload || '{}'); } catch (e) { }
+    var tpl = B4_TEMPLATES[n.type];
+    if (!tpl) { n.status = 'נכשל'; changed = true; return; }
+    var ok = b4SendMailSafe(n.recipient, b4Fill(tpl.subject, vars), b4Fill(tpl.body, vars));
+    n.status = ok ? 'נשלח' : 'נכשל';
+    n.sent_at = ok ? nowTs() : '';
+    if (ok) sentCount++;
+    changed = true;
+  });
+  if (changed) writeTable('notifications', db.notifications);
+  return sentCount;
+}
+
+// תזכורת החזרה — יום (או כפי שהוגדר) לפני מועד ההחזרה, להזמנות השכרה פעילות
+function b4ScanReturnReminders(db) {
+  var daysBefore = Number(b2Setting(db, 'notify_return_days_before')) || 1;
+  var target = Utilities.formatDate(new Date(new Date().getTime() + daysBefore * 86400000), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  db.orders.filter(function (o) {
+    return o.type === 'השכרה' && o.end_date === target && ['מאושרת', 'סופקה'].indexOf(o.status) > -1;
+  }).forEach(function (o) {
+    var c = db.customers.find(function (x) { return x.id === o.customer_id; });
+    if (!c || !c.email || b4OptedOut(c)) return;
+    b4Queue(db, 'return_reminder', c.email, 'email', {
+      customer_name: c.name || '', order_number: o.order_number || o.id, end_date: o.end_date,
+      business_name: b2Setting(db, 'business_name') || 'MAPA-NOBLE'
+    }, 'RET-' + o.id + '-' + target);
+  });
+}
+
+// תזכורת חוב פתוח — הזמנות שעברו X ימים ממועד ההחזרה ועדיין לא שולמו במלואן (חוזרת אחת לשבוע לכל הזמנה)
+var B4_DEBT_STATUSES = ['ממתין לתשלום', 'ממתין לתשלום הפרש', 'ממתין לאישור חריגה', 'תשלום בהמשך', 'שולם חלקית', 'באשראי מסגרת'];
+function b4ScanDebtReminders(db) {
+  var afterDays = Number(b2Setting(db, 'notify_debt_after_days')) || 7;
+  var todayMs = new Date(today()).getTime();
+  db.orders.filter(function (o) {
+    if (B4_DEBT_STATUSES.indexOf(o.payment_status) === -1) return false;
+    if (!o.end_date) return false;
+    var days = Math.floor((todayMs - new Date(o.end_date).getTime()) / 86400000);
+    return days >= afterDays;
+  }).forEach(function (o) {
+    var c = db.customers.find(function (x) { return x.id === o.customer_id; });
+    if (!c || !c.email || b4OptedOut(c)) return;
+    var balAg = Math.max(0, b2OrderBalanceAg(db, o.id));
+    if (balAg <= 0) return;
+    var days = Math.floor((todayMs - new Date(o.end_date).getTime()) / 86400000);
+    var weekBucket = Math.floor(todayMs / (7 * 86400000)); // תזכורת אחת לשבוע, לא כל יום
+    b4Queue(db, 'debt_reminder', c.email, 'email', {
+      customer_name: c.name || '', amount: agIls(balAg).toFixed(2), days: days,
+      business_name: b2Setting(db, 'business_name') || 'MAPA-NOBLE'
+    }, 'DEBT-' + o.id + '-' + weekBucket);
+  });
+}
+
+// בטיחות-רשת: לקוחות שחורגים בפועל ממסגרת האשראי שלהם (מעבר להתראה בזמן-אמת שכבר קיימת ב-B2/B3) — פעם ביום למנהלים
+function b4ScanCreditOverlimit(db) {
+  var mgrEmails = db.employees.filter(function (e) { return e.role === 'מנהל' && e.active !== 'לא' && e.email; }).map(function (e) { return e.email; });
+  if (!mgrEmails.length) return;
+  db.customers.filter(function (c) { return c.active !== 'לא' && Number(c.credit_limit) > 0; }).forEach(function (c) {
+    var st = b2CreditStatusObj(db, c.id);
+    if (st.available_ag >= 0) return;
+    mgrEmails.forEach(function (em) {
+      b4Queue(db, 'credit_overlimit', em, 'email', {
+        customer_name: c.name || '', limit: agIls(st.limit_ag).toFixed(2), used: agIls(st.used_ag).toFixed(2),
+        over: agIls(-st.available_ag).toFixed(2)
+      }, 'CRO-' + c.id + '-' + today());
+    });
+  });
+}
+
+// מוכן לחיבור מ-B5 (Driver-Lite): לקרוא כשמשלוח עובר לסטטוס "בדרך"
+function b4NotifyOrderInTransit(db, orderId, etaText) {
+  var o = db.orders.find(function (x) { return x.id === orderId; });
+  if (!o) return;
+  var c = db.customers.find(function (x) { return x.id === o.customer_id; });
+  if (!c || !c.email || b4OptedOut(c)) return;
+  b4Queue(db, 'order_in_transit', c.email, 'email', {
+    customer_name: c.name || '', order_number: o.order_number || o.id, eta: etaText || 'בקרוב',
+    business_name: b2Setting(db, 'business_name') || 'MAPA-NOBLE'
+  }, 'TRN-' + orderId + '-' + nowTs());
+}
+
+// מוכן לחיבור מ-B5: לקרוא כשנהג מסיר כתובת ממסלול (עם פירוט חובה) — התראה מיידית להנהלה
+function b4NotifyAddressRemoved(db, driverName, orderId, reason) {
+  var mgrEmails = db.employees.filter(function (e) { return e.role === 'מנהל' && e.active !== 'לא' && e.email; }).map(function (e) { return e.email; });
+  mgrEmails.forEach(function (em) {
+    b4Queue(db, 'address_removed', em, 'email', {
+      driver_name: driverName || '', order_number: orderId || '', reason: reason || ''
+    }, 'ADR-' + orderId + '-' + nowTs());
+  });
+}
+
+// ליבת הסריקה: מייצר התראות לתור ואז שולח את כל מה שממתין. משמש גם את הטריגר היומי וגם את ההרצה הידנית.
+function b4RunScanAndSend(db) {
+  var beforeCount = db.notifications.length;
+  b4ScanReturnReminders(db);
+  b4ScanDebtReminders(db);
+  b4ScanCreditOverlimit(db);
+  var queued = db.notifications.length - beforeCount;
+  var sent = b4SendQueued(db);
+  return { queued: queued, sent: sent };
+}
+
+// טריגר יומי (מותקן ע"י b4SetupTriggers) — רץ מחוץ ל-doPost, ולכן נועל בעצמו
+function b4DailyScan() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var db = loadDb();
+    var r = b4RunScanAndSend(db);
+    audit(db, 'מערכת (trigger)', 'b4DailyScan', 'נוספו לתור: ' + r.queued + ' · נשלחו בהצלחה: ' + r.sent);
+  } finally { lock.releaseLock(); }
+}
+
+// פעולת מנהל מהממשק: הרצה ידנית לבדיקות, בלי להמתין לטריגר היומי (route() כבר מחזיק נעילה — אין נעילה כפולה כאן)
+function b4RunNow(db, user) {
+  var r = b4RunScanAndSend(db);
+  return {
+    ok: true, queued: r.queued, sent: r.sent,
+    auditNote: 'B4 הרצה ידנית · נוספו לתור: ' + r.queued + ' · נשלחו: ' + r.sent + ' · ע"י ' + (user || '')
+  };
+}
+
+// גיבוי יומי — עותק מלא של הגיליון לתיקיית גיבוי ב-Drive, עם rotate לפי backup_keep_count.
+// רץ מחוץ ל-doPost (טריגר) — אינו כותב לטבלאות עסקיות, לכן לא נדרשת LockService.
+function b4DailyBackup() {
+  var db = loadDb();
+  var keep = Number(b2Setting(db, 'backup_keep_count')) || 30;
+  var folderId = b2Setting(db, 'backup_folder_id');
+  var folder = null;
+  if (folderId) { try { folder = DriveApp.getFolderById(folderId); } catch (e) { folder = null; } }
+  if (!folder) {
+    folder = DriveApp.createFolder('MAPA-NOBLE Backups');
+    var rows = db.settings;
+    var s = rows.find(function (x) { return x.key === 'backup_folder_id'; });
+    if (s) s.value = folder.getId(); else rows.push({ key: 'backup_folder_id', value: folder.getId() });
+    writeTable('settings', rows);
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = 'MAPA-NOBLE Backup ' + today() + ' ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HHmm');
+  var file = DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+  // rotate: שמירת keep העותקים העדכניים ביותר בלבד
+  var files = [];
+  var it = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  while (it.hasNext()) files.push(it.next());
+  files.sort(function (a, b) { return b.getDateCreated().getTime() - a.getDateCreated().getTime(); });
+  for (var i = keep; i < files.length; i++) { try { files[i].setTrashed(true); } catch (e) { } }
+  audit(db, 'מערכת (trigger)', 'b4DailyBackup', 'גיבוי הושלם: ' + file.getId() + ' · סה"כ עותקים שמורים: ' + Math.min(files.length, keep));
+}
+
+// הרצה חד-פעמית מהעורך (Apps Script) — מתקינה 2 טריגרים יומיים. בטוח להריץ שוב, לא יוצר כפילויות.
+function b4SetupTriggers() {
+  var existing = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+  if (existing.indexOf('b4DailyScan') === -1) ScriptApp.newTrigger('b4DailyScan').timeBased().everyDays(1).atHour(8).create();
+  if (existing.indexOf('b4DailyBackup') === -1) ScriptApp.newTrigger('b4DailyBackup').timeBased().everyDays(1).atHour(3).create();
+  return 'טריגרים מותקנים: ' + ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).join(', ');
 }
