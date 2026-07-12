@@ -228,7 +228,7 @@ nav .nitem.on{color:#fff}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.1-B11a · 12.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.1-B11b · 12.07.2026</div>
   </div>
 </div>
 
@@ -1784,26 +1784,115 @@ async function saveCust(id){
   var r = id? await act('update',{table:'customers',id:id,row:row},'עודכן') : await act('create',{table:'customers',row:row},'הלקוח נוסף');
   if(r){ closeModal(); if(!id) openCust(r.row.id); }
 }
-function openCust(cid){
+/* B11b (E2): כרטיס לקוח מרוכז עם טאבים — כל הפעולות שהיו קודם עדיין קיימות, רק מסודרות */
+var CUST_TAB = 'details';
+function openCust(cid, tab){
+  if(tab) CUST_TAB = tab;
   var c = DB.customers.find(x=>x.id===cid); if(!c) return;
-  var contacts = DB.contacts.filter(x=>x.customer_id===cid);
-  var prices = DB.customerPrices ? DB.customerPrices.filter(x=>x.customer_id===cid) : (DB.customer_prices||[]).filter(x=>x.customer_id===cid);
   var primK = DB.contacts.find(x=>x.customer_id===cid&&x.is_primary==='כן')||DB.contacts.find(x=>x.customer_id===cid)||{};
+  var tabs = [['details','פרטים'],['orders','הזמנות'],['finance','חובות ותשלומים'],['docs','מסמכים'],['notes','הערות'],['timeline','ציר זמן']];
+  var body;
+  if(CUST_TAB==='orders') body = custTabOrders(cid);
+  else if(CUST_TAB==='finance') body = custTabFinance(cid);
+  else if(CUST_TAB==='docs') body = custTabDocs(cid);
+  else if(CUST_TAB==='notes') body = custTabNotes(cid);
+  else if(CUST_TAB==='timeline') body = custTabTimeline(cid);
+  else body = custTabDetails(cid);
   openModal('<h2>'+esc(c.name)+' '+contactBtns(c.phone||primK.phone, c.email||primK.email)+' <button class="btn ghost sm" onclick=\'custForm('+JSON.stringify(c).replace(/'/g,'&#39;')+')\'>ערוך</button></h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(c.type)+(c.payment_terms?' · '+esc(c.payment_terms):'')+(c.vat_id?' · ח.פ '+esc(c.vat_id):'')+
     (c.portal_code?' · קוד פורטל: <b>'+esc(c.portal_code)+'</b> <button class="btn ghost sm" onclick="copyPortalLink(\''+esc(c.portal_code)+'\')">העתק קישור הזמנה</button>':'')+'</div>'+
-    '<div class="card" style="margin:8px 0;padding:10px 12px">'+creditBarHtml(creditStatus(cid))+
-    (ROLE==='מנהל'?'<button class="btn ghost sm" onclick="creditLimitForm(\''+cid+'\')">מסגרת אשראי (מנהל)</button>':'')+'</div>'+
-    custDepositCard(cid)+
+    '<div class="tabs">'+tabs.map(function(t){return '<button class="'+(CUST_TAB===t[0]?'on':'')+'" onclick="openCust(\''+cid+'\',\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>'+
+    body);
+}
+/* טאב: פרטים — פרטי לקוח, אנשי קשר, מחירון מיוחד */
+function custTabDetails(cid){
+  var c = DB.customers.find(x=>x.id===cid)||{};
+  var contacts = DB.contacts.filter(x=>x.customer_id===cid);
+  var prices = DB.customerPrices ? DB.customerPrices.filter(x=>x.customer_id===cid) : (DB.customer_prices||[]).filter(x=>x.customer_id===cid);
+  return '<div class="frow"><label>כתובת</label><div>'+(c.address?esc(c.address):'<span class="muted">—</span>')+(c.city?' · '+esc(c.city):'')+'</div></div>'+
+    (c.deviation_pct?'<div class="frow"><label>אחוז סטייה בשקילה</label><div>'+esc(c.deviation_pct)+'%</div></div>':'')+
+    (c.price_per_kg?'<div class="frow"><label>מחיר לק"ג כביסה</label><div>'+ils(c.price_per_kg)+'</div></div>':'')+
     '<div class="section-title" style="margin-top:6px"><h3>אנשי קשר</h3><button class="btn ghost sm" onclick="contactForm(\''+cid+'\')">+ איש קשר</button></div>'+
     (contacts.length?'<table><tr><th>שם</th><th>תפקיד</th><th>טלפון</th><th>קשר</th><th>ראשי</th></tr>'+
       contacts.map(k=>'<tr><td>'+esc(k.name)+'</td><td>'+esc(k.role)+'</td><td>'+esc(k.phone)+'</td><td>'+contactBtns(k.phone,k.email)+'</td><td>'+(k.is_primary==='כן'?'★':'')+'</td></tr>').join('')+'</table>'
       :'<div class="muted">אין אנשי קשר</div>')+
     '<div class="section-title"><h3>מחירון מיוחד</h3><button class="btn ghost sm" onclick="priceForm(\''+cid+'\')">+ מחיר</button></div>'+
     (prices.length?'<table><tr><th>פריט</th><th>סוג</th><th>מחיר</th></tr>'+prices.map(p=>'<tr><td>'+esc(item(p.item_id))+'</td><td>'+esc(p.price_type)+'</td><td>'+ils(p.price)+'</td></tr>').join('')+'</table>':'<div class="muted">אין — יחול מחיר הפריט הרגיל</div>')+
-    cust360(cid)+
-    '<div style="margin-top:14px" class="row"><button class="btn ghost sm" onclick="printAgreement(\''+cid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> הסכם שירות</button><button class="btn ghost sm" onclick="printStatement(\''+cid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> דו"ח לקוח</button>'+
-    (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'customers\',\''+cid+'\',\'את הלקוח\')">מחק לקוח</button>':'')+notesBtn('customer',cid)+'</div>');
+    '<div style="margin-top:14px" class="row">'+tagBtn('customer',cid)+
+    (ROLE==='מנהל'?'<button class="btn danger sm" onclick="delRecord(\'customers\',\''+cid+'\',\'את הלקוח\')">מחק לקוח</button>':'')+'</div>'+
+    linksSectionOther(cid);
+}
+/* קישורים שאינם משימה/פגישה (הם מוצגים כבר בטאבים ייעודיים) */
+function linksSectionOther(cid){
+  var lOther = linksOf('customer',cid).filter(l=>l.otherType!=='task'&&l.otherType!=='meeting');
+  if(!lOther.length) return '';
+  return '<div style="margin-top:12px"><h3>עוד תיוגים</h3><div style="margin-top:6px;line-height:2.4">'+lOther.map(function(L){return linkChip(L,'customer',cid);}).join(' ')+'</div></div>';
+}
+/* טאב: הזמנות */
+function custTabOrders(cid){
+  var orders = (DB.orders||[]).filter(o=>o.customer_id===cid).slice().sort((a,b)=>a.start_date<b.start_date?1:-1);
+  var lTasks = linksOf('customer',cid).filter(l=>l.otherType==='task');
+  return '<div class="section-title"><h3>הזמנות ('+orders.length+')</h3></div>'+
+    (orders.length? orders.map(function(o){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openOrder(\''+o.id+'\')"><div class="grow">'+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date)+' ← '+esc(o.end_date)+' · '+esc(o.type)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>'; }).join('') : '<div class="muted">אין הזמנות עדיין</div>')+
+    '<div class="section-title" style="margin-top:10px"><h3>משימות מקושרות ('+lTasks.length+')</h3></div>'+
+    (lTasks.length? lTasks.map(function(L){ var t=(DB.tasks||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+L.otherId+'\')"><div class="grow">'+esc(t.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status||'')+'</span></div>'; }).join('') : '<div class="muted">אין משימות מקושרות</div>');
+}
+/* טאב: חובות ותשלומים */
+function custTabFinance(cid){
+  var invs = (DB.invoices||[]).filter(v=>v.customer_id===cid).slice().reverse();
+  var bal = custBalance(cid);
+  var pays = custPayments(cid);
+  return '<div class="card" style="margin:0 0 10px;padding:10px 12px">'+creditBarHtml(creditStatus(cid))+
+    (ROLE==='מנהל'?'<button class="btn ghost sm" onclick="creditLimitForm(\''+cid+'\')">מסגרת אשראי (מנהל)</button>':'')+'</div>'+
+    custDepositCard(cid)+
+    '<div class="section-title" style="margin-top:10px"><h3>חשבוניות ('+invs.length+') · יתרה לגבייה: '+ils(bal)+'</h3></div>'+
+    (invs.length? invs.map(function(v){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="printInvoice(\''+v.id+'\')"><div class="grow">חשבונית '+esc(v.number)+' · '+esc(v.date)+'</div><div><b>'+ils(v.total)+'</b></div><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></div>'; }).join('') : '<div class="muted">אין חשבוניות עדיין</div>')+
+    '<div class="section-title" style="margin-top:10px"><h3>תשלומים שהתקבלו ('+pays.length+')</h3></div>'+
+    (pays.length? '<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th></tr>'+
+      pays.map(function(p){ return '<tr><td><b style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+esc(p.receipt_number||'')+'</b></td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+'</td></tr>'; }).join('')+'</table>'
+      : '<div class="muted">אין תשלומים עדיין</div>');
+}
+/* טאב: מסמכים */
+function custTabDocs(cid){
+  var invs = (DB.invoices||[]).filter(v=>v.customer_id===cid).slice().reverse();
+  var pays = custPayments(cid);
+  return '<div class="row" style="margin-bottom:12px">'+
+    '<button class="btn ghost sm" onclick="printAgreement(\''+cid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> הסכם שירות</button>'+
+    '<button class="btn ghost sm" onclick="printStatement(\''+cid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> דו"ח לקוח</button></div>'+
+    '<div class="section-title"><h3>חשבוניות ('+invs.length+')</h3></div>'+
+    (invs.length? invs.map(function(v){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="printInvoice(\''+v.id+'\')"><div class="grow">חשבונית '+esc(v.number)+' · '+esc(v.date)+'</div><div><b>'+ils(v.total)+'</b></div><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></div>'; }).join('') : '<div class="muted">אין חשבוניות עדיין</div>')+
+    '<div class="section-title" style="margin-top:10px"><h3>קבלות ('+pays.length+')</h3></div>'+
+    (pays.length? pays.map(function(p){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openReceipt(\''+p.id+'\')"><div class="grow">קבלה '+esc(p.receipt_number||'')+' · '+esc(p.date)+'</div><b>'+ils(p.amount)+'</b></div>'; }).join('') : '<div class="muted">אין קבלות עדיין</div>');
+}
+/* טאב: הערות */
+function custTabNotes(cid){
+  var notes = (DB.notes||[]).filter(n=>n.entity_type==='customer'&&String(n.entity_id)===String(cid)).sort((a,b)=>a.ts<b.ts?1:-1);
+  return '<div class="section-title"><h3>תרשומות ('+notes.length+')</h3><button class="btn ghost sm" onclick="notesModal(\'customer\',\''+cid+'\')">+ תרשומת / הצג הכל</button></div>'+
+    (notes.length? notes.slice(0,20).map(function(n){ return '<div id="note-'+n.id+'" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="notesModal(\'customer\',\''+cid+'\')"><span class="muted">'+esc(fmtTs(n.ts))+' · '+esc(n.user)+':</span> '+esc(String(n.text).substring(0,110))+'</div>'; }).join('') : '<div class="muted">אין תרשומות עדיין</div>');
+}
+/* טאב: ציר זמן — איחוד קריאה של יומן (פגישות מקושרות), הערות ותשלומים לפי הלקוח */
+function custTabTimeline(cid){
+  var items = [];
+  (DB.notes||[]).filter(n=>n.entity_type==='customer'&&String(n.entity_id)===String(cid)).forEach(function(n){
+    items.push({ts:n.ts||'', type:'תרשומת', text:esc(n.user)+': '+esc(String(n.text).substring(0,90)), onclick:"notesModal('customer','"+cid+"')"});
+  });
+  linksOf('customer',cid).filter(l=>l.otherType==='meeting').forEach(function(L){
+    var m=(DB.meetings||[]).find(x=>x.id===L.otherId)||{};
+    items.push({ts:(m.date||'')+' 00:00', type:'פגישה', text:esc(m.title||''), onclick:"openMeeting('"+L.otherId+"')"});
+  });
+  custPayments(cid).forEach(function(p){
+    items.push({ts:(p.date||'')+' 00:00', type:'תשלום', text:ils(p.amount)+' · '+esc(p.method||''), onclick:"openReceipt('"+p.id+"')"});
+  });
+  items.sort(function(a,b){ return String(b.ts||'').localeCompare(String(a.ts||'')); });
+  return '<div class="section-title"><h3>ציר זמן ('+items.length+')</h3></div>'+
+    (items.length? items.slice(0,50).map(function(it){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="'+it.onclick+'"><div class="grow"><span class="chip">'+esc(it.type)+'</span> '+it.text+'</div><span class="muted">'+esc(fmtTs(it.ts))+'</span></div>'; }).join('') : '<div class="muted">אין פעילות עדיין</div>');
+}
+/* עזר: כל התשלומים ששייכים ללקוח — דרך הזמנותיו או חשבוניותיו */
+function custPayments(cid){
+  var oids = {}; DB.orders.filter(o=>o.customer_id===cid).forEach(function(o){ oids[o.id]=1; });
+  var vids = {}; DB.invoices.filter(v=>v.customer_id===cid).forEach(function(v){ vids[v.id]=1; });
+  return (DB.payments||[]).filter(function(p){ return (p.order_id && oids[p.order_id]) || (p.invoice_id && vids[p.invoice_id]); })
+    .slice().sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
 }
 function contactForm(cid){
   openModal('<h2>איש קשר חדש</h2>'+
@@ -3347,32 +3436,6 @@ async function syncProtocolMentions(mid, text){
       try{ await act('create',{table:'links',row:{from_type:'meeting',from_id:mid,to_type:e.type,to_id:e.id,note:'תויג בפרוטוקול'}}); }catch(err){}
     }
   }catch(err){}
-}
-
-// תצוגת 360° — כל מה שקשור ללקוח, במקום אחד
-function cust360(cid){
-  function grp(title){ return '<div style="font-weight:700;color:var(--navy);margin:12px 0 4px">'+title+'</div>'; }
-  function rowsOf(arr, fn){ return arr.length? arr.map(fn).join('') : '<div class="muted">אין עדיין</div>'; }
-  var orders = (DB.orders||[]).filter(o=>o.customer_id===cid).slice().sort((a,b)=>a.start_date<b.start_date?1:-1);
-  var linked = linksOf('customer',cid);
-  var lTasks = linked.filter(l=>l.otherType==='task');
-  var lMeets = linked.filter(l=>l.otherType==='meeting');
-  var lOther = linked.filter(l=>l.otherType!=='task'&&l.otherType!=='meeting');
-  var notes = (DB.notes||[]).filter(n=>n.entity_type==='customer'&&String(n.entity_id)===String(cid)).sort((a,b)=>a.ts<b.ts?1:-1);
-  var invs = (DB.invoices||[]).filter(v=>v.customer_id===cid).slice().reverse();
-  var bal = custBalance(cid);
-  return '<div class="section-title" style="margin-top:14px"><h3>כל מה שקשור ללקוח</h3>'+tagBtn('customer',cid)+'</div>'+
-    grp('הזמנות ('+orders.length+')')+
-    rowsOf(orders, function(o){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openOrder(\''+o.id+'\')"><div class="grow">'+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date)+' ← '+esc(o.end_date)+' · '+esc(o.type)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>'; })+
-    grp('משימות מקושרות ('+lTasks.length+')')+
-    rowsOf(lTasks, function(L){ var t=(DB.tasks||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+L.otherId+'\')"><div class="grow">'+esc(t.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status||'')+'</span></div>'; })+
-    grp('פגישות מקושרות ('+lMeets.length+')')+
-    rowsOf(lMeets, function(L){ var m=(DB.meetings||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openMeeting(\''+L.otherId+'\')"><div class="grow">'+esc(m.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="muted">'+esc(m.date||'')+'</span></div>'; })+
-    grp('תרשומות ('+notes.length+')')+
-    rowsOf(notes.slice(0,8), function(n){ return '<div id="note-'+n.id+'" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="notesModal(\'customer\',\''+cid+'\')"><span class="muted">'+esc(fmtTs(n.ts))+' · '+esc(n.user)+':</span> '+esc(String(n.text).substring(0,90))+'</div>'; })+
-    grp('חשבוניות ('+invs.length+') · יתרה לגבייה: '+ils(bal))+
-    rowsOf(invs, function(v){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="printInvoice(\''+v.id+'\')"><div class="grow">חשבונית '+esc(v.number)+' · '+esc(v.date)+'</div><div><b>'+ils(v.total)+'</b></div><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></div>'; })+
-    (lOther.length? grp('עוד תיוגים')+'<div style="line-height:2.4">'+lOther.map(function(L){return linkChip(L,'customer',cid);}).join(' ')+'</div>' : '');
 }
 
 /* ================= תרשומות ================= */
