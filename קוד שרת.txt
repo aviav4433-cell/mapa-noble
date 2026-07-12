@@ -420,7 +420,9 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   // B9: דוחות ניהול — קריאה בלבד (E3 חובות לפי גיל, E4 דשבורד חריגים)
   'b9AgingReport', 'b9ExceptionsDashboard',
   // B10: מרכז אישורים — קריאה בלבד (E5)
-  'b10ApprovalsInbox'];
+  'b10ApprovalsInbox',
+  // B14: לוח בקרה עסקי — קריאה בלבד (Phase 2/2.1)
+  'b14BiDashboard'];
 
 function route(action, p, user) {
   var db = loadDb();
@@ -1506,6 +1508,9 @@ function handle(action, p, db, user) {
     case 'b10ApprovalsInbox': return b10ApprovalsInbox(db);
     case 'b10RejectGuarantee': return b10RejectGuarantee(db, p, user);
     case 'b10AckRemoval': return b10AckRemoval(db, p, user);
+
+    // ---- B14: לוח בקרה עסקי (BI Dashboard, Phase 2 סעיף 2.1) — קריאה בלבד ----
+    case 'b14BiDashboard': return b14BiDashboard(db);
 
     default: return { ok: false, error: 'פעולה לא מוכרת: ' + action };
   }
@@ -3503,4 +3508,136 @@ function b10AckRemoval(db, p, user) {
   dlv.removal_ack = 'כן';
   writeTable('deliveries', db.deliveries);
   return { ok: true, delivery: dlv, auditNote: 'B10 טופל: הסרת כתובת · משלוח ' + dlv.id + ' · ע"י ' + (user || '') };
+}
+
+// ============================================================
+//  B14: לוח בקרה עסקי (BI Dashboard) — Phase 2, סעיף 2.1 במסמך האב
+//  שכבת קריאה בלבד: אין כתיבה, אין שינוי לוגיקה עסקית קיימת.
+//  משתמש בפונקציות עזר קיימות מ-B2/B9 (b2CreditStatusObj, b2OrderBalanceAg, b2InvoiceBalanceAg, totalStock, inLaundryQty).
+//  מחזיר בקריאה אחת: הכנסות (חודש/לקוח/סוג), לקוחות בסיכון, ניצולת מלאי, תחזית תזרים מזומנים.
+// ============================================================
+
+// הכנסות — 12 חודשים אחרונים, לפי חודש / לפי לקוח (Top 12) / לפי סוג הזמנה
+function b14Revenue(db) {
+  var now = new Date(), months = [];
+  for (var i = 11; i >= 0; i--) {
+    var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2));
+  }
+  var activeInv = db.invoices.filter(function (v) { return v.status !== 'בוטלה'; });
+
+  var byMonth = months.map(function (mk) {
+    var amt = activeInv.filter(function (v) { return String(v.date || '').slice(0, 7) === mk; })
+      .reduce(function (s, v) { return s + Number(v.subtotal || 0); }, 0);
+    return { month: mk, amount: Math.round(amt * 100) / 100 };
+  });
+
+  var custTotals = {};
+  activeInv.forEach(function (v) {
+    if (!v.customer_id) return;
+    custTotals[v.customer_id] = (custTotals[v.customer_id] || 0) + Number(v.subtotal || 0);
+  });
+  var byCustomer = Object.keys(custTotals).map(function (cid) {
+    var c = db.customers.find(function (x) { return x.id === cid; });
+    return { customer_id: cid, customer: c ? c.name : cid, amount: Math.round(custTotals[cid] * 100) / 100 };
+  }).sort(function (a, b) { return b.amount - a.amount; }).slice(0, 12);
+
+  var typeTotals = { 'השכרה': 0, 'כביסה': 0 };
+  activeInv.forEach(function (v) {
+    var t = 'כביסה';
+    if (v.order_id) {
+      var o = db.orders.find(function (x) { return x.id === v.order_id; });
+      t = (o && o.type === 'השכרה') ? 'השכרה' : 'כביסה';
+    }
+    typeTotals[t] = (typeTotals[t] || 0) + Number(v.subtotal || 0);
+  });
+  var byType = Object.keys(typeTotals).map(function (t) { return { type: t, amount: Math.round(typeTotals[t] * 100) / 100 }; });
+
+  return { byMonth: byMonth, byCustomer: byCustomer, byType: byType };
+}
+
+// לקוחות בסיכון — ניצול אשראי 70%+ (צבעי סטטוס קיימים: כתום 70-90, אדום 90+) וגם חוב שעבר 90 יום מהמסמך AR Aging
+function b14AtRisk(db) {
+  var byCustomer = {};
+  function ensure(cid, name) {
+    if (!byCustomer[cid]) byCustomer[cid] = { customer_id: cid, customer: name, pct: 0, used_ag: 0, limit_ag: 0, overdue90_ag: 0, reasons: [] };
+    return byCustomer[cid];
+  }
+  db.customers.filter(function (c) { return c.active !== 'לא' && Number(c.credit_limit) > 0; }).forEach(function (c) {
+    var st = b2CreditStatusObj(db, c.id);
+    if (st.pct >= 70) {
+      var row = ensure(c.id, c.name);
+      row.pct = st.pct; row.used_ag = st.used_ag; row.limit_ag = st.limit_ag;
+      row.reasons.push(st.pct >= 90 ? 'ניצול אשראי ' + st.pct + '%' : 'ניצול אשראי ' + st.pct + '% (מתקרב)');
+    }
+  });
+  var aging = b9AgingReport(db);
+  aging.rows.filter(function (r) { return r.d90_ag > 0; }).forEach(function (r) {
+    var row = ensure(r.customer_id, r.customer);
+    row.overdue90_ag = r.d90_ag;
+    row.reasons.push('חוב מעל 90 יום: ' + agIls(r.d90_ag) + ' ₪');
+  });
+  var rows = Object.keys(byCustomer).map(function (cid) { return byCustomer[cid]; })
+    .sort(function (a, b) { return (b.pct + (b.overdue90_ag > 0 ? 50 : 0)) - (a.pct + (a.overdue90_ag > 0 ? 50 : 0)); });
+  return rows;
+}
+
+// ניצולת מלאי — לכל פריט: כמה יחידות "בשימוש" עכשיו (בכביסה + מושכר כרגע) מתוך המלאי הכולל
+function b14Inventory(db) {
+  var t = today();
+  var rows = db.items.filter(function (i) { return i.active !== 'לא'; }).map(function (i) {
+    var total = totalStock(db, i.id);
+    if (!(total > 0)) return null;
+    var rentedNow = reservedQty(db, i.id, t, t);
+    var inWash = inLaundryQty(db, i.id);
+    var inUse = Math.min(total, rentedNow + inWash);
+    return { item_id: i.id, name: i.name, category: i.category || '', total: total, in_use: inUse, pct: Math.round(inUse * 100 / total) };
+  }).filter(function (x) { return x; }).sort(function (a, b) { return b.pct - a.pct; });
+  var avgPct = rows.length ? Math.round(rows.reduce(function (s, r) { return s + r.pct; }, 0) / rows.length) : 0;
+  return { items: rows, avgPct: avgPct };
+}
+
+// תחזית תזרים מזומנים — יתרות פתוחות מקובצות לפי חלון גבייה חזוי: איחור / עד 30 / 31-60 / 61-90 / מעל 90 יום קדימה
+// הנחת עבודה (מתועדת, לא מוגדרת רשמית עדיין): מועד גבייה חזוי = תאריך סיום הזמנה (השכרה), או תאריך חשבונית + 30 יום (מכבסה ללא הזמנה, ברירת מחדל payment_terms)
+function b14Cashflow(db) {
+  var t = today(), rows = [];
+  db.orders.filter(function (o) { return ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1; }).forEach(function (o) {
+    var balAg = b2OrderBalanceAg(db, o.id);
+    if (balAg <= 0) return;
+    var c = db.customers.find(function (x) { return x.id === o.customer_id; });
+    rows.push({ kind: 'order', id: o.id, customer: c ? c.name : '', amount_ag: balAg, expected_date: o.end_date || o.start_date || t });
+  });
+  db.invoices.filter(function (v) { return !v.order_id && v.status !== 'בוטלה'; }).forEach(function (v) {
+    var balAg = b2InvoiceBalanceAg(db, v);
+    if (balAg <= 0) return;
+    var c = db.customers.find(function (x) { return x.id === v.customer_id; });
+    var due = new Date(v.date); due.setDate(due.getDate() + 30);
+    rows.push({ kind: 'invoice', id: v.id, customer: c ? c.name : '', amount_ag: balAg, expected_date: Utilities.formatDate(due, Session.getScriptTimeZone(), 'yyyy-MM-dd') });
+  });
+  var tMs = new Date(t).getTime();
+  function bucketOf(dateStr) {
+    var days = Math.floor((new Date(dateStr).getTime() - tMs) / 86400000);
+    if (days < 0) return 'overdue';
+    if (days <= 30) return 'in_30';
+    if (days <= 60) return 'in_60';
+    if (days <= 90) return 'in_90';
+    return 'beyond_90';
+  }
+  var buckets = { overdue_ag: 0, in_30_ag: 0, in_60_ag: 0, in_90_ag: 0, beyond_90_ag: 0 };
+  rows.forEach(function (r) {
+    r.bucket = bucketOf(r.expected_date);
+    buckets[r.bucket + '_ag'] += r.amount_ag;
+  });
+  rows.sort(function (a, b) { return String(a.expected_date) < String(b.expected_date) ? -1 : 1; });
+  return { buckets: buckets, rows: rows.slice(0, 200) };
+}
+
+function b14BiDashboard(db) {
+  return {
+    ok: true,
+    revenue: b14Revenue(db),
+    at_risk: b14AtRisk(db),
+    inventory: b14Inventory(db),
+    cashflow: b14Cashflow(db)
+  };
 }
