@@ -128,6 +128,15 @@ tr:hover td{background:#F8FAFC}
 /* ===== B10/E11: הצעת כפילות בהקמת לקוח ===== */
 .dupe-hint{background:#FFF7ED;border:1px solid #FED7AA;border-radius:6px;padding:7px 10px;font-size:12.5px;color:#9A5B13;margin-top:-6px;margin-bottom:10px}
 .dupe-hint b{cursor:pointer;text-decoration:underline}
+/* ===== B11a/E1: שרשרת מסמכים — פס עליון בכל רשומה ===== */
+.doc-chain{display:flex;flex-wrap:wrap;align-items:center;gap:0;margin-bottom:12px}
+.dc-node{font-size:12.5px;font-weight:600;padding:6px 11px;border-radius:6px;white-space:nowrap}
+.dc-node.dc-filled{background:var(--navy2);color:#fff;cursor:pointer}
+.dc-node.dc-filled:hover{background:var(--navy)}
+.dc-node.dc-active{background:var(--teal);box-shadow:0 0 0 2px var(--teal-d) inset}
+.dc-node.dc-empty{background:#EEF1F5;color:var(--muted);cursor:default}
+.dc-badge{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:10.5px;margin-inline-start:3px}
+.dc-sep{color:var(--line);font-size:15px;margin:0 4px;user-select:none}
 @media(min-width:900px){
   nav{position:fixed;top:54px;right:0;bottom:0;width:228px;flex-direction:column;border-bottom:none;overflow-y:auto;overflow-x:hidden;padding-top:10px}
   main{margin-right:228px;max-width:none;padding:26px 32px;padding-bottom:52px}
@@ -219,7 +228,7 @@ nav .nitem.on{color:#fff}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.1-B10 · 12.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.1-B11a · 12.07.2026</div>
   </div>
 </div>
 
@@ -1203,6 +1212,63 @@ async function createOrder(isQuote){
     start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},'נשמר — הוסף פריטים');
   if(r){ closeModal(); openOrder(r.row.id); }
 }
+/* ===== B11a/E1: שרשרת מסמכים — קריאה ותצוגה בלבד, מבוססת על DB שכבר נטען ===== */
+function docChainHtml(oid, active){
+  var o = DB.orders.find(x=>x.id===oid); if(!o) return '';
+  var supplies = DB.deliveries.filter(d=>d.order_id===oid && d.kind==='אספקה').slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  var returns  = DB.deliveries.filter(d=>d.order_id===oid && d.kind==='איסוף').slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
+  var pays = DB.payments.filter(p=>p.order_id===oid || (inv && p.invoice_id===inv.id));
+  function node(key, label, list, openFn){
+    if(!list || !list.length) return '<div class="dc-node dc-empty">'+esc(label)+'</div>';
+    return '<div class="dc-node dc-filled'+(active===key?' dc-active':'')+'" onclick="'+openFn+'(\''+list[0].id+'\')">'+esc(label)+(list.length>1?' <span class="dc-badge">×'+list.length+'</span>':'')+'</div>';
+  }
+  var orderNode = '<div class="dc-node dc-filled'+(active==='order'?' dc-active':'')+'" onclick="openOrder(\''+oid+'\')">הזמנה'+(o.order_number?' #'+esc(o.order_number):'')+'</div>';
+  var invNode = inv? '<div class="dc-node dc-filled'+(active==='invoice'?' dc-active':'')+'" onclick="openInvoice(\''+inv.id+'\')">חשבונית '+esc(inv.number)+'</div>' : '<div class="dc-node dc-empty">חשבונית</div>';
+  var sortedPays = pays.slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  var recNode = sortedPays.length? '<div class="dc-node dc-filled'+(active==='receipt'?' dc-active':'')+'" onclick="openReceipt(\''+sortedPays[0].id+'\')">קבלה'+(sortedPays.length>1?' <span class="dc-badge">×'+sortedPays.length+'</span>':'')+'</div>' : '<div class="dc-node dc-empty">קבלה</div>';
+  return '<div class="doc-chain">'+orderNode+'<span class="dc-sep">·</span>'+
+    node('delivery','משלוח',supplies,'openDelivery')+'<span class="dc-sep">·</span>'+
+    node('return','החזרה',returns,'openDelivery')+'<span class="dc-sep">·</span>'+
+    invNode+'<span class="dc-sep">·</span>'+recNode+'</div>';
+}
+function docChainHtmlLaundry(v, active){
+  var pays = DB.payments.filter(p=>p.invoice_id===v.id).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  var recNode = pays.length? '<div class="dc-node dc-filled'+(active==='receipt'?' dc-active':'')+'" onclick="openReceipt(\''+pays[0].id+'\')">קבלה'+(pays.length>1?' <span class="dc-badge">×'+pays.length+'</span>':'')+'</div>' : '<div class="dc-node dc-empty">קבלה</div>';
+  return '<div class="doc-chain"><div class="dc-node dc-empty">קליטות מכבסה (ללא הזמנה)</div><span class="dc-sep">·</span>'+
+    '<div class="dc-node dc-filled'+(active==='invoice'?' dc-active':'')+' dc-active" onclick="openInvoice(\''+v.id+'\')">חשבונית '+esc(v.number)+'</div><span class="dc-sep">·</span>'+recNode+'</div>';
+}
+function openInvoice(vid){
+  var v = DB.invoices.find(x=>x.id===vid); if(!v) return;
+  var chain = v.order_id? docChainHtml(v.order_id,'invoice') : docChainHtmlLaundry(v,'invoice');
+  var pays = DB.payments.filter(p=>p.invoice_id===v.id || (v.order_id && p.order_id===v.order_id));
+  openModal('<h2>חשבונית '+esc(v.number)+' <span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></h2>'+
+    chain+
+    '<div class="doc-meta" style="margin-bottom:10px">'+esc(v.type||'חשבונית עסקה')+' · '+esc(v.date)+' · '+esc(cust(v.customer_id))+(v.allocation_number?' · הקצ׳ '+esc(v.allocation_number):'')+'</div>'+
+    '<p class="tot">סכום: '+ils(v.subtotal)+' · מע"מ: '+ils(v.vat)+' · <u>סה"כ: '+ils(v.total)+'</u></p>'+
+    (v.draft_note && String(v.draft_note).trim()?'<div class="card" style="background:#FFF7E6;border-color:#E8A33D;padding:8px 10px;font-size:12.5px;margin:8px 0">⚠ '+esc(v.draft_note)+'</div>':'')+
+    (pays.length?'<h3 style="margin-top:12px">תשלומים על חשבונית זו</h3><table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th></tr>'+
+      pays.map(p=>'<tr><td><span style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+esc(p.receipt_number)+'</span></td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td></tr>').join('')+'</table>':'')+
+    '<div class="row" style="margin-top:14px">'+
+      '<button class="btn ghost sm" onclick="printInvoice(\''+v.id+'\')">הדפס / PDF</button>'+
+      (v.pdf_url?' <a class="btn ghost sm" href="'+esc(v.pdf_url)+'" target="_blank">פתח ב-Drive</a>':'')+
+    '</div>');
+}
+function openReceipt(pid){
+  var p = DB.payments.find(x=>x.id===pid); if(!p) return;
+  var o = p.order_id? DB.orders.find(x=>x.id===p.order_id) : null;
+  var inv = p.invoice_id? DB.invoices.find(x=>x.id===p.invoice_id) : null;
+  var chain = o? docChainHtml(o.id,'receipt') : (inv? docChainHtmlLaundry(inv,'receipt') : '');
+  var cid = o? o.customer_id : (inv? inv.customer_id : '');
+  openModal('<h2>קבלה '+esc(p.receipt_number)+'</h2>'+
+    chain+
+    '<div class="doc-meta" style="margin-bottom:10px">'+esc(p.date)+' · '+esc(cust(cid))+' · '+esc(p.method)+(p.type?' · '+esc(p.type):'')+'</div>'+
+    '<p class="tot">סכום: '+ils(p.amount)+'</p>'+
+    '<div class="row" style="margin-top:14px">'+
+      '<button class="btn ghost sm" onclick="printReceipt(\''+p.id+'\')">הדפס / PDF</button>'+
+      (p.pdf_url?' <a class="btn ghost sm" href="'+esc(p.pdf_url)+'" target="_blank">פתח ב-Drive</a>':'')+
+    '</div>');
+}
 function openOrder(oid){
   var o = DB.orders.find(x=>x.id===oid); if(!o) return;
   var lines = DB.orderLines.filter(l=>l.order_id===oid);
@@ -1218,6 +1284,7 @@ function openOrder(oid){
   if(o.status==='סופקה') actions = '<button class="btn" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>');
   if((o.status==='הוחזרה'||o.status==='הושלמה')&&!inv) actions = '<button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
+    docChainHtml(oid,'order')+
     '<div class="muted" style="margin-bottom:12px">'+(o.order_number?'הזמנה #'+esc(o.order_number)+' · ':'')+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(DB.warehouses.length?' · מחסן: '+esc(whn(o.warehouse_id)):'')+(o.notes?' · '+esc(o.notes):'')+'</div>'+
     '<h3>פריטים</h3><table><tr><th>פריט</th><th>כמות</th><th>מחיר</th><th>הוחזר</th></tr>'+
     lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
@@ -1238,8 +1305,8 @@ function openOrder(oid){
       '</div></div>'
     :'')+
     creditBarHtml(creditStatus(o.customer_id))+
-    (pays.length?'<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>מסמך</th></tr>'+pays.map(p=>'<tr><td>'+p.receipt_number+'</td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+(p.type?' · '+esc(p.type):'')+'</td><td>'+(p.pdf_url?'<a href="'+esc(p.pdf_url)+'" target="_blank">קבלה</a>':'')+'</td></tr>').join('')+'</table>':'')+
-    (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
+    (pays.length?'<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>מסמך</th></tr>'+pays.map(p=>'<tr><td><span style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+esc(p.receipt_number)+'</span></td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+(p.type?' · '+esc(p.type):'')+'</td><td>'+(p.pdf_url?'<a href="'+esc(p.pdf_url)+'" target="_blank">קבלה</a>':'')+'</td></tr>').join('')+'</table>':'')+
+    (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0;cursor:pointer" onclick="openDelivery(\''+d.id+'\')"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
     linksSection('order',oid)+
     '<div style="margin-top:16px" class="row">'+actions+' <button class="btn ghost sm" onclick="printOrderForm(\''+oid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> '+(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה')+'</button> '+notesBtn('order',oid)+' '+tagBtn('order',oid)+'</div>');
 }
@@ -1477,7 +1544,6 @@ function openDelivery(did){
   var d = DB.deliveries.find(x=>x.id===did); if(!d) return;
   var o = DB.orders.find(x=>x.id===d.order_id)||{};
   var lines = DB.orderLines.filter(l=>l.order_id===d.order_id);
-  var inv = DB.invoices ? DB.invoices.find(v=>v.order_id===d.order_id && v.status!=='בוטלה') : null;
   var drv = d.driver? DB.employees.find(e=>e.name===d.driver) : null;
   var isReturn = d.kind==='איסוף';
   var actions = '';
@@ -1486,13 +1552,13 @@ function openDelivery(did){
   if(isReturn && d.status!=='בוצע') actions += '<button class="btn ghost sm" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button> ';
   actions += d.photo_url? '<a class="btn ghost sm" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום מסירה</a>' : '<button class="btn ghost sm" onclick="deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>';
   openModal('<h2>'+(isReturn?'איסוף (החזרה)':'משלוח — '+esc(d.kind))+' <span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></h2>'+
+    (d.order_id?docChainHtml(d.order_id, isReturn?'return':'delivery'):'')+
     '<div class="doc-meta" style="margin-bottom:10px">תאריך: '+esc(d.date||'—')+(d.note_number?' · תעודה מס\' '+esc(d.note_number):'')+'</div>'+
     '<div style="line-height:2;margin-bottom:10px">'+
     '<b>לקוח:</b> <span class="chip" style="background:var(--navy2);cursor:pointer" title="פתח את כרטיס הלקוח" onclick="openCust(\''+esc(o.customer_id||'')+'\')">'+esc(cust(o.customer_id))+' ↗</span>'+
     (o.id?'<br><b>הזמנה:</b> <span class="chip" style="background:var(--navy2);cursor:pointer" title="פתח את ההזמנה" onclick="openOrder(\''+o.id+'\')">'+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date||'')+' — '+esc(o.end_date||'')+' ↗</span>':'')+
     '<br><b>נהג:</b> '+(d.driver?esc(d.driver)+' '+(drv?contactBtns(drv.phone,''):''):'<span style="color:var(--danger)">טרם שובץ</span>')+
     (d.vehicle_id?' · <b>רכב:</b> '+esc(vehName(d.vehicle_id)):'')+
-    (inv?'<br><b>חשבונית:</b> <span class="chip" style="background:var(--navy2);cursor:pointer" onclick="printInvoice(\''+inv.id+'\')">'+esc(inv.number)+' · '+ils(inv.total)+' ↗</span>':'')+
     '</div>'+
     (lines.length?'<h3>פריטים בהזמנה</h3><table><tr><th>פריט</th><th>כמות</th></tr>'+
       lines.map(function(l){ return '<tr><td>'+esc(item(l.item_id))+'</td><td>'+esc(l.qty)+'</td></tr>'; }).join('')+'</table>':'<div class="muted">אין שורות פריטים להזמנה</div>')+
@@ -1539,7 +1605,7 @@ function rFinance(){
         var hasAlloc = v.allocation_number && String(v.allocation_number).trim();
         var printIcon = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>';
         return '<tr>'+
-          '<td><b>'+v.number+'</b>'+(hasDraft?'<br><span style="color:#E8A33D;font-size:10px">⚠ טיוטה</span>':'')+'</td>'+
+          '<td><b style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openInvoice(\''+v.id+'\')">'+v.number+'</b>'+(hasDraft?'<br><span style="color:#E8A33D;font-size:10px">⚠ טיוטה</span>':'')+'</td>'+
           '<td style="font-size:12px">'+(v.type?esc(v.type):'חשבונית עסקה')+(v.order_id?'':' <span class="chip" style="font-size:10px">מכבסה</span>')+
             (hasAlloc?'<br><span class="muted" style="font-size:10px">הקצ׳ '+esc(v.allocation_number)+'</span>':'')+'</td>'+
           '<td>'+esc(v.date)+'</td>'+
@@ -1560,7 +1626,7 @@ function rFinance(){
     html += finLaundryHtml(); // NC3: חיובים פתוחים ⇒ חשבונית מרוכזת
   } else if(FIN_TAB==='receipts'){
     html += DB.payments.length? '<div class="card"><table><tr><th>קבלה</th><th>תאריך</th><th>לקוח</th><th>סכום</th><th>אמצעי</th></tr>'+
-      DB.payments.slice().reverse().map(p=>{var o=DB.orders.find(x=>x.id===p.order_id); var vI=!o&&p.invoice_id?DB.invoices.find(x=>x.id===p.invoice_id):null; var pcid=o?o.customer_id:(vI?vI.customer_id:'');return '<tr><td><b>'+p.receipt_number+'</b></td><td>'+esc(p.date)+'</td><td>'+esc(cust(pcid))+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+' <button class="btn ghost sm" onclick="printReceipt(\''+p.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></td></tr>';}).join('')+'</table></div>' : '<div class="card empty">אין קבלות עדיין</div>';
+      DB.payments.slice().reverse().map(p=>{var o=DB.orders.find(x=>x.id===p.order_id); var vI=!o&&p.invoice_id?DB.invoices.find(x=>x.id===p.invoice_id):null; var pcid=o?o.customer_id:(vI?vI.customer_id:'');return '<tr><td><b style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+p.receipt_number+'</b></td><td>'+esc(p.date)+'</td><td>'+esc(cust(pcid))+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+' <button class="btn ghost sm" onclick="printReceipt(\''+p.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></td></tr>';}).join('')+'</table></div>' : '<div class="card empty">אין קבלות עדיין</div>';
   } else {
     html += DB.expenses.length? '<div class="card"><table><tr><th>תאריך</th><th>קטגוריה</th><th>ספק</th><th>סכום</th></tr>'+
       DB.expenses.slice().reverse().map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.category)+'</td><td>'+esc(supp(x.supplier_id))+'</td><td>'+ils(x.amount)+(x.attachment_url?' <a href="'+esc(x.attachment_url)+'" target="_blank"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></a>':'')+'</td></tr>').join('')+'</table></div>' : '<div class="card empty">אין הוצאות עדיין</div>';
