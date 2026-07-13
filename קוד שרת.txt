@@ -85,6 +85,13 @@
 //               כל סטטוס פתוח (B5_OPEN_STATUSES: מתוכנן/בדרך) — כדי שמשלוח שכבר "בדרך" ייסגר כראוי.
 //               (שכבת הממשק במסך הנהג — index.html בלבד, אין שינוי הרשאות בשרת)
 //             • canary: v4.1-B13
+//  אצווה B16: חתימה דיגיטלית בטאבלט/מובייל (Phase 3, סעיף 3.1) — proof of delivery:
+//             • עמודה חדשה: deliveries.signature_url — בסוף בלבד (מיגרציה בטוחה) — להריץ setupDatabase
+//             • deliverSignature (חדש, מקביל ל-deliverPhoto הקיים C3): מקבל PNG כ-base64 מה-canvas
+//               בממשק, שומר ב-Drive בתיקיית "MAPA-NOBLE חתימות", משתף לצפייה בקישור, וכותב את
+//               הקישור ל-deliveries.signature_url. אין נעילה מיוחדת — פעולת כתיבה רגילה (LockService+audit)
+//             • שכבת הממשק: מסך מסירה של נהג בלבד (rDriverRoute/driverStopCard) — לא במסך החזרה
+//             • canary: v4.1-B16
 //  אחרי הדבקה: (1) חובה להריץ setupDatabase פעם אחת מהעורך (עמודות חדשות ל-deliveries)
 //              (2) חובה להגדיר ScriptProperties בשם SUPER_ADMIN_ID עם ה-id של העובד אבי (ראה הוראות במסירה)
 //              (3) Deploy → Manage deployments → Edit → New version → Deploy
@@ -109,7 +116,8 @@ var TABLES = {
   order_lines: ['id', 'order_id', 'item_id', 'qty', 'unit_price', 'returned_qty', 'returned_weight'],
   // B5: נוספו route_order (סדר מסלול נהג) ו-eta_text (תיאור מצב — "עצירה X מתוך Y") — בסוף בלבד (מיגרציה בטוחה)
   // B10: נוסף removal_ack (סימון "טופל" להסרת כתובת בדשבורד ההנהלה) — בסוף בלבד (מיגרציה בטוחה)
-  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack'],
+  // B16: נוסף signature_url (חתימת לקוח למסירה) — בסוף בלבד (מיגרציה בטוחה)
+  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url'],
   // B1: נוספו type, allocation_number, pdf_url, draft_note לחשבוניות
   invoices: ['id', 'number', 'order_id', 'customer_id', 'date', 'subtotal', 'vat_rate', 'vat', 'total', 'status', 'type', 'allocation_number', 'pdf_url', 'draft_note'],
   // B2: עמודות חדשות בסוף בלבד (מיגרציה בטוחה). amount נשאר בש"ח לתאימות; חישובים באגורות בשרת בלבד.
@@ -1245,6 +1253,21 @@ function handle(action, p, db, user) {
       dvP.photo_url = fD.getUrl();
       writeTable('deliveries', db.deliveries);
       return { ok: true, url: dvP.photo_url };
+    }
+    // B16: חתימת לקוח (proof of delivery) — PNG מ-canvas, נשמר ב-Drive ומקושר למשלוח
+    case 'deliverSignature': {
+      var dvS = db.deliveries.find(function (x) { return x.id === p.delivery_id; });
+      if (!dvS) return { ok: false, error: 'משלוח לא נמצא' };
+      if (!p.base64) return { ok: false, error: 'חתימה חסרה' };
+      if (p.base64.length > 2000000) return { ok: false, error: 'החתימה גדולה מדי' };
+      var fnS = 'MAPA-NOBLE חתימות';
+      var flsS = DriveApp.getFoldersByName(fnS);
+      var fldS = flsS.hasNext() ? flsS.next() : DriveApp.createFolder(fnS);
+      var fS = fldS.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), 'image/png', 'חתימה_' + dvS.id));
+      fS.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      dvS.signature_url = fS.getUrl();
+      writeTable('deliveries', db.deliveries);
+      return { ok: true, url: dvS.signature_url };
     }
     case 'attachNoteFile': {
       var nt2 = db.notes.find(function (x) { return x.id === p.note_id; });
