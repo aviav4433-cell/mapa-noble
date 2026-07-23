@@ -2133,6 +2133,7 @@ function handle(action, p, db, user) {
     }
 
     // ===== NC1: מודול רצפת ייצור NOBLE — קליטה, שלבים, שקילה, משלוח =====
+    case 'nobleBoard': return nobleBoard(db); // תיקון: הפונקציה קיימת אך לא הייתה מחוברת למתג הפעולות
     case 'nobleCartInfo': return nobleCartInfo(db, p);
     case 'nobleIntake': return nobleIntake(db, p, user);
     case 'nobleStageStart': return nobleStageStart(db, p, user);
