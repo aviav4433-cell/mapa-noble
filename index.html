@@ -350,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.22-B36b · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.23-B37 · 23.07.2026</div>
   </div>
 </div>
 
@@ -4657,10 +4657,13 @@ function rAttendance(){
     // B36a: עובד רגיל מחתים את עצמו בלבד — אין לו שדה מספר אישי.
     // רק מנהל יכול להחתים עובד אחר, על ידי הזנת הקוד שלו.
     '<div class="card" style="text-align:center"><h3 style="margin-bottom:4px">שעון נוכחות</h3>'+
-    '<p class="muted" style="margin-bottom:10px;font-size:13px">מחתים את '+esc(USER||'')+
-      (isMgr?'. להחתמת עובד אחר — הזן את המספר האישי שלו.':'')+'</p>'+
-    (isMgr?'<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="מספר אישי של עובד אחר" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
-      '<br>':'')+
+    '<p class="muted" style="margin-bottom:10px;font-size:13px">'+
+      (isMgr?'בחר את העובד שאותו מחתימים. ברירת המחדל — אתה עצמך.':'מחתים את '+esc(USER||''))+'</p>'+
+    // B37: מנהל בוחר עובד מרשימה נפתחת — אין יותר צורך להקליד מספר אישי.
+    (isMgr?'<select id="clockEmp" style="max-width:280px;margin:0 auto 10px">'+
+      '<option value="">אני — '+esc(USER||'')+'</option>'+
+      attActiveEmps().map(function(e){ return '<option value="'+esc(e.id)+'">'+esc(e.name)+' · '+esc(e.role||'')+(e.pin?' ('+esc(e.pin)+')':'')+'</option>'; }).join('')+
+      '</select><br>':'')+
     '<button class="btn" id="clockBtn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
     '<div class="row" style="margin:14px 0 8px;gap:6px">'+
       '<button class="btn '+(ATT_TAB==='list'?'':'ghost ')+'sm" onclick="ATT_TAB=\'list\';rAttendance()">רשימה</button>'+
@@ -4679,16 +4682,57 @@ function attRowLine(a){
   return '<tr><td>'+esc(e.name)+'</td><td>'+dts+'</td><td>'+esc(a.in_time)+'</td><td>'+esc(a.out_time||'—')+'</td><td>'+hcell+'</td><td>'+vcell+'</td>'+
     (ROLE==='מנהל'?'<td><button class="btn ghost sm" onclick="attVoidForm(\''+a.id+'\')">פסילת שעות</button></td>':'')+'</tr>';
 }
+/* B37: רשימת העובדים הפעילים, ממוינת בעברית. מקור האמת היחיד לכל בורר עובד במסך זה. */
+function attActiveEmps(){
+  return (DB.employees||[]).filter(function(e){ return e.active!=='לא'; })
+    .slice().sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||''),'he'); });
+}
+/* B37: בורר עובד אחיד (רשימה נפתחת) — משמש בסינון וביומן. */
+function attEmpSelectHtml(){
+  return '<select style="width:auto" onchange="ATT_EMP=this.value;rAttendance()"><option value="">כל העובדים</option>'+
+    attActiveEmps().map(function(e){ return '<option value="'+esc(e.id)+'"'+(ATT_EMP===e.id?' selected':'')+'>'+esc(e.name)+'</option>'; }).join('')+
+    '</select>';
+}
+/* B37: סיכום חודשי לכל עובד פעיל. הטבלה נגזרת מטבלת העובדים ולא מרישומי הנוכחות —
+   ולכן עובד חדש מופיע כאן מיד, עוד לפני שהחתים פעם ראשונה. */
+function attEmpSummaryHtml(){
+  var isMgr = ROLE==='מנהל';
+  var emps = attActiveEmps();
+  if(!emps.length) return '';
+  var ym = ATT_Y+'-'+('0'+(ATT_M+1)).slice(-2);
+  var body = emps.map(function(e){
+    var recs = (DB.attendance||[]).filter(function(a){ return a.employee_id===e.id && String(a.date||'').substring(0,7)===ym; });
+    var eff = Math.round(recs.reduce(function(s,a){ return s+attEff(a); },0)*100)/100;
+    var open = recs.find(function(a){ return !a.out_time; });
+    var last = recs.slice().sort(function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')); }).pop();
+    return '<tr style="cursor:pointer" onclick="openEmp(\''+e.id+'\',\'attendance\')" title="פתיחת כרטיס העובד">'+
+      '<td><b style="color:var(--navy2)">'+esc(e.name)+'</b><div class="muted" style="font-size:11px">'+esc(e.role||'')+'</div></td>'+
+      (isMgr?'<td style="font-family:monospace;font-size:15px">'+(e.pin?esc(e.pin):'<span class="chip" style="background:var(--amber)">חסר</span>')+'</td>':'')+
+      '<td>'+recs.length+'</td>'+
+      '<td><b>'+eff+'</b></td>'+
+      '<td>'+(open?'<span class="chip" style="background:var(--ok)">בפנים משעה '+esc(open.in_time||'')+'</span>'
+                  :(last?'<span class="muted">אחרון: '+esc(last.date)+'</span>':'<span class="muted">אין רישום החודש</span>'))+'</td></tr>';
+  }).join('');
+  var title = new Intl.DateTimeFormat('he',{month:'long',year:'numeric'}).format(new Date(ATT_Y,ATT_M,1));
+  return '<div class="card"><div class="row" style="margin-bottom:8px;gap:6px">'+
+    '<b class="grow">כל העובדים — '+esc(title)+'</b>'+
+    '<button class="btn ghost sm" onclick="attCalNav(1)">◀ הבא</button>'+
+    '<button class="btn ghost sm" onclick="ATT_Y=new Date().getFullYear();ATT_M=new Date().getMonth();rAttendance()">החודש</button>'+
+    '<button class="btn ghost sm" onclick="attCalNav(-1)">הקודם ▶</button></div>'+
+    '<table><tr><th>עובד</th>'+(isMgr?'<th>מספר אישי</th>':'')+'<th>רישומים</th><th>שעות מזכות</th><th>סטטוס</th></tr>'+
+    body+'</table>'+
+    '<p class="muted" style="font-size:12px;margin:8px 0 0">כל עובד פעיל מופיע כאן, גם בלי רישומי נוכחות. לחיצה על שורה פותחת את כרטיס העובד.</p></div>';
+}
 function attListHtml(){
-  var recent = DB.attendance.slice(-40).reverse();
-  return '<div class="card">'+
+  var recent = (DB.attendance||[]).filter(function(a){ return !ATT_EMP || a.employee_id===ATT_EMP; }).slice(-40).reverse();
+  return attEmpSummaryHtml()+
+    '<div class="card"><div class="row" style="margin-bottom:8px;gap:6px"><b class="grow">רישומים אחרונים</b>'+attEmpSelectHtml()+'</div>'+
     (recent.length?'<table><tr><th>עובד</th><th>תאריך</th><th>כניסה</th><th>יציאה</th><th>שעות</th><th>פסילה</th>'+(ROLE==='מנהל'?'<th></th>':'')+'</tr>'+
       recent.map(attRowLine).join('')+'</table>':'<div class="empty">אין רישומים</div>')+'</div>';
 }
 function attCalendarHtml(){
   var first = new Date(ATT_Y, ATT_M, 1);
   var todayIso = new Date().toISOString().slice(0,10);
-  var emps = DB.employees.filter(e=>e.active!=='לא');
   var byDate = {};
   (DB.attendance||[]).forEach(function(a){
     if(ATT_EMP && a.employee_id!==ATT_EMP) return;
@@ -4720,8 +4764,7 @@ function attCalendarHtml(){
     '<button class="btn ghost sm" onclick="attCalNav(1)">◀ הבא</button>'+
     '<button class="btn ghost sm" onclick="ATT_Y=new Date().getFullYear();ATT_M=new Date().getMonth();rAttendance()">היום</button>'+
     '<button class="btn ghost sm" onclick="attCalNav(-1)">הקודם ▶</button>'+
-    '<select style="width:auto" onchange="ATT_EMP=this.value;rAttendance()"><option value="">כל העובדים</option>'+
-      emps.map(e=>'<option value="'+esc(e.id)+'"'+(ATT_EMP===e.id?' selected':'')+'>'+esc(e.name)+'</option>').join('')+'</select>'+
+    attEmpSelectHtml()+
     '</div>'+
     '<div style="text-align:center;margin-bottom:8px"><b style="font-size:17px">'+esc(gregTitle)+'</b>'+
     '<div class="muted">סה"כ מזכה בחודש: '+(Math.round(monthEff*100)/100)+' שעות'+(monthVoid>0?' · נפסלו '+(Math.round(monthVoid*100)/100)+' שעות':'')+'</div></div>'+
@@ -4763,12 +4806,12 @@ async function doClock(){
   if(btn){ btn.disabled = true; btn.style.opacity = '.6'; btn.textContent = 'שומר...'; }
   el('clockMsg').innerHTML = '<span class="muted">שומר...</span>';
   try{
-    var pinEl = el('clockPin');   // B36a: קיים רק אצל מנהל
-    var r = await api('clock', pinEl && pinEl.value.trim() ? {pin:pinEl.value.trim()} : {});
+    var empEl = el('clockEmp');   // B37: קיים רק אצל מנהל — ריק = מחתים את עצמו
+    var r = await api('clock', empEl && empEl.value ? {employee_id:empEl.value} : {});
     if(!r.ok){ el('clockMsg').innerHTML='<span style="color:var(--danger)">'+esc(r.error)+'</span>'; return; }
     el('clockMsg').innerHTML = '<b style="color:var(--ok)">'+esc(r.name)+' — '+(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓ ('+r.hours+' שעות)')+'</b>';
     toast(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓');
-    if(pinEl) pinEl.value='';
+    if(empEl) empEl.value='';
     var g = await api('getAll'); if(g.ok){ DB=g.db; }
     setTimeout(function(){ if(VIEW==='attendance') rAttendance(); }, 1600);
   }catch(e){ el('clockMsg').innerHTML='<span style="color:var(--danger)">שגיאת תקשורת — נסה שוב</span>';
@@ -4779,7 +4822,7 @@ async function doClock(){
 }
 function attForm(){
   openModal('<h2>רישום נוכחות ידני</h2>'+
-    '<div class="frow"><label>עובד</label>'+sel('f_aemp',DB.employees.filter(e=>e.active!=='לא'),e=>e.name)+'</div>'+
+    '<div class="frow"><label>עובד</label>'+sel('f_aemp',attActiveEmps(),e=>e.name)+'</div>'+
     '<p class="muted" style="margin-bottom:8px">למשמרת לילה החוצה את חצות — תאריך היציאה יכול להיות שונה מתאריך הכניסה.</p>'+
     '<div class="grid2"><div class="frow"><label>תאריך כניסה</label><input id="f_adate" type="date"></div>'+
     '<div class="frow"><label>שעת כניסה</label><input id="f_ain" type="time"></div>'+
@@ -4827,10 +4870,54 @@ function rPayroll(){
       '<span class="muted">השכר מחושב אוטומטית ב-1 בכל חודש עבור החודש שהסתיים, ונשמר כטיוטה לאישורך. שעתי: שעות × תעריף. גלובלי: סכום חודשי קבוע. "תצוגה מקדימה" מחשבת לבדיקה בלבד; "הפק שכר" יוצר טיוטות בפועל ואינו נוגע בשכר שכבר אושר או שולם.</span>':'')+'</div></div>'+
     '<div id="prList">'+payrollTable(month)+'</div>';
 }
+/* B37: רשימת השכר נבנית מרשימת העובדים הפעילים ולא מרשומות השכר בלבד.
+   כך עובד חדש מופיע מיד, גם לפני שהופקה לו רשומת שכר. רשומות של עובדים
+   שאינם פעילים עדיין מוצגות, כדי ששכר קיים לא ייעלם מהמסך. */
+function payrollRowsFor(month){
+  var recs = (DB.payroll||[]).filter(function(p){ return p.month===month; });
+  var out = [];
+  // לנהג — רק שכר שהופק בפועל. שורת "טרם הופק" היא כלי ניהולי ואינה שייכת למסך שלו.
+  if(ROLE==='נהג') return recs.map(function(p){ return {emp:(DB.employees||[]).find(function(x){ return x.id===p.employee_id; })||{}, pr:p}; });
+  attActiveEmps().forEach(function(e){
+    var p = recs.find(function(x){ return x.employee_id===e.id; });
+    out.push({emp:e, pr:p||null});
+  });
+  recs.forEach(function(p){
+    if(!out.some(function(o){ return o.pr && o.pr.id===p.id; }))
+      out.push({emp:(DB.employees||[]).find(function(x){ return x.id===p.employee_id; })||{name:'(עובד שהוסר)'}, pr:p});
+  });
+  return out;
+}
+/* B37: שעות מזכות שנרשמו לעובד בחודש — לתצוגת עובד שאין לו עדיין רשומת שכר */
+function payrollEffHours(eid, month){
+  return Math.round((DB.attendance||[]).filter(function(a){ return a.employee_id===eid && String(a.date||'').substring(0,7)===month; })
+    .reduce(function(s,a){ return s+attEff(a); },0)*100)/100;
+}
 function payrollTable(month){
-  var rows = DB.payroll.filter(p=>p.month===month);
-  return rows.length? '<div class="card"><table><tr><th>עובד</th><th>סוג</th><th>שעות</th><th>תעריף</th><th>בסיס</th><th>סה"כ</th><th>שולם</th><th>יתרה</th><th>סטטוס</th><th></th></tr>'+
-    rows.map(function(p){ var e=DB.employees.find(x=>x.id===p.employee_id)||{};
+  var all = payrollRowsFor(month);
+  var missing = all.filter(function(o){ return !o.pr; }).length;
+  var head = '<div class="card"><table><tr><th>עובד</th><th>סוג</th><th>שעות</th><th>תעריף</th><th>בסיס</th><th>סה"כ</th><th>שולם</th><th>יתרה</th><th>סטטוס</th><th></th></tr>'+
+    all.map(function(o){
+      var e = o.emp, p = o.pr;
+      if(!p){
+        var glob0 = e.pay_type==='גלובלי';
+        var hrs0 = glob0? 0 : payrollEffHours(e.id, month);
+        return '<tr style="opacity:.75"><td><b>'+esc(e.name)+'</b></td>'+
+          '<td>'+(glob0?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td>'+
+          '<td>'+(glob0?'<span class="muted">—</span>':hrs0)+'</td>'+
+          '<td>'+(glob0?'<span class="muted">—</span>':ils(e.hourly_rate||0))+'</td>'+
+          '<td>'+ils(glob0?(e.monthly_salary||0):Math.round(hrs0*(Number(e.hourly_rate)||0)*100)/100)+'</td>'+
+          '<td class="tot"><span class="muted">—</span></td><td><span class="muted">—</span></td><td><span class="muted">—</span></td>'+
+          '<td><span class="chip" style="background:var(--amber)">טרם הופק</span></td>'+
+          '<td><span class="muted" style="font-size:11px">לחץ "הפק שכר לחודש זה"</span></td></tr>';
+      }
+      return payrollRowHtml(p, e);
+    }).join('')+'</table>'+
+    (missing&&ROLE==='מנהל'?'<p class="muted" style="font-size:12px;margin:8px 0 0">'+missing+' עובדים ללא רשומת שכר לחודש זה. לחיצה על "הפק שכר לחודש זה" תיצור להם טיוטה.</p>':'')+
+    '</div>';
+  return all.length? head : '<div class="card empty">אין נתוני שכר לחודש זה'+(ROLE!=='נהג'?' — הוסף עובדים או לחץ "הפק שכר לחודש זה"':'')+'</div>';
+}
+function payrollRowHtml(p, e){
       var paid = payrollPaid(p.id), remaining = Math.round((Number(p.total)-paid)*100)/100;
       var glob = isGlobalPayroll(p,e);
       return '<tr><td><b>'+esc(e.name)+'</b></td><td>'+(glob?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td><td>'+p.hours+'</td><td>'+(glob?'<span class="muted">—</span>':ils(p.hourly_rate))+'</td><td>'+ils(p.base_pay)+'</td>'+
@@ -4839,8 +4926,7 @@ function payrollTable(month){
       // B17: לנהג — רק הדפסת המסמך הפנימי, בלי כפתורי ניהול
       '<td>'+(ROLE==='נהג'?
         (p.status!=='טיוטה'?'<button class="btn ghost sm" onclick="printPayslip(\''+p.id+'\')">הדפסה</button>':'<span class="muted" style="font-size:11px">טרם אושר</span>'):
-        '<button class="btn sm" onclick="payrollDetail(\''+p.id+'\')">פרטים / תשלום</button>')+'</td></tr>'; }).join('')+'</table></div>'
-    : '<div class="card empty">אין נתוני שכר לחודש זה'+(ROLE!=='נהג'?' — החישוב מתבצע אוטומטית ב-1 בחודש שאחריו':'')+'</div>';
+        '<button class="btn sm" onclick="payrollDetail(\''+p.id+'\')">פרטים / תשלום</button>')+'</td></tr>';
 }
 // תצוגה מקדימה של השכר — חישוב לבדיקת ההנהלה בלבד.
 // אינו כותב דבר ואינו משפיע על שכר העובד. השכר האמיתי מחושב אוטומטית ב-1 בחודש.
@@ -7085,10 +7171,16 @@ function b34PrintShelfLabel(code, label){
 }
 
 /* ================= עובדים ================= */
+/* B37: המספר האישי גלוי למנהל בכל מקום שבו מוצג עובד. לשאר התפקידים — לא מוצג. */
+function empPinChip(e){
+  if(ROLE!=='מנהל' || !e) return '';
+  return e.pin? '<span class="chip" style="background:var(--navy2)" title="מספר אישי">מס\' אישי '+esc(e.pin)+'</span>'
+              : '<span class="chip" style="background:var(--amber)" title="יש להזין מספר אישי בכרטיס העובד">אין מס\' אישי</span>';
+}
 function rStaff(){
   el('main').innerHTML = '<div class="section-title"><h2>עובדים</h2><button class="btn" onclick="empForm()">+ עובד</button></div>'+
     '<p class="muted" style="margin-bottom:10px">ברגע שקיים עובד אחד, הכניסה למערכת דורשת שם משתמש וסיסמה. תפקיד קובע אילו מסכים רואים: מכבסה — רק לוח כביסה וסריקה; נהג — רק משלוחים. לחיצה על שם עובד פותחת כרטיס מלא: נוכחות, שכר, משימות ותרשומות.</p>'+
-    (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow" style="cursor:pointer" onclick="openEmp(\''+e.id+'\')"><b style="color:var(--navy2);text-decoration:underline">'+esc(e.name)+'</b> · '+esc(e.role)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.username?' · משתמש: '+esc(e.username):'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
+    (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow" style="cursor:pointer" onclick="openEmp(\''+e.id+'\')"><b style="color:var(--navy2);text-decoration:underline">'+esc(e.name)+'</b> · '+esc(e.role)+' '+empPinChip(e)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.username?' · משתמש: '+esc(e.username):'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
     contactBtns(e.phone, e.email)+
     '<span class="rowact">'+(ROLE==='מנהל'?'<button title="איפוס סיסמה (מנהל)" onclick="resetEmpPassword(\''+e.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></button>':'')+'<button title="עריכת עובד והרשאות" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button></span>'+'</div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
     '<p class="muted" style="margin-top:10px">כניסות ייעודיות: נהג/עובד מכבסה נכנסים באותו קישור עם שם המשתמש והסיסמה שלהם — ורואים רק את המסכים שלהם. קישור פורטל ללקוח קיים: כפתור ההעתקה בכרטיס הלקוח. קישור חנות ציבורית לאתר/דף נחיתה: הוסף ?shop=1 לכתובת — מבקר בוחר מוצרים, רואה מחיר, ממלא פרטים ונרשם אוטומטית כלקוח.</p>';
@@ -7106,13 +7198,14 @@ function openEmp(eid, tab){
   else if(EMP_TAB==='notes') body = empTabNotes(eid);
   else body = empTabDetails(eid);
   openModal('<h2>'+esc(e.name)+' · '+esc(e.role)+'</h2>'+
-    '<div class="muted" style="margin-bottom:10px">'+contactBtns(e.phone,e.email)+(e.active==='לא'?' · <span class="chip בוטלה">לא פעיל</span>':'')+'</div>'+
+    '<div class="muted" style="margin-bottom:10px">'+contactBtns(e.phone,e.email)+' '+empPinChip(e)+(e.active==='לא'?' · <span class="chip בוטלה">לא פעיל</span>':'')+'</div>'+
     '<div class="tabs">'+tabs.map(function(t){return '<button class="'+(EMP_TAB===t[0]?'on':'')+'" onclick="openEmp(\''+eid+'\',\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>'+
     body);
 }
 function empTabDetails(eid){
   var e = DB.employees.find(x=>x.id===eid)||{};
-  return '<div class="frow"><label>תעודת זהות</label><div>'+(e.national_id?esc(e.national_id):'<span class="muted">—</span>')+'</div></div>'+
+  return (ROLE==='מנהל'?'<div class="frow"><label>מספר אישי</label><div>'+(e.pin?'<b style="font-family:monospace;font-size:16px">'+esc(e.pin)+'</b>':'<span class="chip" style="background:var(--amber)">לא הוגדר</span>')+'</div></div>':'')+
+    '<div class="frow"><label>תעודת זהות</label><div>'+(e.national_id?esc(e.national_id):'<span class="muted">—</span>')+'</div></div>'+
     '<div class="frow"><label>כתובת</label><div>'+(e.address?esc(e.address):'<span class="muted">—</span>')+'</div></div>'+
     '<div class="frow"><label>תאריך תחילת עבודה</label><div>'+(e.start_date?esc(e.start_date):'<span class="muted">—</span>')+'</div></div>'+
     '<div class="frow"><label>סוג שכר</label><div>'+(e.pay_type==='גלובלי'?'גלובלי — סכום חודשי קבוע':'שעתי')+'</div></div>'+
