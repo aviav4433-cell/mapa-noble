@@ -173,7 +173,8 @@ var TABLES = {
   // B34: אריזות עם ברקוד קבוע לפי מוצר+כמות (אין מזהה לחבילה בודדת — 100 חבילות זהות = אותו ברקוד)
   package_types: ['id', 'item_id', 'qty', 'barcode', 'active', 'notes', 'created_at'],
   // B34: יומן תנועות אריזה — append-only. move_type: 'אריזה'(+) / 'ליקוט'(-) / 'התאמה'(±) / 'מידוף'(מיקום בלבד, לא משנה כמות)
-  package_moves: ['id', 'ts', 'type_id', 'count', 'move_type', 'shelf_code', 'case_id', 'order_id', 'delivery_id', 'user', 'note'],
+  // B35: נוסף from_shelf (מדף מקור בהעברה/מידוף) — בסוף בלבד (מיגרציה בטוחה) — להריץ setupDatabase
+  package_moves: ['id', 'ts', 'type_id', 'count', 'move_type', 'shelf_code', 'case_id', 'order_id', 'delivery_id', 'user', 'note', 'from_shelf'],
   // B34: מארזים רב-פעמיים (כמו עגלות) — ברקוד קבוע, שיוך זמני להזמנה/משלוח ושחרור בחזרה
   cases: ['id', 'barcode', 'status', 'order_id', 'delivery_id', 'active', 'notes'],
   // B34: נסיעות חלוקה (תכנון הנהלה) — נפרד מטבלת trips הקיימת (יומן ק"מ של צי הרכב)
@@ -826,6 +827,17 @@ function handle(action, p, db, user) {
       }
       if (p.table === 'suppliers' && db.purchases.some(function (x) { return x.supplier_id === p.id; }))
         return { ok: false, error: 'לספק יש רכש — לא ניתן למחוק' };
+      // B35: מדף לא נמחק כשרשומות עליו חבילות או כשהוא מוגדר כמיקום קבוע של פריט — אחרת המלאי "נעלם"
+      if (p.table === 'shelves') {
+        var shDel = arr2[idx], shCode = String(shDel.code || '');
+        var onShelfNow = b35ShelfContents(db, shCode);
+        if (onShelfNow.length) {
+          var tot = onShelfNow.reduce(function (a, x) { return a + x.packages; }, 0);
+          return { ok: false, error: 'על מדף ' + shCode + ' רשומות ' + tot + ' חבילות — פנה אותו קודם (כפתור "פינוי מדף")' };
+        }
+        var usedBy = db.items.filter(function (i) { return String(i.location || '') === shCode; });
+        if (usedBy.length) return { ok: false, error: 'המדף מוגדר כמיקום קבוע של ' + usedBy.length + ' פריטים — שנה אותם קודם בכרטיס הפריט' };
+      }
       if (p.table === 'carts' && arr2[idx].status !== 'פנויה')
         return { ok: false, error: 'העגלה בשימוש — שחרר אותה קודם' };
       if (p.table === 'employees') {
@@ -1191,7 +1203,7 @@ function handle(action, p, db, user) {
       var pt = db.packageTypes.find(function (t) { return String(t.barcode) === bc && t.active !== 'לא'; });
       if (pt) {
         var ptIt = db.items.find(function (i) { return i.id === pt.item_id; });
-        return { ok: true, kind: 'package_type', entity: pt, item: ptIt || null, balance: b34PkgNet(db, pt.id) };
+        return { ok: true, kind: 'package_type', entity: pt, item: ptIt || null, balance: b34PkgNet(db, pt.id), locations: b35TypeLocations(db, pt.id) };
       }
       // B34: מארז
       var cs = db.cases.find(function (c) { return (String(c.barcode) === bc || String(c.id) === bc) && c.active !== 'לא'; });
@@ -1201,7 +1213,7 @@ function handle(action, p, db, user) {
       }
       // B34: מדף
       var shf = db.shelves.find(function (s) { return String(s.barcode) === bc || String(s.code) === bc; });
-      if (shf) return { ok: true, kind: 'shelf', entity: shf };
+      if (shf) return { ok: true, kind: 'shelf', entity: shf, contents: b35ShelfContents(db, String(shf.code)) };
       // B34: הזמנה (לפי מזהה או מספר הזמנה) ומשלוח (לפי מזהה)
       var ordSc = db.orders.find(function (o) { return String(o.id) === bc || String(o.order_number || '') === bc; });
       if (ordSc) return { ok: true, kind: 'order', entity: { id: ordSc.id, order_number: ordSc.order_number, status: ordSc.status, customer_id: ordSc.customer_id } };
@@ -2234,6 +2246,11 @@ function handle(action, p, db, user) {
     case 'caseRelease': return b34CaseRelease(db, p, user);
     case 'b34LoadScan': return b34LoadScan(db, p, user);
     case 'b10AckScan': return b10AckScan(db, p, user);
+    // ---- B35: ניהול מחסן — מידוף בסריקה, ספירת מדף, פינוי מדף ----
+    case 'b35ShelveBatch': return b35ShelveBatch(db, p, user);
+    case 'b35ShelfCount': return b35ShelfCount(db, p, user);
+    case 'b35ShelfClear': return b35ShelfClear(db, p, user);
+
     case 'tripCreate': return b34TripCreate(db, p, user);
     case 'tripAssign': return b34TripAssign(db, p, user);
     case 'tripSetStatus': return b34TripSetStatus(db, p, user);
@@ -4686,15 +4703,23 @@ function b34PkgPack(db, p, user) {
   if (!t.ok) return t;
   var n = Math.round(Number(p.count));
   if (!(n > 0)) return { ok: false, error: 'מספר חבילות חייב להיות מספר חיובי' };
+  // B35: אם נבחר מדף — חייב להיות מדף קיים ופעיל, אחרת החבילות "נעלמות" למיקום שלא קיים
+  var packShelf = '';
+  if (p.shelf_code) {
+    var pSh = b35Shelf(db, p.shelf_code);
+    if (!pSh) return { ok: false, error: 'מדף ' + p.shelf_code + ' לא קיים' };
+    if (pSh.active === 'לא') return { ok: false, error: 'מדף ' + pSh.code + ' אינו פעיל' };
+    packShelf = String(pSh.code);
+  }
   b34AppendMove(db, {
     type_id: t.type.id, count: n, move_type: 'אריזה',
-    shelf_code: String(p.shelf_code || ''), case_id: '', order_id: '', delivery_id: '',
+    shelf_code: packShelf, from_shelf: '', case_id: '', order_id: '', delivery_id: '',
     user: user || '', note: String(p.note || '')
   });
   var it = db.items.find(function (i) { return i.id === t.type.item_id; }) || {};
   return {
     ok: true, type: t.type, created: t.created, generated: !!t.generated, balance: b34PkgNet(db, t.type.id),
-    auditNote: 'B34 אריזה · ' + n + ' חבילות של ' + t.type.qty + ' × ' + (it.name || t.type.item_id) + ' · ברקוד ' + t.type.barcode + (p.shelf_code ? ' · מדף ' + p.shelf_code : '')
+    auditNote: 'B34 אריזה · ' + n + ' חבילות של ' + t.type.qty + ' × ' + (it.name || t.type.item_id) + ' · ברקוד ' + t.type.barcode + (packShelf ? ' · מדף ' + packShelf : ' · ללא מידוף')
   };
 }
 
@@ -4707,20 +4732,27 @@ function b34PkgAdjust(db, p, user) {
   var reason = String(p.note || '').trim();
   if (reason.length < 3) return { ok: false, error: 'חובה לפרט סיבת התאמה (לפחות 3 תווים)' };
   if (b34PkgNet(db, tp.id) + n < 0) return { ok: false, error: 'ההתאמה תוריד את המלאי מתחת לאפס' };
-  b34AppendMove(db, { type_id: tp.id, count: n, move_type: 'התאמה', shelf_code: '', case_id: '', order_id: '', delivery_id: '', user: user || '', note: reason });
-  return { ok: true, balance: b34PkgNet(db, tp.id), auditNote: 'B34 התאמת אריזות · ' + tp.barcode + ' · ' + (n > 0 ? '+' : '') + n + ' · ' + reason };
+  // B35: התאמה יכולה להיות ממוקדת למדף מסוים (למשל ספירה במדף) או למלאי הלא-ממודף
+  var adjShelf = '';
+  if (p.shelf_code) {
+    var aSh = b35Shelf(db, p.shelf_code);
+    if (!aSh) return { ok: false, error: 'מדף ' + p.shelf_code + ' לא קיים' };
+    adjShelf = String(aSh.code);
+  }
+  var onSrc = b35Map(db, tp.id)[adjShelf] || 0;
+  if (onSrc + n < 0) return { ok: false, error: 'ב' + b35SrcName(adjShelf) + ' רשומות רק ' + onSrc + ' חבילות — לא ניתן לגרוע ' + (-n) };
+  b34AppendMove(db, { type_id: tp.id, count: n, move_type: 'התאמה', shelf_code: adjShelf, from_shelf: '', case_id: '', order_id: '', delivery_id: '', user: user || '', note: reason });
+  return { ok: true, balance: b34PkgNet(db, tp.id), auditNote: 'B34 התאמת אריזות · ' + tp.barcode + ' · ' + (n > 0 ? '+' : '') + n + ' · ' + b35SrcName(adjShelf) + ' · ' + reason };
 }
 
 // מידוף: רישום מיקום של חבילות קיימות (לא משנה כמות) — ניתן לדלג עליו בתקופת ההרצה
 function b34PkgShelve(db, p, user) {
-  var tp = db.packageTypes.find(function (t) { return t.id === p.type_id; });
+  // B35: הפעולה הישנה נשמרת לתאימות ועוברת למנוע המידוף החדש (מקור → יעד, עם אימות זמינות)
+  var tp = b35Type(db, p.type_id);
   if (!tp) return { ok: false, error: 'סוג אריזה לא נמצא' };
-  var code = String(p.shelf_code || '').trim();
-  if (!code) return { ok: false, error: 'בחר מדף' };
-  if (!db.shelves.some(function (s) { return String(s.code) === code || String(s.barcode) === code; })) return { ok: false, error: 'מדף ' + code + ' לא קיים' };
   var n = Math.round(Number(p.count)) || 0;
-  b34AppendMove(db, { type_id: tp.id, count: n, move_type: 'מידוף', shelf_code: code, case_id: '', order_id: '', delivery_id: '', user: user || '', note: String(p.note || '') });
-  return { ok: true, auditNote: 'B34 מידוף · ' + tp.barcode + ' · ' + n + ' חבילות → מדף ' + code };
+  if (!(n > 0)) return { ok: false, error: 'הזן מספר חבילות למידוף' };
+  return b35ShelveBatch(db, { to_shelf: p.shelf_code, from_shelf: p.from_shelf || '', lines: [{ type_id: tp.id, count: n }], note: p.note }, user);
 }
 
 // יצירת מארז רב-פעמי (ברקוד קבוע — חיצוני או מונפק)
@@ -4753,18 +4785,34 @@ function b34CasePick(db, p, user) {
     var n = Math.round(Number(picks[i].count));
     if (!(n > 0)) return { ok: false, error: 'כמות ליקוט חייבת להיות חיובית' };
     var bal = b34PkgNet(db, tp.id);
+    var itP = db.items.find(function (x) { return x.id === tp.item_id; }) || {};
     if (n > bal) {
-      var itP = db.items.find(function (x) { return x.id === tp.item_id; }) || {};
       return { ok: false, error: 'אין מספיק חבילות במלאי: ' + (itP.name || '') + ' (' + tp.qty + ' ליח\') — מבוקש ' + n + ', קיים ' + bal };
     }
-    lines.push({ tp: tp, n: n });
+    // B35: המלקט רשאי להצהיר מאיזה מדף לקח — לא חובה. אם הצהיר, המדף חייב להכיל את הכמות.
+    var pickShelf = '';
+    if (picks[i].shelf_code) {
+      var pkSh = b35Shelf(db, picks[i].shelf_code);
+      if (!pkSh) return { ok: false, error: 'מדף ' + picks[i].shelf_code + ' לא קיים' };
+      pickShelf = String(pkSh.code);
+      var onShelf = b35Map(db, tp.id)[pickShelf] || 0;
+      if (n > onShelf) return { ok: false, error: 'במדף ' + pickShelf + ' רשומות רק ' + onShelf + ' חבילות של ' + tp.qty + ' × ' + (itP.name || '') + ' — תקן את הכמות, בחר מדף אחר, או השאר את המדף ריק' };
+    }
+    lines.push({ tp: tp, n: n, shelf: pickShelf });
   }
   if (ord) { cs.order_id = ord.id; }
   if (p.delivery_id !== undefined) cs.delivery_id = String(p.delivery_id || '');
   cs.status = 'משויך';
   writeTable('cases', db.cases);
+  // B35: כל ליקוט נגרע ממקור אמיתי — קודם המדף שהוצהר, אחר כך המלאי הלא-ממודף, ורק אז מדפים אחרים.
+  // נרשמת שורת יומן נפרדת לכל מקור, כך שיתרת כל מדף נשארת מדויקת ולעולם לא שלילית.
   lines.forEach(function (L) {
-    b34AppendMove(db, { type_id: L.tp.id, count: L.n, move_type: 'ליקוט', shelf_code: '', case_id: cs.id, order_id: cs.order_id, delivery_id: cs.delivery_id || '', user: user || '', note: String(p.note || '') });
+    var al = b35Alloc(db, L.tp.id, L.n, L.shelf);
+    var parts = al.lines.slice();
+    if (al.missing > 0) parts.push({ shelf: '', n: al.missing }); // תיעוד חסר — נזקף למלאי הלא-ממודף
+    parts.forEach(function (sPart) {
+      b34AppendMove(db, { type_id: L.tp.id, count: sPart.n, move_type: 'ליקוט', shelf_code: sPart.shelf, from_shelf: '', case_id: cs.id, order_id: cs.order_id, delivery_id: cs.delivery_id || '', user: user || '', note: String(p.note || '') });
+    });
   });
   return { ok: true, kase: cs, contents: b34CaseContents(db, cs.id), auditNote: 'B34 ליקוט למארז ' + cs.barcode + ' · הזמנה ' + ((ord && (ord.order_number || ord.id)) || cs.order_id) + ' · ' + lines.length + ' שורות' };
 }
@@ -4886,4 +4934,210 @@ function b34TripSetStatus(db, p, user) {
   }
   writeTable('delivery_trips', db.deliveryTrips);
   return { ok: true, trip: tr, auditNote: 'B34 נסיעה ' + tr.id + ' → ' + st };
+}
+
+// ============================================================
+//  B35: ניהול מחסן ומיקומים — יתרת מדף לכל סוג אריזה
+//  מקור האמת היחיד: יומן package_moves (append-only). אין שדה מיקום כפול שיכול לסטות.
+//  שיוך תנועה למיקום:
+//    'אריזה'  — count נכנס למדף shelf_code; אם ריק — למלאי הלא-ממודף
+//    'מידוף'  — count עובר מ-from_shelf (ריק = לא-ממודף) אל shelf_code
+//    'ליקוט'  — count יוצא מ-shelf_code (ריק = מהמלאי הלא-ממודף)
+//    'התאמה'  — count חתום (±) נכנס/יוצא מ-shelf_code (ריק = לא-ממודף)
+//  מלאי לא ממודף הוא מצב חוקי ומכוון: אפשר לארוז, ללקט ולשלוח בלי לגעת במדף.
+//  תאימות לאחור: שורות B34 ללא from_shelf נקראות כמידוף מהמלאי הלא-ממודף — בדיוק המשמעות המקורית.
+// ============================================================
+
+// מפת מיקומים לסוג אריזה: { 'קוד מדף': מספר חבילות, '': לא ממודף }
+function b35Map(db, typeId) {
+  var m = {};
+  var add = function (k, n) {
+    k = String(k || '');
+    m[k] = (m[k] || 0) + n;
+    if (!m[k]) delete m[k];
+  };
+  db.packageMoves.filter(function (x) { return String(x.type_id) === String(typeId); })
+    .forEach(function (x) {
+      var c = Number(x.count) || 0;
+      var to = String(x.shelf_code || ''), from = String(x.from_shelf || '');
+      if (x.move_type === 'אריזה') add(to, c);
+      else if (x.move_type === 'ליקוט') add(to, -c);
+      else if (x.move_type === 'התאמה') add(to, c);
+      else if (x.move_type === 'מידוף') { add(from, -c); add(to, c); }
+    });
+  return m;
+}
+
+// מדף לפי קוד או לפי ברקוד (סריקה) — מחזיר את הרשומה עצמה
+function b35Shelf(db, code) {
+  var c = String(code || '').trim();
+  if (!c) return null;
+  return db.shelves.find(function (s) { return String(s.code) === c || String(s.barcode) === c; }) || null;
+}
+
+// סוג אריזה לפי מזהה או לפי ברקוד (סריקה)
+function b35Type(db, key) {
+  var k = String(key || '').trim();
+  if (!k) return null;
+  return db.packageTypes.find(function (t) { return t.id === k || String(t.barcode) === k; }) || null;
+}
+
+// תכולת מדף מלאה, ממוינת לפי כמות יחידות
+function b35ShelfContents(db, code) {
+  var c = String(code || ''), out = [];
+  db.packageTypes.forEach(function (t) {
+    var q = b35Map(db, t.id)[c] || 0;
+    if (!q) return;
+    var it = db.items.find(function (i) { return i.id === t.item_id; }) || {};
+    var per = Number(t.qty) || 0;
+    out.push({
+      type_id: t.id, barcode: t.barcode, item_id: t.item_id, item_name: it.name || '',
+      per_pkg: per, packages: q, units: q * per
+    });
+  });
+  return out.sort(function (a, b) { return b.units - a.units; });
+}
+
+// מיקומי סוג אריזה: [{ shelf, packages }] — shelf ריק = לא ממודף
+function b35TypeLocations(db, typeId) {
+  var m = b35Map(db, typeId);
+  return Object.keys(m).filter(function (k) { return m[k]; })
+    .map(function (k) { return { shelf: k, packages: m[k] }; })
+    .sort(function (a, b) { return b.packages - a.packages; });
+}
+
+// פיצול יציאה למקורות אמיתיים: קודם המדף שהמלקט הצהיר עליו, אחר כך הלא-ממודף, אחר כך המדפים הגדולים
+function b35Alloc(db, typeId, n, preferShelf) {
+  var m = b35Map(db, typeId), out = [], left = Math.round(Number(n) || 0);
+  var pref = String(preferShelf || '');
+  var take = function (k) {
+    if (left <= 0) return;
+    var key = String(k || '');
+    var have = Math.max(0, Number(m[key]) || 0);
+    var t = Math.min(have, left);
+    if (t > 0) { out.push({ shelf: key, n: t }); left -= t; m[key] = have - t; }
+  };
+  if (pref) take(pref);
+  take('');
+  Object.keys(m).filter(function (k) { return k && k !== pref; })
+    .sort(function (a, b) { return m[b] - m[a]; })
+    .forEach(take);
+  return { lines: out, missing: left };
+}
+
+// שם מקור קריא להודעות
+function b35SrcName(code) { return code ? 'מדף ' + code : 'מלאי לא ממודף'; }
+
+// מידוף באצווה: העברת חבילות אל מדף יעד ממקור אחד (מדף אחר או המלאי הלא-ממודף)
+function b35ShelveBatch(db, p, user) {
+  var to = b35Shelf(db, p.to_shelf);
+  if (!to) return { ok: false, error: 'מדף היעד לא נמצא — סרוק את מדבקת המדף או בחר מהרשימה' };
+  if (to.active === 'לא') return { ok: false, error: 'מדף ' + to.code + ' אינו פעיל' };
+  var fromCode = '';
+  if (p.from_shelf) {
+    var fs = b35Shelf(db, p.from_shelf);
+    if (!fs) return { ok: false, error: 'מדף המקור לא נמצא' };
+    fromCode = String(fs.code);
+    if (fromCode === String(to.code)) return { ok: false, error: 'מדף המקור והיעד זהים' };
+  }
+  var lines = Array.isArray(p.lines) ? p.lines : [];
+  if (!lines.length) return { ok: false, error: 'לא נבחרו חבילות למידוף' };
+  var prepared = [];
+  for (var i = 0; i < lines.length; i++) {
+    var tp = b35Type(db, lines[i].type_id);
+    if (!tp) return { ok: false, error: 'סוג אריזה לא נמצא' };
+    var n = Math.round(Number(lines[i].count));
+    if (!(n > 0)) return { ok: false, error: 'כמות המידוף חייבת להיות חיובית' };
+    var itA = db.items.find(function (x) { return x.id === tp.item_id; }) || {};
+    var avail = b35Map(db, tp.id)[fromCode] || 0;
+    var already = prepared.filter(function (x) { return x.tp.id === tp.id; }).reduce(function (s, x) { return s + x.n; }, 0);
+    if (n + already > avail)
+      return { ok: false, error: 'אין מספיק חבילות ב' + b35SrcName(fromCode) + ' עבור ' + tp.qty + ' × ' + (itA.name || '') + ' — מבוקש ' + (n + already) + ', קיים ' + avail };
+    prepared.push({ tp: tp, n: n, name: itA.name || '' });
+  }
+  prepared.forEach(function (L) {
+    b34AppendMove(db, {
+      type_id: L.tp.id, count: L.n, move_type: 'מידוף',
+      shelf_code: String(to.code), from_shelf: fromCode,
+      case_id: '', order_id: '', delivery_id: '', user: user || '', note: String(p.note || '')
+    });
+  });
+  return {
+    ok: true, shelf: to.code, contents: b35ShelfContents(db, to.code),
+    auditNote: 'B35 מידוף · ' + prepared.map(function (L) { return L.n + ' × [' + L.tp.qty + ' ' + L.name + ']'; }).join(' · ') +
+      ' · מ' + b35SrcName(fromCode) + ' → מדף ' + to.code
+  };
+}
+
+// פינוי מדף אל המלאי הלא-ממודף (מוציא הכל או שורה אחת)
+function b35ShelfClear(db, p, user) {
+  var sh = b35Shelf(db, p.shelf_code);
+  if (!sh) return { ok: false, error: 'מדף לא נמצא' };
+  var code = String(sh.code);
+  var rows = b35ShelfContents(db, code);
+  if (p.type_id) rows = rows.filter(function (r) { return r.type_id === String(p.type_id); });
+  if (!rows.length) return { ok: false, error: 'אין מה לפנות מהמדף' };
+  rows.forEach(function (r) {
+    b34AppendMove(db, {
+      type_id: r.type_id, count: r.packages, move_type: 'מידוף',
+      shelf_code: '', from_shelf: code,
+      case_id: '', order_id: '', delivery_id: '', user: user || '', note: String(p.note || 'פינוי מדף')
+    });
+  });
+  return {
+    ok: true, shelf: code, contents: b35ShelfContents(db, code),
+    auditNote: 'B35 פינוי מדף ' + code + ' · ' + rows.length + ' סוגים · ' + rows.reduce(function (s, r) { return s + r.packages; }, 0) + ' חבילות חזרו למלאי הלא-ממודף'
+  };
+}
+
+// ספירת מדף (גם ספירת פתיחה): קובעת כמות מדויקת לכל סוג במדף.
+// עודף נמשך קודם מהמלאי הלא-ממודף (מידוף — לא משנה סך מלאי);
+// רק מה שאין לו כיסוי נרשם כהתאמה עם סיבה, וכך גם חוסר.
+function b35ShelfCount(db, p, user) {
+  var sh = b35Shelf(db, p.shelf_code);
+  if (!sh) return { ok: false, error: 'מדף לא נמצא' };
+  var code = String(sh.code);
+  var lines = Array.isArray(p.lines) ? p.lines : [];
+  if (!lines.length && p.full !== true) return { ok: false, error: 'לא נספרה אף חבילה' };
+  var reason = String(p.note || '').trim() || 'ספירת מדף';
+  var counted = {};
+  for (var i = 0; i < lines.length; i++) {
+    var tp = b35Type(db, lines[i].type_id);
+    if (!tp) return { ok: false, error: 'סוג אריזה לא נמצא' };
+    var n = Math.round(Number(lines[i].count));
+    if (!(n >= 0)) return { ok: false, error: 'כמות בספירה לא יכולה להיות שלילית' };
+    counted[tp.id] = n;
+  }
+  // סגירה מלאה: כל סוג שרשום במדף ולא נספר — נחשב 0
+  if (p.full === true) {
+    b35ShelfContents(db, code).forEach(function (c) { if (counted[c.type_id] === undefined) counted[c.type_id] = 0; });
+  }
+  var moved = 0, added = 0, removed = 0, changed = 0;
+  Object.keys(counted).forEach(function (tid) {
+    var cur = b35Map(db, tid)[code] || 0;
+    var diff = counted[tid] - cur;
+    if (!diff) return;
+    changed++;
+    if (diff > 0) {
+      var free = Math.max(0, b35Map(db, tid)[''] || 0);
+      var fromStock = Math.min(free, diff);
+      if (fromStock > 0) {
+        b34AppendMove(db, { type_id: tid, count: fromStock, move_type: 'מידוף', shelf_code: code, from_shelf: '', case_id: '', order_id: '', delivery_id: '', user: user || '', note: reason });
+        moved += fromStock;
+      }
+      var rest = diff - fromStock;
+      if (rest > 0) {
+        b34AppendMove(db, { type_id: tid, count: rest, move_type: 'התאמה', shelf_code: code, from_shelf: '', case_id: '', order_id: '', delivery_id: '', user: user || '', note: reason + ' — נמצאו חבילות שלא היו רשומות' });
+        added += rest;
+      }
+    } else {
+      b34AppendMove(db, { type_id: tid, count: diff, move_type: 'התאמה', shelf_code: code, from_shelf: '', case_id: '', order_id: '', delivery_id: '', user: user || '', note: reason + ' — חסרות חבילות מול הרישום' });
+      removed += -diff;
+    }
+  });
+  return {
+    ok: true, shelf: code, changed: changed, moved: moved, added: added, removed: removed,
+    contents: b35ShelfContents(db, code),
+    auditNote: 'B35 ספירת מדף ' + code + ' · ' + changed + ' סוגים · מודפו ' + moved + ' · נוספו ' + added + ' · נגרעו ' + removed + ' · ' + reason
+  };
 }
