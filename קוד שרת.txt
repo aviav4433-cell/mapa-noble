@@ -611,12 +611,26 @@ function handle(action, p, db, user) {
       var row = p.row || {};
       if (['carts', 'machines', 'vehicles'].indexOf(p.table) === -1)
         row.id = row.id || genId(p.table.substring(0, 4).toUpperCase());
-      var NAME_UNIQUE = { customers: 'לקוח', suppliers: 'ספק', items: 'פריט' };
+      var NAME_UNIQUE = { customers: 'לקוח', suppliers: 'ספק' };
       if (NAME_UNIQUE[p.table] && row.name) {
         var nm = String(row.name).trim();
         row.name = nm;
         if (db[TMAP[p.table]].some(function (x) { return String(x.name).trim() === nm && x.active !== 'לא'; }))
           return { ok: false, error: NAME_UNIQUE[p.table] + ' בשם "' + nm + '" כבר קיים במערכת' };
+      }
+      // B25: פריטים — מותר לשם להיות משותף בין וריאציות (צבע/מידה שונים); חסום רק שכפול מדויק
+      if (p.table === 'items' && row.name) {
+        var inm = String(row.name).trim(); row.name = inm;
+        var isz = String(row.size || '').trim(), icl = String(row.color || '').trim();
+        if (db.items.some(function (x) { return String(x.name).trim() === inm && String(x.size || '').trim() === isz && String(x.color || '').trim() === icl && x.active !== 'לא'; }))
+          return { ok: false, error: 'פריט עם אותו שם, מידה וצבע כבר קיים' };
+        var famItem = db.items.find(function (x) { return String(x.name).trim() === inm && x.active !== 'לא'; });
+        if (famItem && famItem.prefix) row.prefix = famItem.prefix;
+        if (!row.prefix) return { ok: false, error: 'קידומת ליחידות חובה' };
+        row.prefix = String(row.prefix).toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!row.prefix) return { ok: false, error: 'קידומת ליחידות חייבת אותיות/ספרות באנגלית' };
+        var itemSeq = nextNumber(db, 'itembar_' + row.prefix, 1);
+        row.barcode = row.prefix + '-' + ('000' + itemSeq).slice(-3);
       }
       if (p.table === 'customers' && !row.portal_code) {
         row.portal_code = ('C' + Math.random().toString(36).substring(2, 8)).toUpperCase();
