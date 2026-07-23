@@ -1015,6 +1015,47 @@ function handle(action, p, db, user) {
       db.invoices.push(inv); writeTable('invoices', db.invoices);
       return { ok: true, invoice: inv, auditNote: 'חשבונית ' + inv.number };
     }
+    // B31a: הפקת חשבוניות חסרות לפני גביה — כדי שכל שקל שנגבה ייקשר לחשבונית וייכנס להכנסות.
+    // אידמפוטנטי: הזמנה שכבר יש לה חשבונית פעילה אינה נוגעת. הזמנה ללא יתרה אינה מחויבת
+    // (הפקת חשבונית עליה הייתה יוצרת חוב מע"מ חדש יש מאין).
+    case 'b31EnsureInvoice': {
+      var listEI = [];
+      if (p.order_id) {
+        var oEI = db.orders.find(function (x) { return x.id === p.order_id; });
+        if (!oEI) return { ok: false, error: 'הזמנה לא נמצאה' };
+        listEI = [oEI];
+      } else if (p.customer_id) {
+        listEI = db.orders.filter(function (x) {
+          return x.customer_id === p.customer_id
+            && ['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(x.status) === -1
+            && orderBalance(db, x.id) > 0.01;
+        });
+      } else return { ok: false, error: 'חסר מזהה לקוח או הזמנה' };
+      // ההפקה עוברת דרך b1CreateInvoice — אותו מנוע בדיוק כמו הפקה ידנית:
+      // מע"מ מהגדרות המערכת, הערת טיוטה לרו"ח, סוג מסמך, ושמירת המסמך ב-Drive.
+      var madeEI = [], errEI = '';
+      for (var iEI = 0; iEI < listEI.length; iEI++) {
+        var oX = listEI[iEI];
+        if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oX.status) > -1) continue;
+        if (db.invoices.some(function (v) { return v.order_id === oX.id && v.status !== 'בוטלה'; })) continue;
+        if (orderBalance(db, oX.id) <= 0.01) continue;
+        var rEI = b1CreateInvoice(db, {
+          order_id: oX.id,
+          invoice_type: p.invoice_type || 'חשבונית מס',   // B31c: מסמך מס אמיתי; הקבלה מופקת בנפרד על הסכום שנגבה
+          allocation_number: ''
+        }, user);
+        if (rEI && rEI.ok) madeEI.push({ id: rEI.invoice.id, number: rEI.invoice.number, url: rEI.invoice.pdf_url || '', type: rEI.invoice.type || '' });
+        else if (rEI && rEI.error) errEI = rEI.error;
+      }
+      if (!madeEI.length && errEI) return { ok: false, error: errEI };
+      return {
+        ok: true, created: madeEI.length, docs: madeEI,
+        numbers: madeEI.map(function (d) { return d.number; }),
+        auditNote: madeEI.length
+          ? 'הופקו מסמכים לפני גביה: ' + madeEI.map(function (d) { return (d.type || '') + ' ' + d.number; }).join(', ')
+          : 'אין מסמכים חסרים'
+      };
+    }
     case 'cancelInvoice': {
       var iv = db.invoices.find(function (x) { return x.id === p.invoice_id; });
       if (!iv) return { ok: false, error: 'חשבונית לא נמצאה' };
@@ -1037,7 +1078,10 @@ function handle(action, p, db, user) {
         var payL = {
           id: genId('PAY'), order_id: '', invoice_id: ivL.id,
           receipt_number: nextNumber(db, 'receipt', 5001), date: p.date || today(),
-          amount: Number(p.amount), method: p.method || '', note: p.note || ''
+          amount: Number(p.amount), method: p.method || '', note: p.note || '',
+          // B31a: קישור ישיר ללקוח — לא רק דרך החשבונית
+          customer_id: ivL.customer_id || '', type: 'תשלום חשבונית', status: 'שולם',
+          created_by: user || '', created_at: nowTs()
         };
         db.payments.push(payL); writeTable('payments', db.payments);
         if (balL - Number(p.amount) <= 0.01) { ivL.status = 'שולמה'; writeTable('invoices', db.invoices); }
@@ -1047,10 +1091,14 @@ function handle(action, p, db, user) {
       var bal = orderBalance(db, p.order_id);
       if (Number(p.amount) > bal + 0.01) return { ok: false, error: 'הסכום גבוה מהיתרה (' + bal + ' ₪)' };
       var inv2 = db.invoices.find(function (v) { return v.order_id === p.order_id && v.status !== 'בוטלה'; });
+      var ordAP = db.orders.find(function (x) { return x.id === p.order_id; });
       var pay = {
         id: genId('PAY'), order_id: p.order_id, invoice_id: inv2 ? inv2.id : '',
         receipt_number: nextNumber(db, 'receipt', 5001), date: p.date || today(),
-        amount: Number(p.amount), method: p.method || '', note: p.note || ''
+        amount: Number(p.amount), method: p.method || '', note: p.note || '',
+        // B31a: קישור ישיר ללקוח
+        customer_id: ordAP ? (ordAP.customer_id || '') : '', type: 'תשלום הזמנה', status: 'שולם',
+        created_by: user || '', created_at: nowTs()
       };
       db.payments.push(pay); writeTable('payments', db.payments);
       if (inv2 && orderBalance(db, p.order_id) <= 0.01) { inv2.status = 'שולמה'; writeTable('invoices', db.invoices); }
@@ -3418,9 +3466,17 @@ function b2ProcessPayment(db, p, user) {
 
   // D15: הפקת קבלה מיד — HTML ל-Drive, קישור קבוע (מוצג גם בפורטל)
   var totalIls = agIls(orderAg + debtAg);
-  var html = b2BuildReceiptHtml(db, { number: rcptNum, date: p.date || today(), customer: cust, method: p.method || '', lines: docLines, total: totalIls, note: p.note || '' });
-  var url = invoiceSaveToDrive(db, 'RCPT-' + rcptNum, html);
-  if (url) newRows.forEach(function (r) { r.pdf_url = url; });
+  // B31c: כשהופקה "חשבונית מס-קבלה" — המסמך המאוחד כבר משמש כקבלה.
+  // שורת התשלום נשמרת כרגיל (היא זו שמקטינה את החוב), אך לא מופק מסמך קבלה שני.
+  var url = '';
+  if (p.receipt_doc === false) {
+    url = String(p.doc_url || '');
+    newRows.forEach(function (r) { r.pdf_url = url; r.type = (r.type || 'תשלום') + ' · חשבונית מס-קבלה'; });
+  } else {
+    var html = b2BuildReceiptHtml(db, { number: rcptNum, date: p.date || today(), customer: cust, method: p.method || '', lines: docLines, total: totalIls, note: p.note || '' });
+    url = invoiceSaveToDrive(db, 'RCPT-' + rcptNum, html);
+    if (url) newRows.forEach(function (r) { r.pdf_url = url; });
+  }
 
   writeTable('payments', db.payments);
   if (invTouched) writeTable('invoices', db.invoices);
