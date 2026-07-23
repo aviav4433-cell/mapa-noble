@@ -105,7 +105,8 @@ var TABLES = {
   customers: ['id', 'name', 'type', 'payment_terms', 'vat_id', 'address', 'notes', 'portal_code', 'active', 'phone', 'email', 'city', 'warehouse_id', 'deviation_pct', 'price_per_kg', 'credit_limit', 'customer_category', 'notify_pref'],
   contacts: ['id', 'customer_id', 'name', 'role', 'phone', 'email', 'is_primary', 'note'],
   customer_prices: ['id', 'customer_id', 'item_id', 'price_type', 'price'],
-  items: ['id', 'name', 'category', 'size', 'color', 'rent_price', 'wash_price', 'barcode', 'min_stock', 'prefix', 'active', 'supplier_id', 'purchase_cost', 'location', 'notes', 'weight_kg', 'deviation_pct', 'replacement_price'],
+  // B26: נוספו subtype (תת-סוג/בד) ו-image_url (תמונת פריט) — בסוף בלבד (מיגרציה בטוחה) — להריץ setupDatabase
+  items: ['id', 'name', 'category', 'size', 'color', 'rent_price', 'wash_price', 'barcode', 'min_stock', 'prefix', 'active', 'supplier_id', 'purchase_cost', 'location', 'notes', 'weight_kg', 'deviation_pct', 'replacement_price', 'subtype', 'image_url'],
   units: ['id', 'item_id', 'barcode', 'status', 'note', 'created'],
   stock_moves: ['id', 'date', 'item_id', 'type', 'qty', 'ref', 'note', 'warehouse_id'],
   suppliers: ['id', 'name', 'phone', 'email', 'vat_id', 'notes', 'active', 'address', 'contact_name', 'payment_terms'],
@@ -1447,7 +1448,7 @@ function handle(action, p, db, user) {
       var pc = db.customers.find(function (c) { return c.portal_code && String(c.portal_code) === String(p.code).toUpperCase() && c.active !== 'לא'; });
       if (!pc) return { ok: false, error: 'קוד לקוח שגוי' };
       var items = db.items.filter(function (i) { return i.active !== 'לא' && Number(i.rent_price) > 0; }).map(function (i) {
-        return { id: i.id, name: i.name, size: i.size, color: i.color, price: linePrice(db, pc.id, i.id, 'השכרה') };
+        return { id: i.id, name: i.name, size: i.size, color: i.color, price: linePrice(db, pc.id, i.id, 'השכרה'), image_url: i.image_url || '' };
       });
       var myOrders = db.orders.filter(function (o) { return o.customer_id === pc.id; }).map(function (o) {
         // B5: מעקב משלוח — סטטוס + ETA טקסטואלי (D14). מציגים את המשלוח הפתוח האחרון, ואם אין — האחרון שבוצע.
@@ -1618,6 +1619,21 @@ function handle(action, p, db, user) {
       writeTable('deliveries', db.deliveries);
       return { ok: true, url: dvS.signature_url };
     }
+    // B26: תמונת פריט — נשמרת ב-Drive ומקושרת לפריט (items.image_url)
+    case 'uploadItemImage': {
+      var itI = db.items.find(function (x) { return x.id === p.item_id; });
+      if (!itI) return { ok: false, error: 'פריט לא נמצא' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      var fnI = 'MAPA-NOBLE תמונות פריטים';
+      var flsI = DriveApp.getFoldersByName(fnI);
+      var fldI = flsI.hasNext() ? flsI.next() : DriveApp.createFolder(fnI);
+      var fI = fldI.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, 'פריט_' + itI.id));
+      fI.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      itI.image_url = fI.getUrl();
+      writeTable('items', db.items);
+      return { ok: true, url: itI.image_url };
+    }
     case 'attachNoteFile': {
       var nt2 = db.notes.find(function (x) { return x.id === p.note_id; });
       if (!nt2) return { ok: false, error: 'תרשומת לא נמצאה' };
@@ -1637,7 +1653,7 @@ function handle(action, p, db, user) {
     // ---- חנות ציבורית (דף נחיתה) — ללא סיסמה ----
     case 'portalCatalog': {
       var items3 = db.items.filter(function (i) { return i.active !== 'לא' && Number(i.rent_price) > 0; }).map(function (i) {
-        return { id: i.id, name: i.name, size: i.size, color: i.color, price: Number(i.rent_price) };
+        return { id: i.id, name: i.name, size: i.size, color: i.color, price: Number(i.rent_price), image_url: i.image_url || '' };
       });
       var fee = Number((db.settings.find(function (s) { return s.key === 'default_delivery_fee'; }) || {}).value || 0);
       var bn = (db.settings.find(function (s) { return s.key === 'business_name'; }) || {}).value || '';
