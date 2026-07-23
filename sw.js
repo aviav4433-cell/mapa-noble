@@ -1,13 +1,13 @@
 /* MAPA-NOBLE — Service Worker
    B18: שלד PWA, קריאה בלבד במצב אופליין.
-   מטמון app shell בלבד (index.html, manifest, אייקונים).
-   בקשות לשרת ה-API (Apps Script) עוברות תמיד ישירות לרשת —
-   אין ניסיון למטמן תשובות POST של ה-API כאן; נתוני המסלול של הנהג
-   נשמרים בצד הממשק (localStorage) בכל טעינה מוצלחת של getAll,
-   וזו הדרך שבה מסך הנהג ממשיך להציג נתונים במצב אופליין.
-   שינוי גרסת המטמון (CACHE_NAME) מנקה מטמון ישן בכל פריסה חדשה. */
+   B28 (תיקון): המטמון היה cache-first, ולכן אחרי כל העלאה לריפו הפתיחה
+   הראשונה בטלפון הציגה את הגרסה הישנה והחדשה נטענה רק בפתיחה הבאה.
+   מעתה index.html והדף הראשי ו-manifest.json עוברים ב-network-first:
+   קודם מנסים רשת, ורק אם אין רשת נופלים למטמון. האייקונים נשארים
+   cache-first (הם לא משתנים ואין טעם לשלם עליהם קריאת רשת).
+   בקשות ה-API של Apps Script (POST) לא עוברות דרך כאן כלל. */
 
-var CACHE_NAME = 'mn-shell-v1';
+var CACHE_NAME = 'mn-shell-v2';   // B28: העלאת גרסה מנקה את המטמון הישן
 var SHELL_FILES = [
   './',
   './index.html',
@@ -32,6 +32,16 @@ self.addEventListener('activate', function(event){
   );
 });
 
+// האם זה קובץ שחייב להיות תמיד מעודכן (הממשק עצמו)?
+function isFreshFirst(url){
+  var path = url.pathname;
+  if(url.search) return true;                       // ?portal=1 / ?shop=1 וכו'
+  if(/\/$/.test(path)) return true;                 // הדף הראשי
+  if(/index\.html$/.test(path)) return true;
+  if(/manifest\.json$/.test(path)) return true;
+  return false;
+}
+
 self.addEventListener('fetch', function(event){
   var req = event.request;
 
@@ -41,14 +51,30 @@ self.addEventListener('fetch', function(event){
   }
 
   var url = new URL(req.url);
-  var isSameOrigin = url.origin === self.location.origin;
-
-  if (!isSameOrigin){
+  if (url.origin !== self.location.origin){
     // משאבים חיצוניים (למשל גופנים) — רשת, בלי הפרעה
     return;
   }
 
-  // app shell — cache-first עם עדכון ברקע (stale-while-revalidate)
+  if (isFreshFirst(url)){
+    // B28: network-first — תמיד הגרסה החדשה כשיש רשת, מטמון רק כגיבוי אופליין
+    event.respondWith(
+      fetch(req).then(function(res){
+        if (res && res.ok){
+          var copy = res.clone();
+          caches.open(CACHE_NAME).then(function(cache){ cache.put(req, copy); });
+        }
+        return res;
+      }).catch(function(){
+        return caches.match(req).then(function(cached){
+          return cached || caches.match('./index.html');
+        });
+      })
+    );
+    return;
+  }
+
+  // שאר משאבי השלד (אייקונים) — cache-first עם רענון ברקע
   event.respondWith(
     caches.match(req).then(function(cached){
       var network = fetch(req).then(function(res){
