@@ -107,10 +107,12 @@ var TABLES = {
   customer_prices: ['id', 'customer_id', 'item_id', 'price_type', 'price'],
   // B26: נוספו subtype (תת-סוג/בד) ו-image_url (תמונת פריט) — בסוף בלבד (מיגרציה בטוחה) — להריץ setupDatabase
   items: ['id', 'name', 'category', 'size', 'color', 'rent_price', 'wash_price', 'barcode', 'min_stock', 'prefix', 'active', 'supplier_id', 'purchase_cost', 'location', 'notes', 'weight_kg', 'deviation_pct', 'replacement_price', 'subtype', 'image_url'],
-  units: ['id', 'item_id', 'barcode', 'status', 'note', 'created'],
+  // B27: deleted = מחיקה רכה (המזהה נשמר להיסטוריה ומוסתר מהתצוגה)
+  units: ['id', 'item_id', 'barcode', 'status', 'note', 'created', 'deleted', 'deleted_by', 'deleted_at'],
   stock_moves: ['id', 'date', 'item_id', 'type', 'qty', 'ref', 'note', 'warehouse_id'],
   suppliers: ['id', 'name', 'phone', 'email', 'vat_id', 'notes', 'active', 'address', 'contact_name', 'payment_terms'],
-  purchases: ['id', 'supplier_id', 'date', 'status', 'notes', 'invoice_number', 'receipt_number', 'details'],
+  // B27: payment_mode = 'לתשלום בהמשך' / 'שולם'; fexp_id = החוב לספק שנוצר בקבלה
+  purchases: ['id', 'supplier_id', 'date', 'status', 'notes', 'invoice_number', 'receipt_number', 'details', 'payment_mode', 'fexp_id'],
   purchase_lines: ['id', 'purchase_id', 'item_id', 'qty', 'unit_cost'],
   // B2: payment_status — 'ממתין לתשלום' / 'באשראי מסגרת' / 'ממתין לתשלום הפרש' / 'ממתין לאישור חריגה' / 'תשלום בהמשך' / 'שולם חלקית' / 'שולם'
   orders: ['id', 'type', 'customer_id', 'start_date', 'end_date', 'status', 'notes', 'created_at', 'warehouse_id', 'delivery_fee', 'shortage_charge', 'order_number', 'payment_status'],
@@ -141,7 +143,12 @@ var TABLES = {
   // B20: תשלומי שכר בפועל (מלא/חלקי) — מאפשר מעקב יתרה לתשלום
   payroll_payments: ['id', 'payroll_id', 'employee_id', 'amount', 'method', 'note', 'paid_at', 'created_by'],
   // B20: הוצאות עתידיות (שכר שאושר וטרם שולם + הוצאות אחרות מתוכננות)
-  future_expenses: ['id', 'source', 'ref_id', 'employee_id', 'category', 'description', 'amount', 'due_date', 'urgency', 'status', 'created_at'],
+  // B27: נוספו supplier_id (חוב לספק) ו-vat_amount (רכיב המע"מ בתוך הסכום)
+  future_expenses: ['id', 'source', 'ref_id', 'employee_id', 'category', 'description', 'amount', 'due_date', 'urgency', 'status', 'created_at', 'supplier_id', 'vat_amount'],
+  // B27: תשלומים בפועל כנגד הוצאה עתידית (מלא או חלקי)
+  expense_payments: ['id', 'fexp_id', 'supplier_id', 'amount', 'method', 'note', 'paid_at', 'created_by', 'created_at'],
+  // B27: אסמכתאות תשלום — כמה קבצים/הערות לכל תשלום. pay_kind = 'expense' / 'payroll'
+  payment_docs: ['id', 'pay_kind', 'pay_id', 'url', 'name', 'note', 'created_by', 'created_at'],
   tasks: ['id', 'title', 'details', 'assignee_id', 'due_date', 'priority', 'status', 'meeting_id', 'created_by', 'created_at'],
   task_comments: ['id', 'task_id', 'ts', 'user', 'text', 'status', 'handled_by', 'handled_ts'],
   meetings: ['id', 'title', 'date', 'time', 'participants', 'protocol', 'created_by', 'location', 'participant_ids'],
@@ -200,6 +207,8 @@ var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'setBonus', 'appr
   'renewPortalCode',
   // B20: תוספות/ניכויי שכר, תשלום שכר, הוצאות עתידיות, ותיקון חד-פעמי לנתוני תאריך/שעה
   'addPayrollAdjustment', 'payPayroll', 'addFutureExpense', 'markFutureExpensePaid', 'repairTimeFields',
+  // B27: מחיקת יחידות, איפוס מונה, ותשלום כנגד הוצאה עתידית — מנהל בלבד
+  'deleteUnits', 'resetUnitCounter', 'payFutureExpense',
   // B21: פסילת שעות נוכחות — מנהל בלבד
   'voidAttendance'];
 
@@ -308,6 +317,8 @@ var TMAP = {
   expenses: 'expenses', laundry_tasks: 'laundryTasks', carts: 'carts', machines: 'machines', shelves: 'shelves', links: 'links',
   employees: 'employees', attendance: 'attendance', payroll: 'payroll', settings: 'settings', counters: 'counters', audit_log: 'auditLog',
   payroll_adjustments: 'payrollAdjustments', payroll_payments: 'payrollPayments', future_expenses: 'futureExpenses',
+  // B27
+  expense_payments: 'expensePayments', payment_docs: 'paymentDocs',
   laundry_intakes: 'laundryIntakes', intake_carts: 'intakeCarts', laundry_events: 'laundryEvents',
   // B1: טבלאות חדשות
   credit_profiles: 'creditProfiles', call_logs: 'callLogs', notifications: 'notifications'
@@ -1019,22 +1030,37 @@ function handle(action, p, db, user) {
     }
 
     // ---- רכש ----
+    // B27: קבלת רכש כבר לא רושמת הוצאה ששולמה. היא מגדילה מלאי ויוצרת חוב לספק
+    // ב"הוצאות עתידיות". ההוצאה בפועל נרשמת רק כשמשלמים (payFutureExpense),
+    // מלא או חלקי. אם אבי בחר "שולם במקום" — הממשק פותח מיד את חלון התשלום על החוב הזה.
     case 'receivePurchase': {
       var pu = db.purchases.find(function (x) { return x.id === p.purchase_id; });
       if (!pu) return { ok: false, error: 'רכש לא נמצא' };
       if (pu.status !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל' };
       var lines = db.purchaseLines.filter(function (l) { return l.purchase_id === pu.id; });
       if (!lines.length) return { ok: false, error: 'אין שורות ברכש' };
+      var netSum = 0;
       lines.forEach(function (l) {
+        netSum += Number(l.qty) * Number(l.unit_cost);
         db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: l.item_id, type: 'קניה', qty: Number(l.qty), ref: pu.id, note: 'קבלת רכש', warehouse_id: p.warehouse_id || '' });
-        db.expenses.push({
-          id: genId('EXP'), date: today(), category: 'רכש מלאי', supplier_id: pu.supplier_id,
-          amount: Number(l.qty) * Number(l.unit_cost), vat: Math.round(Number(l.qty) * Number(l.unit_cost) * VAT_RATE * 100) / 100, note: 'רכש ' + pu.id
-        });
       });
+      netSum = Math.round(netSum * 100) / 100;
+      var vatSum = Math.round(netSum * VAT_RATE * 100) / 100;
+      var grossSum = Math.round((netSum + vatSum) * 100) / 100;
+      var supRP = db.suppliers.find(function (x) { return x.id === pu.supplier_id; });
+      var feRP = {
+        id: genId('FEXP'), source: 'purchase', ref_id: pu.id, employee_id: '', category: 'רכש מלאי',
+        description: 'רכש ' + (supRP ? supRP.name : '') + (pu.invoice_number ? ' · חשבונית ' + pu.invoice_number : '') + ' · ' + lines.length + ' שורות',
+        amount: grossSum, due_date: p.due_date || '', urgency: 'רגיל', status: 'ממתין', created_at: nowTs(),
+        supplier_id: pu.supplier_id || '', vat_amount: vatSum
+      };
+      db.futureExpenses.push(feRP);
       pu.status = 'התקבלה';
-      writeTable('purchases', db.purchases); writeTable('stock_moves', db.stockMoves); writeTable('expenses', db.expenses);
-      return { ok: true };
+      pu.payment_mode = (p.payment_mode === 'שולם') ? 'שולם' : 'לתשלום בהמשך';
+      pu.fexp_id = feRP.id;
+      writeTable('purchases', db.purchases); writeTable('stock_moves', db.stockMoves);
+      writeTable('future_expenses', db.futureExpenses);
+      return { ok: true, fexp_id: feRP.id, amount: grossSum, net: netSum, vat: vatSum, auditNote: 'קבלת רכש ' + pu.id + ' · חוב לספק ' + grossSum + ' ₪' };
     }
 
     // ---- ברקוד ----
@@ -1046,7 +1072,7 @@ function handle(action, p, db, user) {
         ok: true, kind: 'item', entity: it,
         stock: totalStock(db, it.id), inLaundry: inLaundryQty(db, it.id)
       };
-      var un = db.units.find(function (u) { return String(u.barcode) === bc || String(u.id) === bc; });
+      var un = db.units.find(function (u) { return u.deleted !== 'כן' && (String(u.barcode) === bc || String(u.id) === bc); });
       if (un) {
         var uit = db.items.find(function (i) { return i.id === un.item_id; });
         return { ok: true, kind: 'unit', entity: un, item: uit || null };
@@ -1334,8 +1360,9 @@ function handle(action, p, db, user) {
       var method = p.method || 'העברה';
       // B21: תאריך תשלום ניתן לעריכה — ברירת מחדל היום
       var payDate = /^\d{4}-\d{2}-\d{2}$/.test(String(p.paid_at || '')) ? String(p.paid_at) : today();
+      var ppayId = genId('PPAY');
       db.payrollPayments.push({
-        id: genId('PPAY'), payroll_id: prP.id, employee_id: prP.employee_id, amount: payAmt,
+        id: ppayId, payroll_id: prP.id, employee_id: prP.employee_id, amount: payAmt,
         method: method, note: p.note || '', paid_at: payDate, created_by: user || ''
       });
       writeTable('payroll_payments', db.payrollPayments);
@@ -1349,7 +1376,7 @@ function handle(action, p, db, user) {
       writeTable('expenses', db.expenses);
       syncFutureExpenseForPayroll(db, prP);
       return {
-        ok: true, remaining: Math.round((Number(prP.total) - newPaid) * 100) / 100, status: prP.status,
+        ok: true, pay_id: ppayId, remaining: Math.round((Number(prP.total) - newPaid) * 100) / 100, status: prP.status,
         auditNote: 'תשלום שכר ' + (empP ? empP.name : '') + ' ' + prP.month + ' סכום ' + payAmt + ' ₪'
       };
     }
@@ -1378,6 +1405,110 @@ function handle(action, p, db, user) {
       writeTable('expenses', db.expenses);
       return { ok: true, auditNote: 'סומן כשולם: ' + fe.category + ' ' + fe.amount + ' ₪' };
     }
+    // ===================== B27 =====================
+    // מחיקת יחידות ממוספרות. ברירת מחדל: מחיקה רכה — השורה נשארת בטבלה לצורך
+    // היסטוריה ומוסתרת מכל תצוגה. מחיקה מלאה (hard) מוחקת את השורה לגמרי
+    // ומיועדת לטעויות/בדיקות בלבד — מנהל בלבד, ובממשק גם קוד מנהל.
+    case 'deleteUnits': {
+      var uIds = Array.isArray(p.unit_ids) ? p.unit_ids : (p.unit_id ? [p.unit_id] : []);
+      if (!uIds.length) return { ok: false, error: 'לא נבחרו יחידות' };
+      var hard = p.mode === 'hard';
+      var blocked = [], done = [];
+      uIds.forEach(function (uid) {
+        var u27 = db.units.find(function (x) { return x.id === uid; });
+        if (!u27) return;
+        // חסימה: יחידה שמשויכת להזמנה פתוחה או נמצאת בכביסה
+        if (['בשימוש', 'בכביסה', 'אצל לקוח'].indexOf(String(u27.status)) > -1) { blocked.push(uid); return; }
+        done.push(uid);
+      });
+      if (!done.length) return { ok: false, error: 'כל היחידות שנבחרו בשימוש ולא ניתן למחוק אותן' };
+      if (hard) {
+        db.units = db.units.filter(function (x) { return done.indexOf(x.id) === -1; });
+      } else {
+        db.units.forEach(function (x) {
+          if (done.indexOf(x.id) > -1) { x.deleted = 'כן'; x.deleted_by = user || ''; x.deleted_at = nowTs(); }
+        });
+      }
+      writeTable('units', db.units);
+      return {
+        ok: true, deleted: done.length, blocked: blocked,
+        auditNote: (hard ? 'מחיקה מלאה' : 'מחיקה רכה') + ' של ' + done.length + ' יחידות'
+      };
+    }
+    // איפוס המונה הסידורי של יחידות לפריט — מנהל בלבד. מיועד למקרה שנוצרו
+    // יחידות בטעות ונמחקו, כדי שהמספור יתחיל מחדש.
+    case 'resetUnitCounter': {
+      var itRC = db.items.find(function (x) { return x.id === p.item_id; });
+      if (!itRC) return { ok: false, error: 'פריט לא נמצא' };
+      var pfx = String(itRC.prefix || '').trim();
+      if (!pfx) return { ok: false, error: 'לפריט אין קידומת' };
+      var liveRC = db.units.filter(function (u) { return u.item_id === itRC.id && u.deleted !== 'כן'; });
+      if (liveRC.length) return { ok: false, error: 'לפריט יש ' + liveRC.length + ' יחידות פעילות — אי אפשר לאפס את המונה' };
+      db.counters = db.counters.filter(function (c) { return c.key !== 'unit_' + pfx; });
+      writeTable('counters', db.counters);
+      return { ok: true, auditNote: 'איפוס מונה יחידות ' + pfx };
+    }
+    // תשלום כנגד הוצאה עתידית — מלא או חלקי. רושם הוצאה בפועל בסכום ששולם,
+    // ומחלץ מע"מ יחסי אם ההוצאה נוצרה מרכש. היתרה נשארת פתוחה.
+    case 'payFutureExpense': {
+      var feP = db.futureExpenses.find(function (x) { return x.id === p.id; });
+      if (!feP) return { ok: false, error: 'הוצאה עתידית לא נמצאה' };
+      if (feP.source === 'payroll') return { ok: false, error: 'יתרת שכר משולמת דרך מסך השכר' };
+      var amtP = Math.round((Number(p.amount) || 0) * 100) / 100;
+      if (amtP <= 0) return { ok: false, error: 'סכום לא תקין' };
+      var totFE = Number(feP.amount) || 0;
+      var paidFE = expensePaidSum(db, feP.id);
+      var remFE = Math.round((totFE - paidFE) * 100) / 100;
+      if (amtP > remFE + 0.01) return { ok: false, error: 'הסכום גבוה מהיתרה לתשלום (' + remFE + ' ₪)' };
+      var dateP = /^\d{4}-\d{2}-\d{2}$/.test(String(p.paid_at || '')) ? String(p.paid_at) : today();
+      var epId = genId('EPAY');
+      db.expensePayments.push({
+        id: epId, fexp_id: feP.id, supplier_id: feP.supplier_id || '', amount: amtP,
+        method: p.method || 'העברה', note: p.note || '', paid_at: dateP, created_by: user || '', created_at: nowTs()
+      });
+      writeTable('expense_payments', db.expensePayments);
+      var vatTot = Number(feP.vat_amount) || 0;
+      var vatPart = totFE > 0 ? Math.round(vatTot * (amtP / totFE) * 100) / 100 : 0;
+      db.expenses.push({
+        id: genId('EXP'), date: dateP, category: feP.category || 'אחר', supplier_id: feP.supplier_id || '',
+        amount: Math.round((amtP - vatPart) * 100) / 100, vat: vatPart,
+        note: (feP.description || '') + ' (' + (p.method || 'העברה') + ')'
+      });
+      writeTable('expenses', db.expenses);
+      var newPaidFE = Math.round((paidFE + amtP) * 100) / 100;
+      feP.status = (newPaidFE + 0.01 >= totFE) ? 'שולם' : 'שולם חלקית';
+      writeTable('future_expenses', db.futureExpenses);
+      return {
+        ok: true, pay_id: epId, remaining: Math.round((totFE - newPaidFE) * 100) / 100, status: feP.status,
+        auditNote: 'תשלום הוצאה ' + (feP.description || feP.category) + ' סכום ' + amtP + ' ₪'
+      };
+    }
+    // צירוף אסמכתא לתשלום — אפשר כמה לכל תשלום. הקובץ נשמר בגוגל דרייב.
+    case 'uploadPaymentDoc': {
+      var kindD = (p.pay_kind === 'payroll') ? 'payroll' : 'expense';
+      if (!p.pay_id) return { ok: false, error: 'חסר מזהה תשלום' };
+      var urlD = '';
+      if (p.base64) {
+        if (!p.mime) return { ok: false, error: 'סוג קובץ חסר' };
+        if (String(p.base64).length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+        var fnD = 'MAPA-NOBLE אסמכתאות תשלום';
+        var flsD = DriveApp.getFoldersByName(fnD);
+        var fldD = flsD.hasNext() ? flsD.next() : DriveApp.createFolder(fnD);
+        var fD = fldD.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, (p.name || 'אסמכתא') + '_' + p.pay_id));
+        fD.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        urlD = fD.getUrl();
+      } else if (!p.note) {
+        return { ok: false, error: 'יש לצרף קובץ או לכתוב פירוט' };
+      }
+      var docId = genId('PDOC');
+      appendRowToTable('payment_docs', {
+        id: docId, pay_kind: kindD, pay_id: p.pay_id, url: urlD, name: p.name || '',
+        note: p.note || '', created_by: user || '', created_at: nowTs()
+      });
+      return { ok: true, id: docId, url: urlD, auditNote: 'אסמכתא לתשלום ' + p.pay_id };
+    }
+    // ===================== סוף B27 =====================
+
     // B20: תיקון חד-פעמי — משחזר שדות תאריך/שעה שגוגל שיטס המיר בטעות ל-Date לפני התיקון בשורש (writeTable)
     case 'repairTimeFields': {
       var ss20 = SpreadsheetApp.getActiveSpreadsheet();
@@ -2043,6 +2174,11 @@ function linePrice(db, customerId, itemId, orderType) {
 var STAGES = ['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'מוכן'];
 var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
 
+// B27: סך התשלומים שבוצעו כנגד הוצאה עתידית מסוימת
+function expensePaidSum(db, fexpId) {
+  return Math.round((db.expensePayments || []).filter(function (x) { return x.fexp_id === fexpId; })
+    .reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0) * 100) / 100;
+}
 function totalStock(db, itemId, wh) {
   return db.stockMoves.filter(function (m) { return m.item_id === itemId && (wh === undefined || String(m.warehouse_id || '') === String(wh || '')); })
     .reduce(function (s, m) { return s + Number(m.qty); }, 0);
