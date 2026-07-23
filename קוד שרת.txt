@@ -134,10 +134,10 @@ var TABLES = {
   shelves: ['id', 'code', 'barcode', 'location', 'warehouse_id', 'notes', 'active'],
   links: ['id', 'from_type', 'from_id', 'to_type', 'to_id', 'note', 'created', 'user'],
   machines: ['id', 'type', 'capacity', 'status', 'last_service', 'next_service', 'manufacturer', 'model', 'serial', 'purchase_date', 'notes', 'auto_stage', 'barcode'],
-  employees: ['id', 'name', 'role', 'phone', 'pin', 'hourly_rate', 'views', 'can_edit', 'active', 'national_id', 'address', 'email', 'start_date', 'emergency_name', 'emergency_phone', 'bank_details', 'notes', 'license_number', 'license_expiry', 'username', 'password_hash'],
+  employees: ['id', 'name', 'role', 'phone', 'pin', 'hourly_rate', 'views', 'can_edit', 'active', 'national_id', 'address', 'email', 'start_date', 'emergency_name', 'emergency_phone', 'bank_details', 'notes', 'license_number', 'license_expiry', 'username', 'password_hash', 'pay_type', 'monthly_salary'],
   // B21: void_hours = שעות שנפסלו ע"י ההנהלה (חלקי או מלא), void_reason = סיבת הפסילה
   attendance: ['id', 'employee_id', 'date', 'in_time', 'out_time', 'hours', 'in_date', 'out_date', 'void_hours', 'void_reason', 'voided_by', 'voided_at'],
-  payroll: ['id', 'employee_id', 'month', 'hours', 'hourly_rate', 'base_pay', 'bonus', 'bonus_note', 'total', 'status'],
+  payroll: ['id', 'employee_id', 'month', 'hours', 'hourly_rate', 'base_pay', 'bonus', 'bonus_note', 'total', 'status', 'pay_type'],
   // B20: תוספות/ניכויים מפורטים לשכר (קטגוריה + הערה), נפרד מ-bonus הישן לתאימות לאחור
   payroll_adjustments: ['id', 'payroll_id', 'employee_id', 'month', 'type', 'category', 'amount', 'note', 'created_at', 'created_by'],
   // B20: תשלומי שכר בפועל (מלא/חלקי) — מאפשר מעקב יתרה לתשלום
@@ -195,7 +195,7 @@ var DEFAULT_SETTINGS = {
 };
 
 var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
-var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -486,6 +486,8 @@ function doPost(e) {
 // הערה: getHolidays בכוונה לא כאן — getHolidaySet עשוי לכתוב מטמון חגים ל-settings.
 // פעולות קריאה גם לא נרשמות ביומן הפעולות (כתיבת audit ללא נעילה אינה בטוחה).
 var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'scan', 'reports', 'ordersReport', 'findOrderByScan', 'portalGetData', 'portalCatalog', 'validateToken', 'loginByRemember', 'rememberLogin', 'nobleCartInfo', 'nobleBoard',
+  // תצוגה מקדימה של שכר — מחשבת ומציגה בלבד, אינה כותבת דבר
+  'buildPayroll', 'runGlobalPayroll',
   // B1: פעולות קריאה בלבד
   'b1GetInvoiceLink',
   // B2: קריאה בלבד — מצב אשראי והקשר מסך התשלום (D9). שים לב: b2GetReceiptLink היא פעולת כתיבה (שחזור ל-Drive) ולכן לא כאן.
@@ -1362,27 +1364,12 @@ function handle(action, p, db, user) {
       };
     }
     // ---- שכר ----
-    case 'buildPayroll': {
+    // שינוי מדיניות: השכר האמיתי מחושב אוטומטית ב-1 בכל חודש (monthlyPayrollRun).
+    // הכפתורים במסך השכר הם תצוגה מקדימה בלבד להנהלה — אינם כותבים דבר ואינם משפיעים על שכר העובד.
+    case 'buildPayroll':
+    case 'runGlobalPayroll': {
       if (!/^\d{4}-\d{2}$/.test(p.month || '')) return { ok: false, error: 'חודש בפורמט YYYY-MM' };
-      var built = 0;
-      db.employees.filter(function (e) { return e.active !== 'לא'; }).forEach(function (e) {
-        var hrs = db.attendance.filter(function (a) { return a.employee_id === e.id && String(a.date).substring(0, 7) === p.month && a.hours !== ''; })
-          .reduce(function (s, a) { return s + attEffHours(a); }, 0); // B21: שעות שנפסלו אינן מזכות בשכר
-        hrs = Math.round(hrs * 100) / 100;
-        var ex = db.payroll.find(function (x) { return x.employee_id === e.id && x.month === p.month; });
-        // B20: כל סטטוס מעבר ל"טיוטה" נעול משכתוב אוטומטי (לא רק "אושר")
-        if (ex && ex.status !== 'טיוטה') return;
-        var rate = Number(e.hourly_rate) || 0;
-        var base = Math.round(hrs * rate * 100) / 100;
-        if (ex) { ex.hours = hrs; ex.hourly_rate = rate; ex.base_pay = base; recomputePayrollTotal(ex, db); }
-        else {
-          var row = { id: genId('PAYR'), employee_id: e.id, month: p.month, hours: hrs, hourly_rate: rate, base_pay: base, bonus: 0, bonus_note: '', total: base, status: 'טיוטה' };
-          db.payroll.push(row);
-        }
-        built++;
-      });
-      writeTable('payroll', db.payroll);
-      return { ok: true, built: built };
+      return { ok: true, preview: true, month: p.month, rows: payrollPreviewRows(db, p.month) };
     }
     case 'setBonus': {
       var pr = db.payroll.find(function (x) { return x.id === p.payroll_id; });
@@ -2271,9 +2258,85 @@ function attEffHours(a) {
   if (v > h) v = h;
   return Math.round((h - v) * 100) / 100;
 }
+// בסיס השכר של עובד לחודש. גלובלי — סכום חודשי קבוע, אינו תלוי בנוכחות.
+// שעתי — שעות מזכות (אחרי פסילות) × תעריף.
+function payrollBaseFor(db, e, month) {
+  if (String(e.pay_type || '') === 'גלובלי') {
+    return { pay_type: 'גלובלי', hours: 0, rate: 0, base: Math.round((Number(e.monthly_salary) || 0) * 100) / 100 };
+  }
+  var hrs = db.attendance.filter(function (a) {
+    return a.employee_id === e.id && String(a.date).substring(0, 7) === month && a.hours !== '';
+  }).reduce(function (s, a) { return s + attEffHours(a); }, 0);
+  hrs = Math.round(hrs * 100) / 100;
+  var rate = Number(e.hourly_rate) || 0;
+  return { pay_type: 'שעתי', hours: hrs, rate: rate, base: Math.round(hrs * rate * 100) / 100 };
+}
+// תצוגה מקדימה של השכר לחודש — לבדיקות הנהלה בלבד. אינה כותבת דבר.
+function payrollPreviewRows(db, month) {
+  return db.employees.filter(function (e) { return e.active !== 'לא'; }).map(function (e) {
+    var c = payrollBaseFor(db, e, month);
+    var ex = db.payroll.find(function (x) { return x.employee_id === e.id && x.month === month; });
+    return {
+      employee_id: e.id, name: e.name, pay_type: c.pay_type,
+      hours: c.hours, hourly_rate: c.rate, base_pay: c.base,
+      saved_status: ex ? ex.status : '', saved_total: ex ? Number(ex.total) || 0 : 0
+    };
+  });
+}
+// החישוב האמיתי. יוצר/מעדכן רשומות שכר בסטטוס "טיוטה" בלבד.
+// רשומה שכבר אושרה או שולמה לעולם אינה נדרסת. בטוח להרצה חוזרת.
+function buildPayrollForMonth(db, month) {
+  var created = 0, updated = 0, locked = 0;
+  db.employees.filter(function (e) { return e.active !== 'לא'; }).forEach(function (e) {
+    var c = payrollBaseFor(db, e, month);
+    var ex = db.payroll.find(function (x) { return x.employee_id === e.id && x.month === month; });
+    if (ex && ex.status !== 'טיוטה') { locked++; return; }
+    if (ex) {
+      ex.pay_type = c.pay_type; ex.hours = c.hours; ex.hourly_rate = c.rate; ex.base_pay = c.base;
+      recomputePayrollTotal(ex, db);
+      updated++;
+    } else {
+      if (c.base <= 0) return; // אין מה ליצור — עובד שעתי בלי נוכחות, או גלובלי בלי סכום מוגדר
+      db.payroll.push({
+        id: genId('PAYR'), employee_id: e.id, month: month, pay_type: c.pay_type,
+        hours: c.hours, hourly_rate: c.rate, base_pay: c.base,
+        bonus: 0, bonus_note: '', total: c.base, status: 'טיוטה'
+      });
+      created++;
+    }
+  });
+  writeTable('payroll', db.payroll);
+  return { month: month, created: created, updated: updated, locked: locked };
+}
+// טריגר חודשי — רץ ב-1 בכל חודש ומחשב את החודש שהסתיים.
+// התוצאה היא טיוטה בלבד. האישור נשאר ידני, כדי ששום חוב שכר לא ייווצר בלי בדיקה.
+function monthlyPayrollRun() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var db = loadDb();
+    var d = new Date();
+    var prev = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+    var month = Utilities.formatDate(prev, Session.getScriptTimeZone(), 'yyyy-MM');
+    var r = buildPayrollForMonth(db, month);
+    bumpDataVersion();
+    audit(db, 'מערכת (trigger)', 'monthlyPayrollRun',
+      'חישוב שכר אוטומטי ' + month + ' · נוצרו: ' + r.created + ' · עודכנו: ' + r.updated + ' · נעולות (אושרו/שולמו): ' + r.locked);
+    return r;
+  } finally { lock.releaseLock(); }
+}
 // B21: מחשב מחדש רשומת שכר בטיוטה מתוך הנוכחות המזכה (אחרי פסילת שעות)
 function rebuildPayrollFromAttendance(db, pr) {
   var emp = db.employees.find(function (x) { return x.id === pr.employee_id; });
+  // שכר גלובלי אינו נגזר משעות — עריכת נוכחות לא תשנה אותו
+  if (String(pr.pay_type || (emp ? emp.pay_type : '') || '') === 'גלובלי') {
+    pr.pay_type = 'גלובלי';
+    pr.hours = 0;
+    pr.hourly_rate = 0;
+    pr.base_pay = Math.round((Number(emp && emp.monthly_salary) || Number(pr.base_pay) || 0) * 100) / 100;
+    recomputePayrollTotal(pr, db);
+    return;
+  }
   var hrs = db.attendance.filter(function (a) {
     return a.employee_id === pr.employee_id && String(a.date).substring(0, 7) === pr.month && a.hours !== '';
   }).reduce(function (s, a) { return s + attEffHours(a); }, 0);
@@ -4023,6 +4086,8 @@ function b4SetupTriggers() {
   var existing = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
   if (existing.indexOf('b4DailyScan') === -1) ScriptApp.newTrigger('b4DailyScan').timeBased().everyDays(1).atHour(8).create();
   if (existing.indexOf('b4DailyBackup') === -1) ScriptApp.newTrigger('b4DailyBackup').timeBased().everyDays(1).atHour(3).create();
+  // חישוב שכר אוטומטי — ב-1 בכל חודש בשעה 4, עבור החודש שהסתיים
+  if (existing.indexOf('monthlyPayrollRun') === -1) ScriptApp.newTrigger('monthlyPayrollRun').timeBased().onMonthDay(1).atHour(4).create();
   return 'טריגרים מותקנים: ' + ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).join(', ');
 }
 
