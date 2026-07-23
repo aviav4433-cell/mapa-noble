@@ -350,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.18-B34a · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.19-B35 · 23.07.2026</div>
   </div>
 </div>
 
@@ -1081,7 +1081,7 @@ function contactBtns(phone,email){
 var VIEWS = [['dash','לוח בקרה'],['orders','הזמנות'],['notes','תרשומות'],['tasks','משימות'],['calendar','יומן'],['meetings','פגישות'],
   ['floor','רצפת ייצור'],['laundry','כביסה'],['returns','החזרות'],['deliveries','משלוחים'],['finance','כספים'],
   ['customers','לקוחות'],['items','פריטים ומלאי'],['purchasing','רכש וספקים'],['scan','סריקה'],['barcodes','ברקודים'],
-  ['reports','דוחות'],['bi','לוח בקרה עסקי'],['approvals','מרכז אישורים'],['audit','יומן פעולות'],['warehouses','מחסנים'],['shelves','מדפים'],['fleet','צי רכב'],['assets','עגלות ומכונות'],['staff','עובדים'],['attendance','נוכחות'],['payroll','שכר'],['settings','מיתוג והגדרות'],
+  ['reports','דוחות'],['bi','לוח בקרה עסקי'],['approvals','מרכז אישורים'],['audit','יומן פעולות'],['warehouses','מחסנים'],['shelves','מדפים ומיקומים'],['fleet','צי רכב'],['assets','עגלות ומכונות'],['staff','עובדים'],['attendance','נוכחות'],['payroll','שכר'],['settings','מיתוג והגדרות'],
   ['superadmin','מנהל ראשי']]; // B7: מוצג רק אם IS_SUPER_ADMIN — ראה allowedViews()
 /* קטגוריות התפריט — אותם מפתחות מסכים, רק קיבוץ ויזואלי */
 var NAV_GROUPS = [
@@ -3502,10 +3502,19 @@ function rItems(){
       var wash = DB.laundryTasks.filter(t=>t.item_id===i.id&&t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty),0);
       var low = i.min_stock!=='' && (total-wash)<Number(i.min_stock);
       var typeLine = [i.category,i.subtype].filter(Boolean).join(' · ');
+      /* B35: איפה הפריט מאוחסן בפועל — מחושב מיומן תנועות האריזה, לא משדה ידני */
+      var locs = b35ItemLocs(i.id);
+      var locLine = locs.length
+        ? '<div class="muted" style="font-size:11.5px">מיקום: '+locs.map(function(L){
+            return L.shelf
+              ? '<a style="cursor:pointer;color:var(--navy2);text-decoration:underline" onclick="b35OpenShelf(\''+esc(L.shelf)+'\')">'+esc(L.shelf)+'</a> ('+L.units+' יח\')'
+              : '<span title="חבילות שנרשמו בלי מדף — אפשר לשלוח אותן כרגיל">לא ממודף ('+L.units+' יח\')</span>';
+          }).join(' · ')+'</div>'
+        : (i.location? '<div class="muted" style="font-size:11.5px">מיקום קבוע בכרטיס: '+esc(i.location)+'</div>' : '');
       return '<div class="card"'+(low?' style="border-color:var(--danger)"':'')+'><div class="row">'+
         (i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:none">':'')+
         '<div class="grow"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+(i.barcode?' · ⎘'+esc(i.barcode):'')+'</span>'+
-        (typeLine?'<div class="muted" style="font-size:11.5px">'+esc(typeLine)+'</div>':'')+
+        (typeLine?'<div class="muted" style="font-size:11.5px">'+esc(typeLine)+'</div>':'')+locLine+
         '<div class="muted">השכרה '+ilsVat(i.rent_price)+' · כביסה '+ilsVat(i.wash_price)+' <span style="font-size:11px">(כולל מע"מ)</span>'+(low?' · <b style="color:var(--danger)">מתחת למינימום!</b>':'')+'</div></div>'+
         '<div style="text-align:center"><div class="big">'+total+'</div><div class="muted">מלאי כולל</div></div>'+
         (wash?'<div style="text-align:center"><div class="big" style="color:var(--amber)">'+wash+'</div><div class="muted">בכביסה</div></div>':'')+
@@ -3858,7 +3867,7 @@ function rScan(){
     '<div class="row"><button class="btn grow" onclick="startCam()">סרוק במצלמה</button>'+
     '<button class="btn ghost grow" onclick="doScan()">חפש</button></div></div>'+
     '<div id="scanRes"></div>'+
-    '<p class="muted">עובד עם כל אקדח ברקוד או מקלדת. סורק פריטים ועגלות.</p>';
+    '<p class="muted">עובד עם כל אקדח ברקוד או מקלדת. סורק פריטים, יחידות, עגלות, חבילות, מארזים, מדפים, הזמנות ומשלוחים.</p>';
   setTimeout(function(){ el('scanIn').focus(); },100);
 }
 /* ===== סריקה במצלמה: BarcodeDetector מובנה, ואם אין — ZXing ===== */
@@ -3935,14 +3944,31 @@ async function doScan(){
   } else if(r.kind==='package_type'){
     el('scanRes').innerHTML = '<div class="card"><b>חבילה: '+esc(r.entity.qty)+' × '+esc(r.item?r.item.name:'')+'</b>'+
       '<div class="muted" style="margin:6px 0">ברקוד קבוע '+esc(r.entity.barcode)+'</div>'+
-      '<div class="grid2">'+kpi(r.balance,'חבילות במלאי')+kpi(Number(r.entity.qty)*Number(r.balance||0),'סה"כ יחידות ארוזות')+'</div></div>';
+      '<div class="grid2">'+kpi(r.balance,'חבילות במלאי')+kpi(Number(r.entity.qty)*Number(r.balance||0),'סה"כ יחידות ארוזות')+'</div>'+
+      /* B35: איפה החבילות האלה מונחות */
+      '<div style="margin-top:8px"><b style="font-size:13px">מיקומים</b>'+
+      ((r.locations||[]).length? '<table><tr><th>מיקום</th><th>חבילות</th></tr>'+
+        (r.locations||[]).map(function(L){
+          return '<tr><td>'+(L.shelf? '<a style="cursor:pointer;color:var(--navy2);text-decoration:underline" onclick="b35OpenShelf(\''+esc(L.shelf)+'\')">מדף '+esc(L.shelf)+'</a>' : 'לא ממודף')+'</td><td><b>'+L.packages+'</b></td></tr>';
+        }).join('')+'</table>' : '<div class="muted">אין חבילות במלאי</div>')+'</div>'+
+      (b35CanWh()? '<button class="btn sm" style="margin-top:8px" onclick="b35Station(\'\',\''+r.entity.id+'\')">מדף את החבילה הזו</button>' : '')+
+      '</div>';
   } else if(r.kind==='case'){
     el('scanRes').innerHTML = '<div class="card"><b>מארז '+esc(r.entity.barcode)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(r.entity.status||'פנוי')+'</span>'+
       (r.order?'<div class="muted" style="margin:6px 0">משויך להזמנה #'+esc(r.order.order_number||r.order.id)+'</div>':'')+
       ((r.contents||[]).length?'<div class="muted" style="margin-top:6px">תכולה: '+r.contents.map(x=>x.count+' × ['+esc(x.per_pkg)+' '+esc(x.item_name)+']').join(' · ')+'</div>':'')+
       (r.entity.status==='משויך'?'<button class="btn ghost sm" style="margin-top:8px" onclick="b34DoCaseRelease(\''+r.entity.id+'\');setTimeout(doScan,600)">שחרר מארז</button>':'')+'</div>';
   } else if(r.kind==='shelf'){
-    el('scanRes').innerHTML = '<div class="card"><b>מדף '+esc(r.entity.code)+'</b>'+(r.entity.location?'<div class="muted">'+esc(r.entity.location)+'</div>':'')+'</div>';
+    /* B35: סריקת מדף מציגה מה מונח עליו ומאפשרת מידוף וספירה מיד */
+    var shC = r.contents||[];
+    el('scanRes').innerHTML = '<div class="card"><b>מדף '+esc(r.entity.code)+'</b>'+(r.entity.location?'<div class="muted">'+esc(r.entity.location)+'</div>':'')+
+      '<div class="grid2" style="margin-top:8px">'+kpi(shC.reduce(function(a,x){return a+x.packages;},0),'חבילות על המדף')+kpi(shC.reduce(function(a,x){return a+x.units;},0),'יחידות')+'</div>'+
+      (shC.length? '<table style="margin-top:8px"><tr><th>פריט</th><th>בחבילה</th><th>חבילות</th></tr>'+
+        shC.map(function(c){ return '<tr><td>'+esc(c.item_name)+'</td><td>'+c.per_pkg+'</td><td><b>'+c.packages+'</b></td></tr>'; }).join('')+'</table>'
+        : '<div class="empty" style="margin-top:8px">המדף ריק</div>')+
+      (b35CanWh()? '<div class="row" style="margin-top:8px;gap:6px"><button class="btn sm" onclick="b35Station(\''+esc(r.entity.code)+'\')">מידוף למדף זה</button>'+
+        '<button class="btn ghost sm" onclick="b35CountForm(\''+esc(r.entity.code)+'\')">ספירת מדף</button></div>' : '')+
+      '</div>';
   } else if(r.kind==='order'){
     el('scanRes').innerHTML = '<div class="card"><b>הזמנה #'+esc(r.entity.order_number||r.entity.id)+'</b> <span class="chip">'+esc(r.entity.status||'')+'</span>'+
       '<button class="btn sm" style="margin-top:8px" onclick="openOrder(\''+r.entity.id+'\')">פתח הזמנה</button></div>';
@@ -5987,6 +6013,14 @@ function rWarehouses(){
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(w.name)+'</b> · '+esc(w.city||'')+
         '<div class="muted">'+esc(w.address||'')+(w.phone?' · '+esc(w.phone):'')+'</div></div>'+
         (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת מחסן (קוד מנהל)" onclick="delRecord(\'warehouses\',\''+w.id+'\',\'את המחסן\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></span>':'')+'</div>'+
+        (function(){
+          /* B35: תמונת מדפים של המחסן — מקשר בין המחסן למיקומים הפיזיים שבתוכו */
+          var shs = (DB.shelves||[]).filter(function(x){ return x.active!=='לא' && String(x.warehouse_id||'')===String(w.id); });
+          if(!shs.length) return '<p class="muted" style="font-size:12.5px;margin:6px 0 0">אין מדפים משויכים למחסן זה — אפשר להוסיף במסך "מדפים ומיקומים".</p>';
+          var pk = shs.reduce(function(a,x){ return a+b35ShelfContents(x.code).reduce(function(b,c){ return b+c.packages; },0); },0);
+          return '<div class="muted" style="margin:6px 0 0;font-size:12.5px">'+shs.length+' מדפים · '+pk+' חבילות ממודפות · '+
+            shs.map(function(x){ return '<a style="cursor:pointer;color:var(--navy2);text-decoration:underline" onclick="b35OpenShelf(\''+esc(x.code)+'\')">'+esc(x.code)+'</a>'; }).join(' · ')+'</div>';
+        })()+
         '<table style="margin-top:8px"><tr><th>פריט</th><th>מלאי במחסן</th></tr>'+
         DB.items.map(function(i){
           var q = DB.stockMoves.filter(m=>m.item_id===i.id&&String(m.warehouse_id||'')===w.id).reduce((s,m)=>s+Number(m.qty),0);
@@ -6467,13 +6501,18 @@ function floorPackTab(){
     }).join('')+'</table>' : '<div class="empty">אין מארזים עדיין — צור מארז ראשון והדבק עליו את הברקוד</div>')+
     '</div>'+
     '<div class="card">'+
-    '<b style="font-size:16px">מלאי חבילות</b>'+
-    (types.length? '<table style="margin-top:8px"><tr><th>מוצר</th><th>בחבילה</th><th>ברקוד</th><th>במלאי</th><th></th></tr>'+
+    '<div class="row" style="align-items:center"><b style="font-size:16px" class="grow">מלאי חבילות</b>'+
+    (b35CanWh()?'<button class="btn sm" onclick="b35Station()">תחנת מידוף (סריקה)</button>':'')+'</div>'+
+    (types.length? '<table style="margin-top:8px"><tr><th>מוצר</th><th>בחבילה</th><th>ברקוד</th><th>במלאי</th><th>מיקומים</th><th></th></tr>'+
       types.map(function(t){
         var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
+        var locs = b35TypeLocs(t.id);
         return '<tr><td>'+esc(it.name||'')+'</td><td>'+esc(t.qty)+'</td><td>'+esc(t.barcode)+'</td><td><b>'+b34NetOf(t.id)+'</b></td>'+
+          '<td class="muted" style="font-size:12px">'+(locs.length? locs.map(function(L){
+            return L.shelf? '<a style="cursor:pointer;color:var(--navy2);text-decoration:underline" onclick="b35OpenShelf(\''+esc(L.shelf)+'\')">'+esc(L.shelf)+'</a> ('+L.packages+')' : 'לא ממודף ('+L.packages+')';
+          }).join(' · ') : '—')+'</td>'+
           '<td class="row" style="gap:4px"><button class="btn ghost sm" onclick="b34PrintLabel(\''+t.id+'\')">🖨</button>'+
-          '<button class="btn ghost sm" title="מידוף" onclick="b34ShelveForm(\''+t.id+'\')">מדף</button>'+
+          '<button class="btn ghost sm" title="מידוף" onclick="b35Station(\'\',\''+t.id+'\')">מדף</button>'+
           (ROLE==='מנהל'||ROLE==='משרד'?'<button class="btn ghost sm" title="התאמת ספירה" onclick="b34AdjustForm(\''+t.id+'\')">±</button>':'')+'</td></tr>';
       }).join('')+'</table>' : '<div class="empty">טרם נרשמו חבילות</div>')+
     (function(){
@@ -6507,20 +6546,9 @@ function b34PrintLabel(tid, copies){
     Array(n).fill(one).join('')+'<script>window.onload=function(){window.print();}<\/script></body></html>');
   w.document.close();
 }
-function b34ShelveForm(tid){
-  var t = b34PkgTypeOf(tid); if(!t) return;
-  var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
-  var shelves = (DB.shelves||[]).filter(s=>s.active!=='לא');
-  if(!shelves.length) return toast('אין מדפים במערכת — הוסף במסך "מדפים"', true);
-  openModal('<h2>מידוף — '+esc(t.qty)+' × '+esc(it.name||'')+'</h2>'+
-    '<div class="frow"><label>מדף</label><select id="sv_shelf">'+shelves.map(s=>'<option value="'+esc(s.code)+'">'+esc(s.code)+(s.location?' · '+esc(s.location):'')+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>מספר חבילות</label><input id="sv_count" type="number" min="1" value="1"></div>'+
-    '<button class="btn grow" style="width:100%" onclick="b34DoShelve(\''+tid+'\')">רשום מידוף</button>');
-}
-async function b34DoShelve(tid){
-  var r = await floorAct('pkgShelve',{type_id:tid, shelf_code:el('sv_shelf').value, count:Number(el('sv_count').value)||0},'המידוף נרשם');
-  if(r){ closeModal(); var g=await api('getAll'); if(g&&g.ok)DB=g.db; if(VIEW==='floor'&&FLOOR_TAB==='pack')floorPackTab(); }
-}
+/* B35: המידוף עבר לתחנת המידוף (סריקת מדף + סריקת חבילות).
+   הפונקציה נשמרת כהפניה, וכך גם פעולת השרת pkgShelve — כדי שממשק ישן שנשמר במטמון הדפדפן ימשיך לעבוד. */
+function b34ShelveForm(tid){ b35Station('', tid); }
 function b34AdjustForm(tid){
   var t = b34PkgTypeOf(tid); if(!t) return;
   var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
@@ -6558,26 +6586,45 @@ function b34PickForm(){
       return '<option value="'+o.id+'">#'+esc(o.order_number||o.id)+' · '+esc(c.name||'')+'</option>';
     }).join('')+'</select></div>'+
     '<div class="row" style="gap:6px;align-items:flex-end">'+
-    '<div class="frow grow" style="margin:0"><label>סוג חבילה</label><select id="pi_type">'+types.map(function(t){
+    '<div class="frow grow" style="margin:0"><label>סוג חבילה</label><select id="pi_type" onchange="b35PickShelfOpts()">'+types.map(function(t){
       var it=(DB.items||[]).find(i=>i.id===t.item_id)||{};
       return '<option value="'+t.id+'">'+esc(t.qty)+' × '+esc(it.name||'')+' (במלאי '+b34NetOf(t.id)+')</option>';
     }).join('')+'</select></div>'+
+    '<div class="frow" style="margin:0;width:170px"><label>מאיזה מדף לוקטו</label><select id="pi_shelf"></select></div>'+
     '<div class="frow" style="margin:0;width:90px"><label>כמות</label><input id="pi_count" type="number" min="1" value="1"></div>'+
     '<button class="btn ghost" onclick="b34AddPick()">הוסף</button></div>'+
     '<div id="pi_list" style="margin:8px 0"><span class="muted">אפשר גם רק לשייך מארז להזמנה בלי חבילות</span></div>'+
     '<button class="btn grow" style="width:100%" onclick="b34DoPick()">בצע ליקוט ושיוך</button>');
+  b35PickShelfOpts();
+}
+/* B35: רשימת המדפים שבהם באמת מונח הסוג שנבחר. הצהרת המדף אינה חובה —
+   בלעדיה השרת גורע קודם מהמלאי הלא-ממודף ורק אחר כך ממדפים. */
+function b35PickShelfOpts(){
+  var sel = el('pi_shelf'); if(!sel) return;
+  var tid = el('pi_type') ? el('pi_type').value : '';
+  var locs = tid? b35TypeLocs(tid).filter(function(L){ return L.shelf; }) : [];
+  sel.innerHTML = '<option value="">— לא צוין —</option>'+
+    locs.map(function(L){ return '<option value="'+esc(L.shelf)+'">'+esc(L.shelf)+' ('+L.packages+' חבילות)</option>'; }).join('');
 }
 function b34PickListRender(){
   el('pi_list').innerHTML = B34_PICKS.length? B34_PICKS.map(function(x,i){
     var t=b34PkgTypeOf(x.type_id)||{}; var it=(DB.items||[]).find(v=>v.id===t.item_id)||{};
-    return '<span class="chip" style="background:var(--teal);margin:2px">'+x.count+' × ['+esc(t.qty||'')+' '+esc(it.name||'')+'] <a style="cursor:pointer;color:#fff;font-weight:700" onclick="B34_PICKS.splice('+i+',1);b34PickListRender()">✕</a></span>';
+    return '<span class="chip" style="background:var(--teal);margin:2px">'+x.count+' × ['+esc(t.qty||'')+' '+esc(it.name||'')+']'+
+      (x.shelf_code?' · ממדף '+esc(x.shelf_code):'')+
+      ' <a style="cursor:pointer;color:#fff;font-weight:700" onclick="B34_PICKS.splice('+i+',1);b34PickListRender()">✕</a></span>';
   }).join(' ') : '<span class="muted">אפשר גם רק לשייך מארז להזמנה בלי חבילות</span>';
 }
 function b34AddPick(){
   var tid = el('pi_type').value, n = Number(el('pi_count').value);
+  var shc = el('pi_shelf')? el('pi_shelf').value : '';
   if(!tid || !(n>0)) return toast('בחר סוג וכמות', true);
-  var ex = B34_PICKS.find(x=>x.type_id===tid);
-  if(ex) ex.count += n; else B34_PICKS.push({type_id:tid, count:n});
+  if(shc){
+    var onShelf = b35Map(tid)[shc]||0;
+    var already = B34_PICKS.filter(x=>x.type_id===tid&&x.shelf_code===shc).reduce((a,x)=>a+x.count,0);
+    if(n+already>onShelf) return toast('במדף '+shc+' רשומות רק '+onShelf+' חבילות מהסוג הזה', true);
+  }
+  var ex = B34_PICKS.find(x=>x.type_id===tid && (x.shelf_code||'')===shc);
+  if(ex) ex.count += n; else B34_PICKS.push({type_id:tid, count:n, shelf_code:shc});
   b34PickListRender();
 }
 async function b34DoPick(){
@@ -6591,19 +6638,389 @@ async function b34DoCaseRelease(cid){
   if(r && VIEW==='floor' && FLOOR_TAB==='pack') floorPackTab();
 }
 
+/* ============================================================
+   B35: ניהול מחסן ומיקומים
+   כל היתרות מחושבות מ-DB.packageMoves — בדיוק אותה נוסחה כמו בשרת.
+   מדף ריק ('') = מלאי לא ממודף. זה מצב חוקי ומכוון: אפשר לארוז, ללקט ולשלוח בלי מדף.
+   ============================================================ */
+function b35Map(tid){
+  var m={};
+  var add=function(k,n){ k=String(k||''); m[k]=(m[k]||0)+n; if(!m[k]) delete m[k]; };
+  (DB.packageMoves||[]).filter(function(x){ return String(x.type_id)===String(tid); }).forEach(function(x){
+    var c=Number(x.count)||0, to=String(x.shelf_code||''), fr=String(x.from_shelf||'');
+    if(x.move_type==='אריזה') add(to,c);
+    else if(x.move_type==='ליקוט') add(to,-c);
+    else if(x.move_type==='התאמה') add(to,c);
+    else if(x.move_type==='מידוף'){ add(fr,-c); add(to,c); }
+  });
+  return m;
+}
+function b35Shelves(){ return (DB.shelves||[]).filter(function(s){ return s.active!=='לא'; }); }
+function b35ShelfBy(code){ var c=String(code||'').trim(); if(!c) return null;
+  return (DB.shelves||[]).find(function(s){ return String(s.code)===c||String(s.barcode)===c; })||null; }
+function b35TypeBy(key){ var k=String(key||'').trim(); if(!k) return null;
+  return (DB.packageTypes||[]).find(function(t){ return t.id===k||String(t.barcode)===k; })||null; }
+function b35Types(){ return (DB.packageTypes||[]).filter(function(t){ return t.active!=='לא'; }); }
+function b35TypeLabel(t){ if(!t) return ''; var it=(DB.items||[]).find(function(i){ return i.id===t.item_id; })||{};
+  return t.qty+' × '+(it.name||'')+(it.color?' '+it.color:''); }
+function b35ShelfContents(code){
+  var c=String(code||''), out=[];
+  (DB.packageTypes||[]).forEach(function(t){
+    var q=b35Map(t.id)[c]||0; if(!q) return;
+    var it=(DB.items||[]).find(function(i){ return i.id===t.item_id; })||{};
+    out.push({type_id:t.id,barcode:t.barcode,item_id:t.item_id,item_name:it.name||'',color:it.color||'',
+      per_pkg:Number(t.qty)||0,packages:q,units:q*(Number(t.qty)||0)});
+  });
+  return out.sort(function(a,b){ return b.units-a.units; });
+}
+function b35TypeLocs(tid){
+  var m=b35Map(tid);
+  return Object.keys(m).filter(function(k){ return m[k]; })
+    .map(function(k){ return {shelf:k,packages:m[k]}; }).sort(function(a,b){ return b.packages-a.packages; });
+}
+/* מיקומי פריט — איחוד כל סוגי החבילות של אותו פריט לפי מדף */
+function b35ItemLocs(iid){
+  var agg={};
+  (DB.packageTypes||[]).filter(function(t){ return t.item_id===iid; }).forEach(function(t){
+    var m=b35Map(t.id);
+    Object.keys(m).forEach(function(k){
+      if(!m[k]) return;
+      agg[k]=agg[k]||{packages:0,units:0};
+      agg[k].packages+=m[k]; agg[k].units+=m[k]*(Number(t.qty)||0);
+    });
+  });
+  return Object.keys(agg).map(function(k){ return {shelf:k,packages:agg[k].packages,units:agg[k].units}; })
+    .sort(function(a,b){ return b.units-a.units; });
+}
+function b35SrcName(code){ return code? 'מדף '+code : 'מלאי לא ממודף'; }
+function b35CanWh(){ return CAN_EDIT && ROLE!=='נהג'; }
+/* מצלמה לכל מסך (הגרסה של רצפת הייצור כופה מעבר למסך floor) */
+function b35Cam(inputId, after){
+  window.FLOOR_CAM = function(text){ var e=el(inputId); if(e) e.value=text; if(after) after(); };
+  startCam();
+}
+async function b35Refresh(){ var g=await api('getAll'); if(g&&g.ok) DB=g.db; }
+function b35Repaint(){
+  if(VIEW==='shelves') rShelves();
+  else if(VIEW==='items') rItems();
+  else if(VIEW==='warehouses') rWarehouses();
+  else if(VIEW==='floor' && FLOOR_TAB==='pack') floorPackTab();
+}
+
+/* ---------- תחנת מידוף: סריקת מדף ואז סריקת חבילות ---------- */
+var B35_ST = {shelf:'', from:'', lines:[]};
+function b35Station(shelfCode, typeId){
+  if(!b35CanWh()) return toast('אין הרשאה לפעולות מחסן', true);
+  if(!b35Shelves().length) return toast('אין מדפים פעילים — הוסף מדף במסך "מדפים ומיקומים"', true);
+  if(!b35Types().length) return toast('טרם נרשמו חבילות — רשום חבילות במסך "רצפת ייצור ← אריזה ומידוף"', true);
+  B35_ST = {shelf:String(shelfCode||''), from:'', lines:[]};
+  if(typeId){ var t0=b35TypeBy(typeId); if(t0) B35_ST.lines.push({type_id:t0.id,count:1}); }
+  openModal('<h2>תחנת מידוף</h2>'+
+    '<p class="muted" style="font-size:12.5px;margin:0 0 10px">סרוק את מדבקת המדף, ואז סרוק חבילה אחרי חבילה. כל סריקה מוסיפה חבילה אחת, ואפשר לתקן כמות ידנית.</p>'+
+    '<div class="frow"><label>מדף יעד</label><div class="row" style="gap:6px">'+
+      '<input id="st_shelf" value="'+esc(B35_ST.shelf)+'" placeholder="סרוק מדבקת מדף או הקלד קוד" style="flex:1" '+
+      'onchange="b35StSetShelf()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();b35StSetShelf();}">'+
+      '<button type="button" class="btn ghost sm" onclick="b35Cam(\'st_shelf\',b35StSetShelf)">📷</button></div>'+
+      '<div id="st_shelfInfo" class="muted" style="font-size:12.5px;margin-top:4px"></div></div>'+
+    '<div class="frow"><label>מאיפה לוקחים</label><select id="st_from" onchange="B35_ST.from=this.value;b35StRender()"></select></div>'+
+    '<div class="frow"><label>סריקת חבילה</label><div class="row" style="gap:6px">'+
+      '<input id="st_pkg" placeholder="סרוק ברקוד חבילה" style="flex:1" '+
+      'onkeydown="if(event.key===\'Enter\'){event.preventDefault();b35StScan();}">'+
+      '<button type="button" class="btn ghost sm" onclick="b35Cam(\'st_pkg\',b35StScan)">📷</button></div></div>'+
+    '<div class="row" style="gap:6px;align-items:flex-end">'+
+      '<div class="frow grow" style="margin:0"><label>או בחירה ידנית</label><select id="st_type">'+
+      b35Types().map(function(t){ return '<option value="'+t.id+'">'+esc(b35TypeLabel(t))+'</option>'; }).join('')+'</select></div>'+
+      '<div class="frow" style="margin:0;width:86px"><label>כמות</label><input id="st_qty" type="number" min="1" value="1"></div>'+
+      '<button class="btn ghost" onclick="b35StManual()">הוסף</button></div>'+
+    '<div id="st_list"></div>'+
+    '<button class="btn grow" style="width:100%;font-size:16px;padding:12px" onclick="b35StSubmit()">רשום מידוף</button>');
+  b35StSetShelf(true); b35StRender();
+  setTimeout(function(){ var e=el(B35_ST.shelf?'st_pkg':'st_shelf'); if(e) e.focus(); },120);
+}
+function b35StFromOptions(){
+  var sel = el('st_from'); if(!sel) return;
+  sel.innerHTML = '<option value="">מלאי לא ממודף</option>'+
+    b35Shelves().filter(function(s){ return String(s.code)!==String(B35_ST.shelf); })
+      .map(function(s){ return '<option value="'+esc(s.code)+'">העברה ממדף '+esc(s.code)+'</option>'; }).join('');
+  if(B35_ST.from===B35_ST.shelf) B35_ST.from='';
+  sel.value = B35_ST.from;
+}
+function b35StSetShelf(silent){
+  var inp = el('st_shelf'); if(!inp) return;
+  var raw = (inp.value||'').trim();
+  if(!raw){ B35_ST.shelf=''; el('st_shelfInfo').innerHTML=''; b35StFromOptions(); return; }
+  var sh = b35ShelfBy(raw);
+  if(!sh){
+    B35_ST.shelf='';
+    el('st_shelfInfo').innerHTML='<span style="color:var(--danger)">מדף לא מזוהה — סרוק את המדבקה שהודפסה מהמערכת</span>';
+    b35StFromOptions();
+    if(!silent) toast('מדף לא נמצא', true);
+    return;
+  }
+  B35_ST.shelf = String(sh.code); inp.value = String(sh.code);
+  var cont = b35ShelfContents(sh.code);
+  el('st_shelfInfo').innerHTML = (sh.location?esc(sh.location)+' · ':'')+
+    (cont.length? 'כרגע על המדף: '+cont.reduce(function(a,x){return a+x.packages;},0)+' חבילות · '+cont.length+' סוגים' : 'המדף ריק');
+  b35StFromOptions(); b35StRender();
+  if(!silent){ var pk=el('st_pkg'); if(pk) pk.focus(); }
+}
+function b35StRender(){
+  var box = el('st_list'); if(!box) return;
+  if(!B35_ST.lines.length){ box.innerHTML='<div class="empty" style="margin:8px 0">טרם נסרקה חבילה</div>'; return; }
+  box.innerHTML = '<table style="margin:8px 0"><tr><th>חבילה</th><th>זמין במקור</th><th>כמות</th><th></th></tr>'+
+    B35_ST.lines.map(function(L,i){
+      var t=b35TypeBy(L.type_id)||{};
+      var avail = b35Map(L.type_id)[B35_ST.from]||0;
+      var over = L.count>avail;
+      return '<tr><td>'+esc(b35TypeLabel(t))+'<div class="muted" style="font-size:11px">'+esc(t.barcode||'')+'</div></td>'+
+        '<td'+(over?' style="color:var(--danger);font-weight:700"':'')+'>'+avail+'</td>'+
+        '<td><input type="number" min="1" value="'+L.count+'" style="width:70px" '+
+          'onchange="B35_ST.lines['+i+'].count=Math.max(1,Math.round(Number(this.value)||1));b35StRender()"></td>'+
+        '<td><button class="btn ghost sm" onclick="B35_ST.lines.splice('+i+',1);b35StRender()">✕</button></td></tr>';
+    }).join('')+'</table>'+
+    (B35_ST.lines.some(function(L){ return L.count>(b35Map(L.type_id)[B35_ST.from]||0); })
+      ? '<div class="chip" style="background:var(--danger);color:#fff;display:block;padding:8px;margin-bottom:8px">יש שורה שחורגת מהזמין ב'+esc(b35SrcName(B35_ST.from))+' — תקן לפני הרישום</div>' : '');
+}
+function b35StAdd(tid,n){
+  var ex = B35_ST.lines.find(function(x){ return x.type_id===tid; });
+  if(ex) ex.count += n; else B35_ST.lines.push({type_id:tid,count:n});
+  if(navigator.vibrate) navigator.vibrate(40);
+  b35StRender();
+}
+function b35StScan(){
+  var inp = el('st_pkg'); var bc=(inp.value||'').trim(); inp.value=''; if(!bc) return;
+  var sh = b35ShelfBy(bc);
+  if(sh){ el('st_shelf').value=sh.code; b35StSetShelf(); return toast('מדף היעד עודכן ל'+sh.code); }
+  var t = b35TypeBy(bc);
+  if(!t) return toast('הברקוד לא מזוהה כחבילה במערכת', true);
+  b35StAdd(t.id,1);
+  inp.focus();
+}
+function b35StManual(){
+  var tid = el('st_type').value, n = Math.round(Number(el('st_qty').value)||0);
+  if(!tid) return toast('בחר סוג חבילה', true);
+  if(!(n>0)) return toast('הזן כמות', true);
+  b35StAdd(tid,n); el('st_qty').value=1;
+}
+async function b35StSubmit(){
+  if(!B35_ST.shelf) return toast('סרוק או הקלד מדף יעד', true);
+  if(!B35_ST.lines.length) return toast('לא נסרקה אף חבילה', true);
+  var r = await apiBusy('b35ShelveBatch',{to_shelf:B35_ST.shelf, from_shelf:B35_ST.from, lines:B35_ST.lines.slice()});
+  if(!r) return;
+  if(!r.ok) return toast(r.error||'שגיאה', true);
+  var moved = B35_ST.lines.reduce(function(a,x){ return a+x.count; },0);
+  B35_ST.lines = [];
+  await b35Refresh(); b35Repaint();
+  b35StSetShelf(true); b35StRender();
+  toast('מודפו '+moved+' חבילות למדף '+B35_ST.shelf);
+  var pk = el('st_pkg'); if(pk) pk.focus();
+}
+
+/* ---------- העברת שורה בודדת בין מדפים ---------- */
+function b35MoveForm(fromCode, tid){
+  if(!b35CanWh()) return toast('אין הרשאה לפעולות מחסן', true);
+  var t = b35TypeBy(tid); if(!t) return;
+  var have = b35Map(tid)[String(fromCode||'')]||0;
+  var targets = b35Shelves().filter(function(s){ return String(s.code)!==String(fromCode||''); });
+  if(!targets.length && fromCode==='') return toast('אין מדף יעד', true);
+  openModal('<h2>העברה מ'+esc(b35SrcName(fromCode))+'</h2>'+
+    '<p class="muted" style="font-size:13px">'+esc(b35TypeLabel(t))+' · זמין כאן: <b>'+have+'</b> חבילות</p>'+
+    '<div class="frow"><label>מדף יעד</label><select id="mv_to">'+
+      (fromCode?'<option value="__free">החזרה למלאי לא ממודף</option>':'')+
+      targets.map(function(s){ return '<option value="'+esc(s.code)+'">'+esc(s.code)+(s.location?' · '+esc(s.location):'')+'</option>'; }).join('')+'</select></div>'+
+    '<div class="frow"><label>כמות חבילות</label><input id="mv_n" type="number" min="1" max="'+have+'" value="'+have+'"></div>'+
+    '<button class="btn grow" style="width:100%" onclick="b35DoMove(\''+esc(String(fromCode||''))+'\',\''+tid+'\')">בצע העברה</button>');
+}
+async function b35DoMove(fromCode, tid){
+  var to = el('mv_to').value, n = Math.round(Number(el('mv_n').value)||0);
+  if(!(n>0)) return toast('הזן כמות', true);
+  var r;
+  if(to==='__free'){
+    r = await apiBusy('b35ShelfClear',{shelf_code:fromCode, type_id:tid, note:'החזרה למלאי לא ממודף'});
+  } else {
+    r = await apiBusy('b35ShelveBatch',{to_shelf:to, from_shelf:fromCode, lines:[{type_id:tid,count:n}], note:'העברה בין מיקומים'});
+  }
+  if(!r) return;
+  if(!r.ok) return toast(r.error||'שגיאה', true);
+  closeModal(); await b35Refresh(); b35Repaint(); toast('ההעברה נרשמה');
+}
+
+/* ---------- ספירת מדף (משמשת גם כספירת פתיחה) ---------- */
+var B35_CNT = {shelf:'', lines:[]};
+function b35CountForm(shelfCode){
+  if(!b35CanWh()) return toast('אין הרשאה לפעולות מחסן', true);
+  var sh = b35ShelfBy(shelfCode); if(!sh) return toast('מדף לא נמצא', true);
+  var cur = b35ShelfContents(sh.code);
+  B35_CNT = {shelf:String(sh.code), lines: cur.map(function(c){ return {type_id:c.type_id, count:0}; })};
+  openModal('<h2>ספירת מדף '+esc(sh.code)+'</h2>'+
+    '<p class="muted" style="font-size:12.5px;margin:0 0 10px">ספירה עיוורת: התחל מאפס וסרוק כל חבילה שנמצאת פיזית על המדף. בסיום המערכת תשווה לרישום ותסגור את ההפרש לבד.</p>'+
+    '<div class="frow"><label>סריקת חבילה</label><div class="row" style="gap:6px">'+
+      '<input id="cn_pkg" placeholder="סרוק ברקוד חבילה" style="flex:1" '+
+      'onkeydown="if(event.key===\'Enter\'){event.preventDefault();b35CntScan();}">'+
+      '<button type="button" class="btn ghost sm" onclick="b35Cam(\'cn_pkg\',b35CntScan)">📷</button></div></div>'+
+    '<div class="row" style="gap:6px;align-items:flex-end">'+
+      '<div class="frow grow" style="margin:0"><label>או בחירה ידנית</label><select id="cn_type">'+
+      b35Types().map(function(t){ return '<option value="'+t.id+'">'+esc(b35TypeLabel(t))+'</option>'; }).join('')+'</select></div>'+
+      '<button class="btn ghost" onclick="b35CntManual()">הוסף שורה</button>'+
+      '<button class="btn ghost" onclick="b35CntFill()" title="מילוי מהיר לפי מה שרשום היום">מלא כרשום</button></div>'+
+    '<div id="cn_list"></div>'+
+    '<div class="frow"><label>הערת ספירה</label><input id="cn_note" placeholder="למשל: ספירת פתיחה"></div>'+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px"><input type="checkbox" id="cn_full" checked style="width:auto"> סוג שרשום במדף ולא נספר — יאופס</label>'+
+    '<button class="btn grow" style="width:100%;font-size:16px;padding:12px" onclick="b35CntSubmit()">שמור ספירה</button>');
+  b35CntRender();
+  setTimeout(function(){ var e=el('cn_pkg'); if(e) e.focus(); },120);
+}
+function b35CntRender(){
+  var box = el('cn_list'); if(!box) return;
+  if(!B35_CNT.lines.length){ box.innerHTML='<div class="empty" style="margin:8px 0">טרם נספרה חבילה</div>'; return; }
+  box.innerHTML = '<table style="margin:8px 0"><tr><th>חבילה</th><th>רשום</th><th>נספר</th><th>הפרש</th><th></th></tr>'+
+    B35_CNT.lines.map(function(L,i){
+      var t=b35TypeBy(L.type_id)||{};
+      var reg = b35Map(L.type_id)[B35_CNT.shelf]||0;
+      var d = L.count-reg;
+      return '<tr><td>'+esc(b35TypeLabel(t))+'</td><td class="muted">'+reg+'</td>'+
+        '<td><input type="number" min="0" value="'+L.count+'" style="width:70px" '+
+          'onchange="B35_CNT.lines['+i+'].count=Math.max(0,Math.round(Number(this.value)||0));b35CntRender()"></td>'+
+        '<td'+(d?' style="font-weight:700;color:'+(d>0?'var(--ok)':'var(--danger)')+'"':' class="muted"')+'>'+(d>0?'+':'')+d+'</td>'+
+        '<td><button class="btn ghost sm" onclick="B35_CNT.lines.splice('+i+',1);b35CntRender()">✕</button></td></tr>';
+    }).join('')+'</table>';
+}
+function b35CntAdd(tid,n){
+  var ex = B35_CNT.lines.find(function(x){ return x.type_id===tid; });
+  if(ex) ex.count += n; else B35_CNT.lines.push({type_id:tid,count:n});
+  if(navigator.vibrate) navigator.vibrate(40);
+  b35CntRender();
+}
+function b35CntScan(){
+  var inp = el('cn_pkg'); var bc=(inp.value||'').trim(); inp.value=''; if(!bc) return;
+  var t = b35TypeBy(bc);
+  if(!t) return toast('הברקוד לא מזוהה כחבילה במערכת', true);
+  b35CntAdd(t.id,1); inp.focus();
+}
+function b35CntManual(){
+  var tid = el('cn_type').value; if(!tid) return;
+  b35CntAdd(tid,0);
+}
+function b35CntFill(){
+  b35ShelfContents(B35_CNT.shelf).forEach(function(c){
+    var ex = B35_CNT.lines.find(function(x){ return x.type_id===c.type_id; });
+    if(ex) ex.count = c.packages; else B35_CNT.lines.push({type_id:c.type_id,count:c.packages});
+  });
+  b35CntRender();
+}
+async function b35CntSubmit(){
+  if(!B35_CNT.lines.length && !el('cn_full').checked) return toast('לא נספרה אף חבילה', true);
+  var r = await apiBusy('b35ShelfCount',{shelf_code:B35_CNT.shelf, lines:B35_CNT.lines.slice(),
+    full: el('cn_full').checked, note: el('cn_note').value});
+  if(!r) return;
+  if(!r.ok) return toast(r.error||'שגיאה', true);
+  closeModal(); await b35Refresh(); b35Repaint();
+  toast(r.changed? ('הספירה נשמרה · '+r.changed+' סוגים עודכנו') : 'הספירה תואמת לרישום — אין שינוי');
+}
+
+/* ---------- פינוי מדף ---------- */
+async function b35ClearShelf(code){
+  if(!b35CanWh()) return toast('אין הרשאה לפעולות מחסן', true);
+  var cont = b35ShelfContents(code);
+  if(!cont.length) return toast('המדף כבר ריק');
+  if(!confirm('לפנות את כל '+cont.reduce(function(a,x){return a+x.packages;},0)+' החבילות ממדף '+code+' חזרה למלאי הלא-ממודף?')) return;
+  var r = await apiBusy('b35ShelfClear',{shelf_code:code, note:'פינוי מדף'});
+  if(!r) return;
+  if(!r.ok) return toast(r.error||'שגיאה', true);
+  await b35Refresh(); b35Repaint(); toast('המדף פונה');
+}
+
+/* ---------- כרטיס מדף (נפתח גם ממסך מלאי וגם מהסריקה) ---------- */
+function b35OpenShelf(code){
+  var sh = b35ShelfBy(code);
+  if(!sh) return toast('מדף לא נמצא', true);
+  var cont = b35ShelfContents(sh.code);
+  var w = (DB.warehouses||[]).find(function(x){ return x.id===sh.warehouse_id; });
+  openModal('<h2>מדף '+esc(sh.code)+'</h2>'+
+    '<p class="muted" style="font-size:13px">'+esc(sh.location||'')+(sh.location?' · ':'')+'מחסן: '+esc(w?w.name:'ראשי')+
+      (sh.barcode?' · ברקוד '+esc(sh.barcode):'')+'</p>'+
+    (cont.length? '<table><tr><th>פריט</th><th>בחבילה</th><th>חבילות</th><th>יחידות</th></tr>'+
+      cont.map(function(c){ return '<tr><td>'+esc(c.item_name)+(c.color?' '+esc(c.color):'')+'</td><td>'+c.per_pkg+'</td><td><b>'+c.packages+'</b></td><td>'+c.units+'</td></tr>'; }).join('')+
+      '</table>' : '<div class="empty">המדף ריק</div>')+
+    (b35CanWh()? '<div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">'+
+      '<button class="btn grow" onclick="closeModal();b35Station(\''+esc(sh.code)+'\')">מידוף למדף זה</button>'+
+      '<button class="btn ghost grow" onclick="closeModal();b35CountForm(\''+esc(sh.code)+'\')">ספירת מדף</button>'+
+      '</div>' : ''));
+}
+
 /* ================= מדפים ================= */
+var SHELF_Q = '';
 function rShelves(){
   if(!DB.shelves) DB.shelves = [];
-  el('main').innerHTML = '<div class="section-title"><h2>מדפים</h2><button class="btn" onclick="shelfForm()">+ מדף</button></div>'+
-    ((DB.shelves||[]).length? (DB.shelves||[]).map(function(sh){
-      var w = DB.warehouses.find(x=>x.id===sh.warehouse_id);
+  var q = SHELF_Q.trim().toLowerCase();
+  var all = (DB.shelves||[]);
+  var rows = all.map(function(sh){
+    var cont = b35ShelfContents(sh.code);
+    return {sh:sh, cont:cont,
+      packages:cont.reduce(function(a,x){return a+x.packages;},0),
+      units:cont.reduce(function(a,x){return a+x.units;},0)};
+  });
+  if(q) rows = rows.filter(function(r){
+    return String(r.sh.code||'').toLowerCase().indexOf(q)>-1 ||
+      String(r.sh.location||'').toLowerCase().indexOf(q)>-1 ||
+      r.cont.some(function(c){ return String(c.item_name||'').toLowerCase().indexOf(q)>-1; });
+  });
+  var free = b35Types().map(function(t){
+    var n = b35Map(t.id)['']||0;
+    return n? {t:t, packages:n, units:n*(Number(t.qty)||0)} : null;
+  }).filter(Boolean);
+  var totPk = rows.reduce(function(a,r){ return a+r.packages; },0);
+  var totFree = free.reduce(function(a,f){ return a+f.packages; },0);
+
+  el('main').innerHTML =
+    '<div class="section-title"><h2>מדפים ומיקומים</h2><div>'+
+      (b35CanWh()?'<button class="btn" onclick="b35Station()">תחנת מידוף (סריקה)</button> ':'')+
+      '<button class="btn ghost" onclick="shelfForm()">+ מדף</button></div></div>'+
+    '<div class="card"><div class="grid3">'+
+      kpi(all.filter(function(x){return x.active!=='לא';}).length,'מדפים פעילים')+
+      kpi(totPk,'חבילות ממודפות')+
+      kpi(totFree,'חבילות לא ממודפות')+
+      '</div>'+
+      '<div class="frow" style="margin:8px 0 0"><label>חיפוש מדף או פריט</label>'+
+      '<input id="sh_q" value="'+esc(SHELF_Q)+'" placeholder="קוד מדף / אזור / שם פריט" oninput="SHELF_Q=this.value;rShelves();setTimeout(function(){var e=el(\'sh_q\');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}},0)"></div>'+
+      '</div>'+
+    (rows.length? rows.map(function(r){
+      var sh = r.sh;
+      var w = (DB.warehouses||[]).find(function(x){ return x.id===sh.warehouse_id; });
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(sh.code||sh.id)+'</b>'+(sh.location?' · '+esc(sh.location):'')+(sh.barcode?' <span class="muted">· ⎘'+esc(sh.barcode)+'</span>':'')+
         '<div class="muted">מחסן: '+esc(w?w.name:'ראשי')+(sh.notes?' · '+esc(sh.notes):'')+'</div></div>'+
+        '<div style="text-align:center"><div class="big">'+r.packages+'</div><div class="muted">חבילות</div></div>'+
+        '<div style="text-align:center"><div class="big">'+r.units+'</div><div class="muted">יחידות</div></div>'+
         '<span class="chip" style="background:'+(sh.active!=='לא'?'var(--ok)':'var(--danger)')+'">'+(sh.active!=='לא'?'פעיל':'לא פעיל')+'</span>'+
         '<span class="rowact"><button title="הדפסת ברקוד המדף" onclick="b34PrintShelfLabel(\''+esc(sh.barcode||sh.code||'')+'\',\''+esc(sh.code||'')+(sh.location?' · '+esc(sh.location):'')+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>'+
         '<button title="עריכת מדף" onclick=\'shelfForm('+JSON.stringify(sh).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>'+
-        (ROLE==='מנהל'?'<button class="del" title="מחיקת מדף (קוד מנהל)" onclick="delRecord(\'shelves\',\''+sh.id+'\',\'את המדף\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>':'')+'</span></div></div>';
-    }).join(''):'<div class="card empty">אין מדפים עדיין</div>');
+        (ROLE==='מנהל'?'<button class="del" title="מחיקת מדף (קוד מנהל)" onclick="delRecord(\'shelves\',\''+sh.id+'\',\'את המדף\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>':'')+'</span></div>'+
+        (r.cont.length?
+          '<table style="margin-top:8px"><tr><th>פריט</th><th>בחבילה</th><th>חבילות</th><th>יחידות</th><th></th></tr>'+
+          r.cont.map(function(c){
+            return '<tr><td>'+esc(c.item_name)+(c.color?' <span class="muted">'+esc(c.color)+'</span>':'')+'<div class="muted" style="font-size:11px">'+esc(c.barcode)+'</div></td>'+
+              '<td>'+c.per_pkg+'</td><td><b>'+c.packages+'</b></td><td>'+c.units+'</td>'+
+              '<td>'+(b35CanWh()?'<button class="btn ghost sm" title="העברה למדף אחר" onclick="b35MoveForm(\''+esc(sh.code)+'\',\''+c.type_id+'\')">העבר</button>':'')+'</td></tr>';
+          }).join('')+'</table>'
+          : '<div class="empty" style="margin-top:8px">המדף ריק</div>')+
+        (b35CanWh()? '<div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">'+
+          '<button class="btn sm" onclick="b35Station(\''+esc(sh.code)+'\')">מידוף למדף זה</button>'+
+          '<button class="btn ghost sm" onclick="b35CountForm(\''+esc(sh.code)+'\')">ספירת מדף</button>'+
+          (r.cont.length?'<button class="btn ghost sm" onclick="b35ClearShelf(\''+esc(sh.code)+'\')">פינוי מדף</button>':'')+
+          '</div>' : '')+
+        '</div>';
+    }).join('') : '<div class="card empty">'+(q?'אין מדף או פריט תואם':'אין מדפים עדיין — הוסף מדף והדבק עליו את הברקוד שיודפס')+'</div>')+
+    '<div class="card"><div class="row" style="align-items:center"><b class="grow" style="font-size:16px">מלאי לא ממודף</b>'+
+      (free.length&&b35CanWh()?'<button class="btn sm" onclick="b35Station()">מדף את המלאי הזה</button>':'')+'</div>'+
+      '<p class="muted" style="font-size:12.5px;margin:4px 0 0">חבילות שנרשמו במערכת בלי מיקום. אפשר ללקט ולשלוח אותן כרגיל — המידוף אינו חובה.</p>'+
+      (free.length? '<table style="margin-top:8px"><tr><th>פריט</th><th>בחבילה</th><th>חבילות</th><th>יחידות</th><th></th></tr>'+
+        free.map(function(f){
+          var it=(DB.items||[]).find(function(i){ return i.id===f.t.item_id; })||{};
+          return '<tr><td>'+esc(it.name||'')+'<div class="muted" style="font-size:11px">'+esc(f.t.barcode)+'</div></td>'+
+            '<td>'+esc(f.t.qty)+'</td><td><b>'+f.packages+'</b></td><td>'+f.units+'</td>'+
+            '<td>'+(b35CanWh()?'<button class="btn ghost sm" onclick="b35MoveForm(\'\',\''+f.t.id+'\')">שלח למדף</button>':'')+'</td></tr>';
+        }).join('')+'</table>' : '<div class="empty" style="margin-top:8px">אין מלאי לא ממודף — כל החבילות במיקום ידוע</div>')+
+      '</div>';
 }
 function shelfForm(sh){
   sh = sh||{};
