@@ -319,7 +319,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.15-B30f · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.15-B31d · 23.07.2026</div>
   </div>
 </div>
 
@@ -1383,39 +1383,203 @@ function custBalance(cid){
   });
   return b;
 }
-/* B30: פירוט הסכומים לגבייה — נפתח מלוח הבקרה. רשימת לקוחות חייבים ← פירוט פר-לקוח ← הרשומה עצמה. */
+/* ===== B31: גביה מלקוח — פירוט חוב + גביה בפועל =====
+   מסלולי הכסף:
+   • חוב כולל  → b2ProcessPayment (הקצאה FIFO, קבלה אחת, idempotency)
+   • מסמך בודד → הזמנה דרך b2ProcessPayment עם order_id, חשבונית מכבסה דרך addPayment
+   אמצעי גביה: אשראי / העברה / מזומן. בהעברה — אסמכתא חובה (נאכף גם בשרת). */
 function collectListModal(){
   var rows = DB.customers.map(c=>({c:c, b:custBalance(c.id)})).filter(x=>x.b>0.01).sort((a,b)=>b.b-a.b);
   var tot = rows.reduce((s,x)=>s+x.b,0);
   openModal('<h2>סכומים לגבייה</h2>'+
-    (rows.length? '<div class="card"><table><tr><th>לקוח</th><th>חוב</th></tr>'+
-      rows.map(x=>'<tr style="cursor:pointer" onclick="collectCustModal(\''+x.c.id+'\')"><td><span style="color:var(--navy2);text-decoration:underline">'+esc(x.c.name)+'</span>'+(x.c.phone?' <span class="muted" style="font-size:11px">'+esc(x.c.phone)+'</span>':'')+'</td><td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td></tr>').join('')+
-      '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td></tr></table></div>'
-      +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על לקוח פותחת את פירוט החוב שלו.</div>'
+    (rows.length? '<div class="card"><table><tr><th>לקוח</th><th>חוב</th><th></th></tr>'+
+      rows.map(x=>'<tr><td style="cursor:pointer" onclick="collectCustModal(\''+x.c.id+'\')"><span style="color:var(--navy2);text-decoration:underline">'+esc(x.c.name)+'</span>'+(x.c.phone?' <span class="muted" style="font-size:11px">'+esc(x.c.phone)+'</span>':'')+'</td>'+
+        '<td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td>'+
+        '<td>'+(CAN_EDIT?'<button class="btn sm" onclick="collectPayForm(\''+x.c.id+'\')">גבה</button>':'')+'</td></tr>').join('')+
+      '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td><td></td></tr></table></div>'
+      +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על שם הלקוח — פירוט החוב. "גבה" — רישום קבלה מיידי.</div>'
     : '<div class="card empty">אין חובות פתוחים — הכל נגבה 🎉</div>')+
     '<div style="margin-top:12px"><button class="btn ghost" onclick="closeModal()">סגור</button></div>');
 }
-function collectCustModal(cid){
-  var c = DB.customers.find(x=>x.id===cid)||{};
+/* שורות החוב של לקוח, מהישן לחדש — אותה הקצאה שהשרת עושה */
+function collectDocRows(cid){
   var rows = [];
   DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).forEach(function(o){
     var b = orderBalance(o.id);
-    if(b>0.01) rows.push({label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, click:"openOrder('"+o.id+"')"});
+    if(b>0.01) rows.push({kind:'order', id:o.id, label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, sort:String(o.created_at||o.start_date||''), click:"openOrder('"+o.id+"')"});
   });
   DB.invoices.filter(v=>v.customer_id===cid && !v.order_id && v.status!=='בוטלה').forEach(function(v){
     var paid = DB.payments.filter(p=>p.invoice_id===v.id).reduce((s,p)=>s+Number(p.amount||0),0);
     var b = Math.max(0, Number(v.total)-paid);
-    if(b>0.01) rows.push({label:'חשבונית מכבסה '+v.number+' · '+(v.date||''), b:b, click:"openInvoice('"+v.id+"')"});
+    if(b>0.01) rows.push({kind:'invoice', id:v.id, label:'חשבונית מכבסה '+v.number+' · '+(v.date||''), b:b, sort:String(v.date||''), click:"openInvoice('"+v.id+"')"});
   });
+  rows.sort((a,b)=> a.sort<b.sort? -1 : 1);
+  return rows;
+}
+function collectCustModal(cid){
+  var c = DB.customers.find(x=>x.id===cid)||{};
+  var rows = collectDocRows(cid);
   var tot = rows.reduce((s,x)=>s+x.b,0);
   openModal('<h2>חוב לגבייה — '+esc(c.name||'')+'</h2>'+
-    (rows.length? '<div class="card"><table><tr><th>מסמך</th><th>יתרה</th></tr>'+
-      rows.map(x=>'<tr style="cursor:pointer" onclick="closeModal();'+x.click+'"><td><span style="color:var(--navy2);text-decoration:underline">'+esc(x.label)+'</span></td><td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td></tr>').join('')+
-      '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td></tr></table></div>'
-      +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על מסמך פותחת אותו — ומשם אפשר לגבות תשלום.</div>'
+    (rows.length? '<div class="card"><table><tr><th>מסמך</th><th>יתרה</th><th></th></tr>'+
+      rows.map(x=>'<tr><td style="cursor:pointer" onclick="closeModal();'+x.click+'"><span style="color:var(--navy2);text-decoration:underline">'+esc(x.label)+'</span></td>'+
+        '<td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td>'+
+        '<td>'+(CAN_EDIT?'<button class="btn sm" onclick="collectPayForm(\''+cid+'\',\''+x.kind+'\',\''+x.id+'\')">גבה</button>':'')+'</td></tr>').join('')+
+      '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td><td></td></tr></table></div>'
+      +'<div class="muted" style="font-size:12px;margin-top:6px">"גבה" בשורה — גביה כנגד אותו מסמך בלבד. לחיצה על שם המסמך פותחת אותו.</div>'
     : '<div class="card empty">אין יתרות פתוחות ללקוח זה</div>')+
-    '<div style="margin-top:12px" class="row"><button class="btn ghost" onclick="collectListModal()">חזרה לרשימה</button> <button class="btn ghost" onclick="closeModal();openCust(\''+cid+'\')">כרטיס הלקוח</button></div>');
+    '<div class="row" style="margin-top:12px;gap:6px">'+
+      (rows.length&&CAN_EDIT?'<button class="btn" onclick="collectPayForm(\''+cid+'\')">גבה על כל החוב</button>':'')+
+      '<button class="btn ghost" onclick="collectListModal()">חזרה לרשימה</button> '+
+      '<button class="btn ghost" onclick="closeModal();openCust(\''+cid+'\',\'finance\')">כרטיס הלקוח</button></div>');
 }
+/* ===== B31c: בחירת מסמך בכל גביה =====
+   ברירת המחדל היא "חשבונית מס", והיא מופקת רק ברגע התשלום — לא לפניו.
+   בכל גביה המערכת שואלת מה להפיק, כולל האפשרות לא להפיק כלום. */
+var COLLECT_DOC = 'חשבונית מס';
+var PAY_DOC = 'חשבונית מס', PAY_DOC_TYPE = '', PAY_DOC_URL = '', PAY_SKIP = {};
+var DOC_OPTS = [
+  ['חשבונית מס',      'חיוב מלא. הקבלה מופקת בנפרד על הסכום שנגבה בפועל.'],
+  ['חשבונית מס-קבלה', 'מסמך אחד לחיוב ולקבלה. אפשרי רק כשהתשלום סוגר את מלוא היתרה — ואז לא מופקת קבלה נפרדת.'],
+  ['חשבונית עסקה',    'דרישת תשלום בלבד. אינה מסמך מס ואינה מזכה את הלקוח במע"מ.'],
+  ['ללא',             'לא להפיק מסמך כעת. הגביה תירשם, אך לא תיכנס ל"הכנסות" עד שיופק מסמך.']
+];
+function docOptsHtml(id, cur, onchg, allowCombined){
+  var opts = DOC_OPTS.filter(o=>allowCombined || o[0]!=='חשבונית מס-קבלה');
+  var d = (DOC_OPTS.find(o=>o[0]===cur)||DOC_OPTS[0])[1];
+  return '<div class="frow"><label>מסמך להפקה</label>'+
+    '<select id="'+id+'" onchange="'+onchg+'">'+
+      opts.map(o=>'<option value="'+o[0]+'"'+(cur===o[0]?' selected':'')+'>'+o[0]+'</option>').join('')+
+    '</select>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:3px">'+esc(d)+'</div></div>';
+}
+/* הזמנות בעלות יתרה שטרם הופק להן מסמך */
+function collectMissingInv(cid, docKind, docId){
+  if(docKind==='invoice') return [];
+  var os = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status) && orderBalance(o.id)>0.01);
+  if(docKind==='order') os = os.filter(o=>String(o.id)===String(docId));
+  return os.filter(o=>!DB.invoices.some(v=>v.order_id===o.id && v.status!=='בוטלה'));
+}
+function vatRateFE(){ var v=parseFloat(setting('vat_rate')); return (v>0&&v<1)? v : VAT_RATE; }
+function projInvTotal(oid){ return Math.round(orderTotal(oid)*(1+vatRateFE())*100)/100; }
+
+/* חלון הגביה. docKind ריק = כל החוב (FIFO); אחרת מסמך בודד. */
+var COLLECT_CTX = null;
+function collectPayForm(cid, docKind, docId){
+  var c = DB.customers.find(x=>x.id===cid); if(!c) return toast('לקוח לא נמצא', true);
+  var rows = collectDocRows(cid);
+  var target = null;
+  if(docKind && docId){ target = rows.find(x=>x.kind===docKind && String(x.id)===String(docId)); if(!target) return toast('המסמך כבר נסגר — רענן', true); }
+  var pend = collectMissingInv(cid, docKind, docId);
+  var pendIds = pend.map(o=>String(o.id));
+  var willIssue = pend.length>0 && COLLECT_DOC!=='ללא';
+  var shown = (target? [target] : rows).map(function(x){
+    var isP = (x.kind==='order' && pendIds.indexOf(String(x.id))>-1);
+    return {label:x.label, pend:isP, b:(isP&&willIssue)? Math.max(0, projInvTotal(x.id)-orderPaid(x.id)) : x.b};
+  });
+  var max = Math.round(shown.reduce((s,x)=>s+x.b,0)*100)/100;
+  if(max<=0.01) return toast('אין יתרה לגביה', true);
+  COLLECT_CTX = {cid:cid, kind:(docKind||''), id:(docId||''), txn:genTxnId(), max:max};
+
+  var alloc = '<div class="card" style="margin-bottom:10px"><table><tr><th>מסמך</th><th>יתרה לגביה</th></tr>'+
+    shown.map(x=>'<tr><td>'+esc(x.label)+(x.pend&&willIssue?' <span class="muted" style="font-size:11px">· כולל מע"מ לאחר ההפקה</span>':'')+'</td><td>'+ils(x.b)+'</td></tr>').join('')+
+    '<tr><td><b>סה"כ</b></td><td><b>'+ils(max)+'</b></td></tr></table>'+
+    (target?'':'<div class="muted" style="font-size:12px;margin-top:6px">הסכום מוקצה אוטומטית לחובות הישנים קודם.</div>')+'</div>';
+
+  // מסמך מאוחד אפשרי רק בגביה ממוקדת על הזמנה אחת
+  var allowComb = (docKind==='order' && pend.length===1);
+  if(!allowComb && COLLECT_DOC==='חשבונית מס-קבלה') COLLECT_DOC='חשבונית מס';
+  var docSel = pend.length? docOptsHtml('cp_doc', COLLECT_DOC,
+      "COLLECT_DOC=this.value;collectPayForm('"+cid+"','"+(docKind||'')+"','"+(docId||'')+"')", allowComb) : '';
+
+  openModal('<h2>גביית תשלום — '+esc(c.name||'')+'</h2>'+ alloc + docSel +
+    '<div class="grid2">'+
+      '<div class="frow"><label>סכום לגביה (₪)</label><input id="cp_amt" type="number" min="0" step="0.01" max="'+max+'" value="'+max+'"></div>'+
+      '<div class="frow"><label>תאריך</label><input id="cp_date" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+      '<div class="frow"><label>אמצעי גביה</label><select id="cp_method" onchange="cpMethodChg()"><option>אשראי</option><option>העברה</option><option>מזומן</option></select></div>'+
+    '</div>'+
+    '<div class="frow"><label id="cp_reflbl">אסמכתא / הערה</label><input id="cp_ref" placeholder="מספר אסמכתא, בנק, פרטי התשלום"></div>'+
+    '<div id="cp_hint" class="muted" style="font-size:12px;margin-bottom:8px"></div>'+
+    '<button class="btn" onclick="doCollectPay()">בצע גביה ורשום קבלה</button>');
+  cpMethodChg();
+}
+function cpMethodChg(){
+  var m = el('cp_method').value, isT = m.indexOf('העברה')>-1;
+  el('cp_reflbl').textContent = isT? 'מספר אסמכתא / הערה (חובה)' : 'אסמכתא / הערה (רשות)';
+  el('cp_hint').textContent = isT
+    ? 'בהעברה חובה אסמכתא או הערה. מיד לאחר השמירה ייפתח חלון לצירוף צילום/קובץ.'
+    : (m==='אשראי' ? 'סליקת האשראי תוטמע בהמשך — בשלב זה זהו רישום ידני של תשלום שהתקבל.'
+                   : 'גביית מזומן נכנסת אוטומטית לקופת המזומן.');
+}
+async function doCollectPay(){
+  if(!COLLECT_CTX) return;
+  var amt = Number(el('cp_amt').value)||0;
+  var method = el('cp_method').value;
+  var ref = String(el('cp_ref').value||'').trim();
+  var dt = el('cp_date').value;
+  if(amt<=0) return toast('סכום לא תקין', true);
+  if(method.indexOf('העברה')>-1 && !ref) return toast('בהעברה חובה לרשום מספר אסמכתא או הערה', true);
+  var cid=COLLECT_CTX.cid, kind=COLLECT_CTX.kind, id=COLLECT_CTX.id, mx=COLLECT_CTX.max, txn=COLLECT_CTX.txn;
+  var pend = collectMissingInv(cid, kind, id);
+  var doc = pend.length? COLLECT_DOC : '';
+  var combined = (doc==='חשבונית מס-קבלה');
+  if(combined){
+    if(kind!=='order' || pend.length!==1) return toast('חשבונית מס-קבלה אפשרית רק בגביה על הזמנה אחת', true);
+    if(amt < mx-0.01) return toast('חשבונית מס-קבלה מופקת רק כשהתשלום סוגר את מלוא היתרה ('+ils(mx)+')', true);
+  }
+  var docUrl = '';
+  if(doc && doc!=='ללא'){
+    var e = await act('b31EnsureInvoice', (kind==='order'&&id)? {order_id:id, invoice_type:doc} : {customer_id:cid, invoice_type:doc});
+    if(!e) return;
+    if(e.docs && e.docs.length) docUrl = e.docs[0].url || '';
+    if(e.created) toast('הופקו '+e.created+' מסמכים · '+doc);
+  }
+  var r=null, pid='';
+  if(kind==='invoice'){
+    r = await act('addPayment',{invoice_id:id, amount:amt, method:method, note:ref, date:dt});
+    if(!r) return;
+    pid = r.row? r.row.id : '';
+    toast('קבלה '+(r.row?r.row.receipt_number:'')+' נרשמה · '+ils(amt));
+  } else {
+    var pl = {customer_id:cid, method:method, note:ref, date:dt, txn_id:txn};
+    if(kind==='order'){ pl.order_id=id; pl.order_amount_ag=toAg(amt); pl.debt_amount_ag=0; }
+    else { pl.order_id=''; pl.order_amount_ag=0; pl.debt_amount_ag=toAg(amt); }
+    if(combined){ pl.receipt_doc=false; pl.doc_url=docUrl; }
+    r = await act('b2ProcessPayment', pl);
+    if(!r) return;
+    pid = (r.pay_ids && r.pay_ids.length)? r.pay_ids[0] : '';
+    toast(r.duplicate? 'התשלום כבר נרשם — קבלה '+r.receipt_number
+        : (combined? 'חשבונית מס-קבלה הופקה · '+ils(amt) : 'קבלה '+r.receipt_number+' הופקה · '+ils(amt)));
+  }
+  COLLECT_CTX = null;
+  if(pid && method.indexOf('העברה')>-1) payDocsForm('payment', pid, 'collect', cid);
+  else collectCustModal(cid);
+}
+/* בחירת מסמך לפני מסך התשלום של ההזמנה */
+function payDocChooser(oid){
+  var proj = Math.max(0, projInvTotal(oid)-orderPaid(oid));
+  openModal('<h2>מסמך לפני תשלום</h2>'+
+    '<div class="card" style="margin-bottom:10px">להזמנה זו טרם הופק מסמך.'+
+      '<div style="margin-top:6px">יתרה כיום: <b>'+ils(orderBalance(oid))+'</b></div>'+
+      '<div>לאחר הפקת חשבונית: <b>'+ils(proj)+'</b> · כולל מע"מ '+Math.round(vatRateFE()*100)+'%</div></div>'+
+    docOptsHtml('pd_doc', PAY_DOC, "PAY_DOC=this.value;payDocChooser('"+oid+"')", true)+
+    '<div class="row" style="margin-top:10px;gap:6px">'+
+      '<button class="btn" onclick="payDocGo(\''+oid+'\')">המשך לתשלום</button>'+
+      '<button class="btn ghost" onclick="closeModal()">ביטול</button></div>');
+}
+async function payDocGo(oid){
+  PAY_DOC_TYPE=''; PAY_DOC_URL='';
+  if(PAY_DOC==='ללא'){ PAY_SKIP[oid]=true; }
+  else {
+    var e = await act('b31EnsureInvoice',{order_id:oid, invoice_type:PAY_DOC});
+    if(!e) return;
+    PAY_DOC_TYPE = PAY_DOC;
+    PAY_DOC_URL = (e.docs && e.docs.length)? (e.docs[0].url||'') : '';
+    if(e.created) toast(PAY_DOC+' הופקה');
+  }
+  paymentScreen(oid);
+}
+
 /* ===== B2: אשראי ותשלומים (D9/D7/D15) — חישובים באגורות ===== */
 function toAg(n){ return Math.round(Number(n||0)*100); }
 function fromAg(ag){ return Math.round(Number(ag||0))/100; }
@@ -1666,6 +1830,9 @@ async function doReturn(oid){
 var PAY_CTX = null;
 async function paymentScreen(oid){
   var o = DB.orders.find(x=>x.id===oid); if(!o) return;
+  // B31c: אין מסמך להזמנה — שואלים מה להפיק לפני התשלום (ברירת מחדל: חשבונית מס).
+  if(orderBalance(oid)>0.01 && !PAY_SKIP[oid] && !DB.invoices.some(v=>v.order_id===oid && v.status!=='בוטלה'))
+    return payDocChooser(oid);
   var ctx = await api('b2PaymentContext',{order_id:oid});
   if(!ctx.ok) return toast(ctx.error, true);
   // txn_id נוצר עם פתיחת המסך — לחיצה כפולה/שליחה חוזרת לא תחייב פעמיים (idempotency בשרת)
@@ -1677,10 +1844,22 @@ async function paymentScreen(oid){
     creditBarHtml(ctx.credit)+
     '<div class="grid2"><div class="frow"><label>תשלום על ההזמנה (₪)</label><input id="b2_ord" type="number" min="0" step="0.01" value="'+bal+'" oninput="b2Sum()"></div>'+
     (debt>0.001?'<div class="frow"><label>תשלום נוסף לקיזוז חוב (רשות, עד '+ils(debt)+')</label><input id="b2_debt" type="number" min="0" step="0.01" value="0" oninput="b2Sum()"></div>':'')+
-    '<div class="frow"><label>אמצעי תשלום</label><select id="b2_method"><option>אשראי</option><option>העברה</option><option>מזומן</option><option>צ׳ק</option></select></div></div>'+
+    '<div class="frow"><label>אמצעי תשלום</label><select id="b2_method" onchange="b2MethodChg()"><option>אשראי</option><option>העברה</option><option>מזומן</option></select></div></div>'+
+    '<div class="frow"><label id="b2_reflbl">אסמכתא / הערה</label><input id="b2_ref" placeholder="מספר אסמכתא, בנק, פרטי התשלום"></div>'+
+    '<div id="b2_hint" class="muted" style="font-size:12px;margin-bottom:6px"></div>'+
     '<div class="row" style="padding:8px 0;border-top:1px solid var(--line);font-size:16px"><div class="grow"><b>סכום לתשלום:</b></div><b id="b2_total">'+ils(bal)+'</b></div>'+
     '<button class="btn" onclick="doB2Pay()">בצע תשלום ורשום קבלה</button>'+
     '<p class="muted" style="font-size:12px;margin-top:8px">הקבלה מופקת מיד ונשמרת לצמיתות — זמינה גם בפורטל הלקוח. החישוב באגורות (ללא שגיאות עיגול).</p>');
+  b2MethodChg();
+}
+/* B31: בהעברה — אסמכתא חובה (נאכף גם בשרת) */
+function b2MethodChg(){
+  var m = el('b2_method').value, isT = m.indexOf('העברה')>-1;
+  el('b2_reflbl').textContent = isT? 'מספר אסמכתא / הערה (חובה)' : 'אסמכתא / הערה (רשות)';
+  el('b2_hint').textContent = isT
+    ? 'בהעברה חובה אסמכתא או הערה. לאחר השמירה ייפתח חלון לצירוף צילום/קובץ.'
+    : (m==='אשראי' ? 'סליקת האשראי תוטמע בהמשך — בשלב זה זהו רישום ידני של תשלום שהתקבל.'
+                   : 'גביית מזומן נכנסת אוטומטית לקופת המזומן.');
 }
 function b2Sum(){
   var t = (Number(el('b2_ord').value)||0) + (el('b2_debt')?(Number(el('b2_debt').value)||0):0);
@@ -1691,12 +1870,24 @@ async function doB2Pay(){
   var debtAmt = el('b2_debt')? (Number(el('b2_debt').value)||0) : 0;
   if(ordAmt+debtAmt<=0) return toast('סכום חובה', true);
   if(ordAmt<0||debtAmt<0) return toast('סכום שלילי אינו חוקי', true);
-  var r = await act('b2ProcessPayment',{customer_id:PAY_CTX.cid, order_id:PAY_CTX.oid,
+  var mtd = el('b2_method').value, ref = String(el('b2_ref').value||'').trim();
+  if(mtd.indexOf('העברה')>-1 && !ref) return toast('בהעברה חובה לרשום מספר אסמכתא או הערה', true);
+  var oid = PAY_CTX.oid, cid = PAY_CTX.cid;
+  // B31c: חשבונית מס-קבלה — רק אם התשלום סוגר את מלוא יתרת ההזמנה, ואז אין קבלה נפרדת
+  var comb = (PAY_DOC_TYPE==='חשבונית מס-קבלה');
+  if(comb && ordAmt < orderBalance(oid)-0.01)
+    return toast('חשבונית מס-קבלה הופקה — יש לגבות את מלוא יתרת ההזמנה ('+ils(orderBalance(oid))+')', true);
+  var pl = {customer_id:cid, order_id:oid,
     order_amount_ag:toAg(ordAmt), debt_amount_ag:toAg(debtAmt),
-    method:el('b2_method').value, txn_id:PAY_CTX.txn});
+    method:mtd, note:ref, txn_id:PAY_CTX.txn};
+  if(comb){ pl.receipt_doc=false; pl.doc_url=PAY_DOC_URL; }
+  var r = await act('b2ProcessPayment', pl);
   if(r){
     toast(r.duplicate?'התשלום כבר נרשם — קבלה '+r.receipt_number:'קבלה מספר '+r.receipt_number+' הופקה · '+ils(r.total));
-    closeModal(); openOrder(PAY_CTX.oid);
+    PAY_DOC_TYPE=''; PAY_DOC_URL=''; delete PAY_SKIP[oid];
+    var pid = (r.pay_ids && r.pay_ids.length)? r.pay_ids[0] : '';
+    if(pid && mtd.indexOf('העברה')>-1) payDocsForm('payment', pid, 'collect', cid);
+    else { closeModal(); openOrder(oid); }
   }
 }
 /* B2 (S2): מנהל/משרד מסמנים "תשלום בהמשך" — ההזמנה תיכנס לניצול המסגרת לאחר אישור */
@@ -2118,7 +2309,7 @@ function rFinance(){
           '<td style="font-size:12px">'+(v.type?esc(v.type):'חשבונית עסקה')+(v.order_id?'':' <span class="chip" style="font-size:10px">מכבסה</span>')+
             (hasAlloc?'<br><span class="muted" style="font-size:10px">הקצ׳ '+esc(v.allocation_number)+'</span>':'')+'</td>'+
           '<td>'+esc(v.date)+'</td>'+
-          '<td>'+esc(cust(v.customer_id))+'</td>'+
+          '<td>'+(v.customer_id?'<span style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openCust(\''+v.customer_id+'\',\'finance\')">'+esc(cust(v.customer_id))+'</span>':'')+'</td>'+
           '<td>'+ils(v.subtotal)+'</td>'+
           '<td>'+ils(v.total)+'</td>'+
           '<td><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></td>'+
@@ -2135,10 +2326,10 @@ function rFinance(){
     html += finLaundryHtml(); // NC3: חיובים פתוחים ⇒ חשבונית מרוכזת
   } else if(FIN_TAB==='receipts'){
     html += DB.payments.length? '<div class="card"><table><tr><th>קבלה</th><th>תאריך</th><th>לקוח</th><th>סכום</th><th>אמצעי</th></tr>'+
-      DB.payments.slice().reverse().map(p=>{var o=DB.orders.find(x=>x.id===p.order_id); var vI=!o&&p.invoice_id?DB.invoices.find(x=>x.id===p.invoice_id):null; var pcid=o?o.customer_id:(vI?vI.customer_id:'');return '<tr><td><b style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+p.receipt_number+'</b></td><td>'+esc(p.date)+'</td><td>'+esc(cust(pcid))+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+' <button class="btn ghost sm" onclick="printReceipt(\''+p.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></td></tr>';}).join('')+'</table></div>' : '<div class="card empty">אין קבלות עדיין</div>';
+      DB.payments.slice().reverse().map(p=>{var o=DB.orders.find(x=>x.id===p.order_id); var vI=!o&&p.invoice_id?DB.invoices.find(x=>x.id===p.invoice_id):null; var pcid=p.customer_id||(o?o.customer_id:(vI?vI.customer_id:''));return '<tr style="cursor:pointer" onclick="openReceipt(\''+p.id+'\')"><td><b style="color:var(--navy2);text-decoration:underline">'+p.receipt_number+'</b></td><td>'+esc(p.date)+'</td><td>'+(pcid?'<span style="color:var(--navy2);text-decoration:underline" onclick="event.stopPropagation();openCust(\''+pcid+'\',\'finance\')">'+esc(cust(pcid))+'</span>':'')+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+' <button class="btn ghost sm" onclick="event.stopPropagation();printReceipt(\''+p.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></td></tr>';}).join('')+'</table></div>' : '<div class="card empty">אין קבלות עדיין</div>';
   } else if(FIN_TAB==='expenses'){
     html += DB.expenses.length? '<div class="card"><table><tr><th>תאריך</th><th>קטגוריה</th><th>ספק</th><th>סכום</th></tr>'+
-      DB.expenses.slice().reverse().map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.category)+'</td><td>'+esc(supp(x.supplier_id))+'</td><td>'+ils(x.amount)+(x.attachment_url?' <a href="'+esc(x.attachment_url)+'" target="_blank"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></a>':'')+'</td></tr>').join('')+'</table></div>' : '<div class="card empty">אין הוצאות עדיין</div>';
+      DB.expenses.slice().reverse().map(x=>'<tr style="cursor:pointer" onclick="expenseDetail(\''+x.id+'\')"><td>'+esc(x.date)+'</td><td><span style="color:var(--navy2);text-decoration:underline">'+esc(x.category)+'</span></td><td>'+esc(supp(x.supplier_id))+'</td><td>'+ils(x.amount)+(x.attachment_url?' <a href="'+esc(x.attachment_url)+'" target="_blank"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></a>':'')+'</td></tr>').join('')+'</table></div>' : '<div class="card empty">אין הוצאות עדיין</div>';
   } else {
     html += futureExpensesHtml();
   }
@@ -2172,13 +2363,99 @@ function finCard(val,label,onclick,alert){
 function finSummaryHtml(){
   var futTot = finFutureTotal(), debt = finCustomerDebt();
   return '<div class="gridkpi" style="margin-bottom:14px">'+
-    finCard(ils(finIncomeMonth()),'הכנסות החודש',"goFin('collection')",false)+
-    finCard(ils(debt),'חובות לקוחות',"goFin('receipts')",debt>0)+
-    finCard(ils(finExpensesMonth()),'הוצאות החודש',"goFin('expenses')",false)+
+    finCard(ils(finIncomeMonth()),'הכנסות החודש',"finIncomeBreakdown()",false)+
+    finCard(ils(debt),'חובות לקוחות',"collectListModal()",debt>0)+
+    finCard(ils(finExpensesMonth()),'הוצאות החודש',"finExpBreakdown()",false)+
     finCard(ils(futTot),'הוצאות צפויות',"goFin('future')",futTot>0)+
-    finCard(ils(finSupplierTotal()),'יתרות לספקים',"goFin('future')",false)+
-    finCard(ils(finPayrollTotal()),'יתרות שכר',"go('payroll')",false)+
+    finCard(ils(finSupplierTotal()),'יתרות לספקים',"finSupplierBreakdown()",false)+
+    finCard(ils(finPayrollTotal()),'יתרות שכר',"finPayrollBreakdown()",false)+
     '</div>';
+}
+
+/* B31: פירוט הוצאה בודדת */
+function expenseDetail(id){
+  var x = (DB.expenses||[]).find(y=>y.id===id); if(!x) return;
+  var gross = Number(x.amount||0)+Number(x.vat||0);
+  openModal('<h2>פירוט הוצאה</h2>'+
+    '<div class="card"><table>'+
+      '<tr><td>תאריך</td><td>'+esc(x.date)+'</td></tr>'+
+      '<tr><td>קטגוריה</td><td>'+esc(x.category||'')+'</td></tr>'+
+      '<tr><td>ספק</td><td>'+(x.supplier_id?'<span style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="supBalanceCard(\''+x.supplier_id+'\')">'+esc(supp(x.supplier_id))+'</span>':'—')+'</td></tr>'+
+      '<tr><td>סכום לפני מע"מ</td><td>'+ils(x.amount)+'</td></tr>'+
+      '<tr><td>מע"מ</td><td>'+ils(x.vat||0)+'</td></tr>'+
+      '<tr><td><b>סה"כ</b></td><td class="tot"><b>'+ils(gross)+'</b></td></tr>'+
+      '<tr><td>הערה</td><td>'+esc(x.note||'')+'</td></tr>'+
+      '<tr><td>אסמכתא</td><td>'+(x.attachment_url?'<a href="'+esc(x.attachment_url)+'" target="_blank">פתח קובץ</a>':'—')+'</td></tr>'+
+    '</table></div>'+
+    '<div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+
+/* ===== B31: פירוט לכל כרטיס בדשבורד הכספים — לחיצה על סכום פותחת את מה שמרכיב אותו ===== */
+function finBdModal(title, sub, head, rowsHtml, tot, empty){
+  openModal('<h2>'+esc(title)+'</h2>'+
+    (sub?'<div class="muted" style="margin-bottom:8px">'+esc(sub)+'</div>':'')+
+    (rowsHtml? '<div class="card"><table>'+head+rowsHtml+
+      '<tr><td colspan="'+(head.split('<th>').length-2)+'"><b>סה"כ</b></td><td class="tot"><b>'+ils(tot)+'</b></td></tr></table></div>'
+      : '<div class="card empty">'+esc(empty)+'</div>')+
+    '<div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+// הכנסות החודש — החשבוניות שמרכיבות את הסכום (לפני מע"מ)
+function finIncomeBreakdown(){
+  var mk = finMonthKey();
+  var list = (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+    .slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  var tot = list.reduce((s,v)=>s+Number(v.subtotal||0),0);
+  finBdModal('הכנסות החודש — '+mk, list.length+' חשבוניות · לחיצה על שורה פותחת את החשבונית',
+    '<tr><th>מס\'</th><th>תאריך</th><th>לקוח</th><th>סטטוס</th><th>לפני מע"מ</th></tr>',
+    list.map(v=>'<tr style="cursor:pointer" onclick="closeModal();openInvoice(\''+v.id+'\')">'+
+      '<td><b style="color:var(--navy2);text-decoration:underline">'+esc(v.number)+'</b></td>'+
+      '<td>'+esc(v.date)+'</td><td>'+esc(cust(v.customer_id))+'</td>'+
+      '<td><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></td>'+
+      '<td class="tot">'+ils(v.subtotal)+'</td></tr>').join(''),
+    tot, 'אין חשבוניות בחודש זה');
+}
+// הוצאות החודש — ההוצאות שנרשמו בפועל (כולל מע"מ)
+function finExpBreakdown(){
+  var mk = finMonthKey();
+  var list = (DB.expenses||[]).filter(x=>String(x.date||'').slice(0,7)===mk)
+    .slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  var tot = list.reduce((s,x)=>s+Number(x.amount||0)+Number(x.vat||0),0);
+  finBdModal('הוצאות החודש — '+mk, list.length+' רשומות · כולל מע"מ',
+    '<tr><th>תאריך</th><th>קטגוריה</th><th>ספק</th><th>אסמכתא</th><th>סכום</th></tr>',
+    list.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.category)+'</td><td>'+esc(supp(x.supplier_id))+'</td>'+
+      '<td>'+(x.attachment_url?'<a href="'+esc(x.attachment_url)+'" target="_blank">פתח</a>':'—')+'</td>'+
+      '<td class="tot">'+ils(Number(x.amount||0)+Number(x.vat||0))+'</td></tr>').join(''),
+    tot, 'אין הוצאות בחודש זה');
+}
+// יתרות לספקים — לפי ספק, לחיצה פותחת את כרטיס הספק
+function finSupplierBreakdown(){
+  var map = {};
+  fexpOpen().filter(x=>x.supplier_id).forEach(function(x){
+    map[x.supplier_id] = (map[x.supplier_id]||0) + fexpRemain(x);
+  });
+  var list = Object.keys(map).map(k=>({id:k, b:Math.round(map[k]*100)/100})).filter(x=>x.b>0.01).sort((a,b)=>b.b-a.b);
+  var tot = list.reduce((s,x)=>s+x.b,0);
+  finBdModal('יתרות לספקים', list.length+' ספקים · לחיצה פותחת את כרטיס הספק',
+    '<tr><th>ספק</th><th>יתרה</th></tr>',
+    list.map(x=>'<tr style="cursor:pointer" onclick="supBalanceCard(\''+x.id+'\')">'+
+      '<td><span style="color:var(--navy2);text-decoration:underline">'+esc(supp(x.id))+'</span></td>'+
+      '<td class="tot">'+ils(x.b)+'</td></tr>').join(''),
+    tot, 'אין יתרות פתוחות לספקים');
+}
+// יתרות שכר — ההוצאות העתידיות שמקורן בשכר
+function finPayrollBreakdown(){
+  var list = fexpOpen().filter(x=>x.source==='payroll');
+  var tot = list.reduce((s,x)=>s+fexpRemain(x),0);
+  finBdModal('יתרות שכר', list.length+' רשומות · הסגירה מתבצעת במסך השכר',
+    '<tr><th>עובד</th><th>תיאור</th><th>תאריך יעד</th><th>יתרה</th></tr>',
+    list.map(function(x){
+      var e = (DB.employees||[]).find(y=>y.id===x.employee_id);
+      return '<tr style="cursor:pointer" onclick="closeModal();go(\'payroll\')">'+
+        '<td><span style="color:var(--navy2);text-decoration:underline">'+esc(e?e.name:(x.category||''))+'</span></td>'+
+        '<td>'+esc(x.description||'יתרת שכר לתשלום')+'</td>'+
+        '<td>'+esc(x.due_date||'—')+'</td><td class="tot">'+ils(fexpRemain(x))+'</td></tr>';
+    }).join(''),
+    tot, 'אין יתרות שכר פתוחות');
 }
 
 /* ===== B30: גביה בפועל + קופת מזומן ===== */
@@ -2211,6 +2488,7 @@ function finCollectionHtml(){
       box(ils(sum(bank)),'בנק / אשראי / העברות',"colPayList('bank')",'var(--teal,#1f7a6b)')+
       box(ils(sum(cash)),'מזומן שנגבה החודש',"colPayList('cash')",'#8a5a1f')+
     '</div>'+
+    collectDebtorsCard()+   /* B31: חובות לגבייה + גביה בפועל מתוך מסך הכספים */
     '<div class="card" style="border-right:5px solid #8a5a1f"><div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">'+
       '<div class="grow"><h3 style="margin:0">קופת מזומן</h3><div class="muted" style="font-size:12px">כל גביית מזומן נכנסת לקופה; תשלום במזומן (ספק/שכר), הפקדה לבנק או תשלום מהקופה — יוצאים ממנה.</div></div>'+
       '<div style="font-size:22px;font-weight:800;color:'+(bal>0?'var(--ink)':'var(--muted)')+'">'+ils(bal)+'</div>'+
@@ -2221,7 +2499,25 @@ function finCollectionHtml(){
       moves.map(m=>'<tr><td>'+esc(m.date)+'</td><td>'+esc(m.type)+'</td><td>'+esc(m.recipient||'')+'</td><td>'+ils(m.amount)+'</td><td>'+esc(m.note||'')+'</td><td class="muted" style="font-size:11px">'+esc(m.created_by||'')+'</td></tr>').join('')+'</table>'
       :'<div class="muted" style="margin-top:8px;font-size:12px">אין עדיין תנועות קופה (הפקדות/תשלומים מהקופה)</div>')+
     '</div>'+
-    '<div class="muted" style="font-size:12px;margin-top:8px">גביית תשלום מלקוח נעשית מתוך ההזמנה (כפתור "+ תשלום") או מחשבונית מכבסה. תשלום לספק במזומן — במסך "הוצאות עתידיות" ← "תשלום" ← אמצעי "מזומן", והוא מקוזז מהקופה אוטומטית.</div>';
+    '<div class="muted" style="font-size:12px;margin-top:8px">גביה מלקוח — כפתור "גבה" בטבלת החובות שמעל, או מתוך ההזמנה/החשבונית. אמצעים: אשראי, העברה (אסמכתא חובה), מזומן. תשלום לספק במזומן — במסך "הוצאות עתידיות" ← "תשלום" ← אמצעי "מזומן", והוא מקוזז מהקופה אוטומטית.</div>';
+}
+/* B31: כרטיס חובות לגבייה בתוך מסך הכספים — פירוט + גביה בפועל */
+function collectDebtorsCard(){
+  var rows = DB.customers.map(c=>({c:c, b:custBalance(c.id)})).filter(x=>x.b>0.01).sort((a,b)=>b.b-a.b);
+  var tot = rows.reduce((s,x)=>s+x.b,0);
+  return '<div class="card" style="border-right:5px solid var(--danger)">'+
+    '<div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">'+
+      '<div class="grow"><h3 style="margin:0">חובות לגבייה</h3>'+
+      '<div class="muted" style="font-size:12px">לחיצה על לקוח — פירוט החוב לפי מסמכים. "גבה" — רישום קבלה מיידי.</div></div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+(tot>0?'var(--danger)':'var(--muted)')+'">'+ils(tot)+'</div>'+
+    '</div>'+
+    (rows.length? '<table style="margin-top:8px"><tr><th>לקוח</th><th>חוב</th><th></th></tr>'+
+      rows.slice(0,50).map(x=>'<tr><td style="cursor:pointer" onclick="collectCustModal(\''+x.c.id+'\')"><span style="color:var(--navy2);text-decoration:underline">'+esc(x.c.name)+'</span></td>'+
+        '<td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td>'+
+        '<td>'+(CAN_EDIT?'<button class="btn sm" onclick="collectPayForm(\''+x.c.id+'\')">גבה</button>':'')+'</td></tr>').join('')+
+      '</table>'+(rows.length>50?'<div class="muted" style="font-size:12px;margin-top:6px">מוצגים 50 החייבים הגדולים.</div>':'')
+      : '<div class="muted" style="margin-top:8px;font-size:12px">אין חובות פתוחים 🎉</div>')+
+    '</div>';
 }
 /* B30: פירוט הגביה — רשימת הקבלות שמרכיבות את הסכום. לחיצה על שורה פותחת את הקבלה. */
 function colPayList(which){
@@ -2288,8 +2584,10 @@ function futureExpensesHtml(){
   var URG_ORDER = {'קריטי':0,'דחוף':1,'רגיל':2};
   var URG_COLOR = {'קריטי':'var(--danger)','דחוף':'var(--amber)','רגיל':'var(--muted)'};
   var openAll = fexpOpen();
-  var noDate  = openAll.filter(x=>!x.due_date);
-  var withDate= openAll.filter(x=>x.due_date && fexpInRange(x));
+  // B31: "הכל" מציג את כל הסכום, כולל רשומות ללא תאריך יעד. הסינון מתחיל רק לאחר בחירת טווח/תאריך.
+  var allMode = (FEXP_RANGE==='all');
+  var noDate  = allMode? [] : openAll.filter(x=>!x.due_date);
+  var withDate= allMode? openAll.slice() : openAll.filter(x=>x.due_date && fexpInRange(x));
   var paid = fexpAll().filter(x=>x.status==='שולם');
   withDate.sort(function(a,b){
     var u = (URG_ORDER[a.urgency]||9)-(URG_ORDER[b.urgency]||9);
@@ -2366,7 +2664,7 @@ function futureExpensesHtml(){
 
 // B28: פירוט מלא של הסכום "סה"כ צפוי לתשלום" — שורה לכל רשומה שמרכיבה אותו
 function fexpTotalBreakdown(){
-  var list = fexpOpen().filter(x=>x.due_date && fexpInRange(x))
+  var list = (FEXP_RANGE==='all'? fexpOpen().slice() : fexpOpen().filter(x=>x.due_date && fexpInRange(x)))
     .sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
   var tot = list.reduce((s,x)=>s+fexpRemain(x),0);
   var today = new Date().toISOString().slice(0,10);
@@ -2374,8 +2672,8 @@ function fexpTotalBreakdown(){
     '<div class="muted" style="margin-bottom:8px">טווח: '+esc(fexpRangeLabel())+' · '+list.length+' רשומות</div>'+
     (list.length? '<div class="card"><table><tr><th>תאריך יעד</th><th>קטגוריה</th><th>תיאור</th><th>יתרה</th><th></th></tr>'+
       list.map(function(x){
-        var overdue = x.due_date < today;
-        return '<tr><td'+(overdue?' style="color:var(--danger);font-weight:700"':'')+'>'+esc(x.due_date)+(overdue?' ⚠':'')+'</td>'+
+        var overdue = x.due_date && x.due_date < today;
+        return '<tr><td'+(overdue?' style="color:var(--danger);font-weight:700"':'')+'>'+esc(x.due_date||'ללא תאריך')+(overdue?' ⚠':'')+'</td>'+
           '<td>'+esc(x.category)+(x.supplier_id?'<div class="muted" style="font-size:11.5px">'+esc(supp(x.supplier_id))+'</div>':'')+'</td>'+
           '<td>'+esc(x.description||'')+'</td>'+
           '<td class="tot">'+ils(fexpRemain(x))+'</td>'+
@@ -2534,6 +2832,7 @@ function payDocsForm(kind, payId, backKind, backId){
     '<button class="btn" onclick="addPayDoc(\''+kind+'\',\''+payId+'\',\''+(backKind||'')+'\',\''+(backId||'')+'\')">הוסף אסמכתא</button></fieldset>'+
     '<div class="row" style="margin-top:10px;gap:6px">'+
       (backKind==='fexp'?'<button class="btn ghost sm" onclick="fexpBreakdown(\''+backId+'\')">חזרה לפירוט</button>':'')+
+      (backKind==='collect'?'<button class="btn ghost sm" onclick="collectCustModal(\''+backId+'\')">חזרה לפירוט הלקוח</button>':'')+
       (backKind==='payroll'?'<button class="btn ghost sm" onclick="payrollDetail(\''+backId+'\')">חזרה לשכר</button>':'')+
       '<button class="btn ghost sm" onclick="closeModal()">סיום</button></div>');
 }
@@ -2629,20 +2928,10 @@ async function nobleInvoice(cid){
   if(r) toast('הופקה חשבונית '+r.invoice.number+' — '+r.count+' קליטות · '+ils(r.invoice.total)+' כולל מע"מ');
 }
 /* NC3: תשלום על חשבונית מכבסה (אין הזמנה — לפי חשבונית) */
+/* B31: כל גביה מלקוח עוברת דרך חלון הגביה האחיד (אשראי/העברה/מזומן + אסמכתא). */
 function laundryPayForm(vid){
   var v = DB.invoices.find(x=>x.id===vid); if(!v) return;
-  var paid = DB.payments.filter(p=>p.invoice_id===vid).reduce((s,p)=>s+Number(p.amount||0),0);
-  var bal = Math.round((Number(v.total)-paid)*100)/100;
-  openModal('<h2>תשלום — חשבונית '+v.number+'</h2><p class="muted">'+esc(cust(v.customer_id))+' · יתרה לתשלום: '+ils(bal)+'</p>'+
-    '<div class="grid2"><div class="frow"><label>סכום</label><input id="f_lpamt" type="number" min="0" step="0.1" value="'+bal+'"></div>'+
-    '<div class="frow"><label>אמצעי תשלום</label><select id="f_lpmethod"><option>העברה בנקאית</option><option>המחאה</option><option>מזומן</option><option>אשראי</option></select></div></div>'+
-    '<button class="btn" onclick="laundryPaySave(\''+vid+'\')">שמור קבלה</button>');
-}
-async function laundryPaySave(vid){
-  var amt = Number(el('f_lpamt').value);
-  if(!(amt>0)) return toast('סכום חובה', true);
-  var r = await act('addPayment',{invoice_id:vid,amount:amt,method:el('f_lpmethod').value},'הקבלה נרשמה');
-  if(r) closeModal();
+  return collectPayForm(v.customer_id, 'invoice', vid);
 }
 function expForm(){
   openModal('<h2>הוצאה חדשה</h2>'+
@@ -2795,7 +3084,10 @@ function custTabFinance(cid){
   return '<div class="card" style="margin:0 0 10px;padding:10px 12px">'+creditBarHtml(creditStatus(cid))+
     (ROLE==='מנהל'?'<button class="btn ghost sm" onclick="creditLimitForm(\''+cid+'\')">מסגרת אשראי (מנהל)</button>':'')+'</div>'+
     custDepositCard(cid)+
-    '<div class="section-title" style="margin-top:10px"><h3>חשבוניות ('+invs.length+') · יתרה לגבייה: '+ils(bal)+'</h3></div>'+
+    '<div class="section-title" style="margin-top:10px"><h3>חשבוניות ('+invs.length+') · יתרה לגבייה: '+ils(bal)+'</h3>'+
+      (bal>0.01?'<div class="row" style="gap:6px">'+
+        '<button class="btn ghost sm" onclick="collectCustModal(\''+cid+'\')">פירוט החוב</button>'+
+        (CAN_EDIT?'<button class="btn sm" onclick="collectPayForm(\''+cid+'\')">גבה תשלום</button>':'')+'</div>':'')+'</div>'+
     (invs.length? invs.map(function(v){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="printInvoice(\''+v.id+'\')"><div class="grow">חשבונית '+esc(v.number)+' · '+esc(v.date)+'</div><div><b>'+ils(v.total)+'</b></div><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></div>'; }).join('') : '<div class="muted">אין חשבוניות עדיין</div>')+
     '<div class="section-title" style="margin-top:10px"><h3>תשלומים שהתקבלו ('+pays.length+')</h3></div>'+
     (pays.length? '<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th></tr>'+
