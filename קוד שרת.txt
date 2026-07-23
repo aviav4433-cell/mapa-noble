@@ -1024,6 +1024,9 @@ function handle(action, p, db, user) {
     }
     case 'addPayment': {
       if (!(Number(p.amount) > 0)) return { ok: false, error: 'סכום חובה' };
+      // B31: העברה בנקאית — חובה אסמכתא או הערה
+      if (String(p.method || '').indexOf('העברה') > -1 && !String(p.note || '').trim())
+        return { ok: false, error: 'בגביה בהעברה חובה לרשום מספר אסמכתא או הערה' };
       // NC3: תשלום על חשבונית מכבסה מרוכזת (ללא הזמנה) — לפי invoice_id
       if (!p.order_id && p.invoice_id) {
         var ivL = db.invoices.find(function (v) { return v.id === p.invoice_id && v.status !== 'בוטלה'; });
@@ -1550,7 +1553,8 @@ function handle(action, p, db, user) {
     }
     // צירוף אסמכתא לתשלום — אפשר כמה לכל תשלום. הקובץ נשמר בגוגל דרייב.
     case 'uploadPaymentDoc': {
-      var kindD = (p.pay_kind === 'payroll') ? 'payroll' : 'expense';
+      // B31: נוסף 'payment' — אסמכתאות לקבלה מלקוח (גביה בהעברה בנקאית)
+      var kindD = (p.pay_kind === 'payroll') ? 'payroll' : (p.pay_kind === 'payment' ? 'payment' : 'expense');
       if (!p.pay_id) return { ok: false, error: 'חסר מזהה תשלום' };
       var urlD = '';
       if (p.base64) {
@@ -3328,11 +3332,18 @@ function b2ProcessPayment(db, p, user) {
 
   // idempotency: לחיצה כפולה / שליחה חוזרת — מחזירים את הקבלה הקיימת, לא מחייבים שוב
   var dup = db.payments.find(function (x) { return String(x.txn_id || '') === txn; });
-  if (dup) return { ok: true, duplicate: true, receipt_number: dup.receipt_number, pdf_url: dup.pdf_url || '', total: '', credit: b2CreditStatusObj(db, cust.id) };
+  if (dup) return { ok: true, duplicate: true, receipt_number: dup.receipt_number, pdf_url: dup.pdf_url || '', total: '',
+    pay_ids: db.payments.filter(function (x) { return String(x.txn_id || '') === txn; }).map(function (x) { return x.id; }),
+    credit: b2CreditStatusObj(db, cust.id) };
 
   var orderAg = Math.round(Number(p.order_amount_ag || 0));
   var debtAg = Math.round(Number(p.debt_amount_ag || 0));
   if (!(orderAg >= 0) || !(debtAg >= 0) || orderAg + debtAg <= 0) return { ok: false, error: 'סכום לתשלום חובה' };
+
+  // B31: גביה בהעברה בנקאית — חובה מספר אסמכתא או הערה. אשראי/מזומן — לא נדרש.
+  // (עד להטמעת ממשק הבנק, האסמכתא היא הראיה היחידה שהכסף התקבל.)
+  if (String(p.method || '').indexOf('העברה') > -1 && !String(p.note || '').trim())
+    return { ok: false, error: 'בגביה בהעברה חובה לרשום מספר אסמכתא או הערה' };
 
   var o = null;
   if (orderAg > 0) {
@@ -3417,6 +3428,7 @@ function b2ProcessPayment(db, p, user) {
 
   return {
     ok: true, receipt_number: rcptNum, pdf_url: url, total: totalIls,
+    pay_ids: newRows.map(function (r) { return r.id; }),   // B31: לצירוף אסמכתאות לקבלה
     order_balance_ag: o ? b2OrderBalanceAg(db, o.id) : 0,
     credit: b2CreditStatusObj(db, cust.id),
     auditNote: 'קבלה ' + rcptNum + ' · ' + cust.name + ' · ₪' + totalIls + (o ? ' · הזמנה ' + (o.order_number || o.id) : '') + ' · txn ' + txn
