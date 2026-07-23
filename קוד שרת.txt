@@ -209,7 +209,7 @@ var DEFAULT_SETTINGS = {
 };
 
 var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
-var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = ['delete', 'b38FixPickups', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -429,6 +429,107 @@ function getAllPayload(db) {
     });
   });
   return out;
+}
+
+// ============================================================================
+// B38: אבטחה — עמודות רגישות בטבלת העובדים לא יוצאות לממשק
+// pin
+// password_hash
+// המספר האישי נשלח למנהל בלבד; הגיבוב לא נשלח לאיש. במקומו דגל בוליאני.
+// ============================================================================
+function b38ScrubEmployees(payload, role) {
+  var isMgr = String(role || '') === 'מנהל';
+  var src = payload.employees || [];
+  var out = src.map(function (e) {
+    var c = {};
+    for (var k in e) { if (k !== 'pin' && k !== 'password_hash') c[k] = e[k]; }
+    c.has_password = e.password_hash ? 1 : '';
+    c.has_pin = (String(e.pin == null ? '' : e.pin).trim() !== '') ? 1 : '';
+    if (isMgr) c.pin = e.pin;   // B37: המספר האישי גלוי למנהל בלבד
+    return c;
+  });
+  var res = {};
+  for (var t in payload) res[t] = payload[t];
+  res.employees = out;
+  return res;
+}
+
+// B38: אימות מספר אישי של מנהל — עבר מהממשק לשרת.
+// עד B37 ההשוואה נעשתה בדפדפן מול הטבלה שנשלחה אליו — כלומר ניתנת לעקיפה.
+var B38_MGR_MAX_TRIES = 5;
+function b38VerifyManagerPin(db, pin, actor) {
+  var withPin = (db.employees || []).filter(function (e) {
+    return e.role === 'מנהל' && e.active !== 'לא' && String(e.pin == null ? '' : e.pin).trim() !== '';
+  });
+  // אין אף מנהל פעיל עם מספר אישי — לא נועלים את המערכת, אבל מסמנים ביומן
+  if (!withPin.length) return { ok: true, bypass: true };
+  var key = 'b38_mgrpin_' + String(actor || 'anon').replace(/[^0-9a-zA-Z]/g, '_');
+  var cache = null, tries = 0;
+  try { cache = CacheService.getScriptCache(); tries = Number(cache.get(key) || 0); } catch (e) { }
+  if (tries >= B38_MGR_MAX_TRIES) return { ok: false, error: 'יותר מדי ניסיונות שגויים — נסה שוב בעוד 10 דקות' };
+  var typed = String(pin == null ? '' : pin).trim();
+  var hit = typed !== '' && withPin.some(function (e) { return String(e.pin) === typed; });
+  if (!hit) {
+    if (cache) { try { cache.put(key, String(tries + 1), 600); } catch (e) { } }
+    return { ok: false, error: 'קוד מנהל שגוי' };
+  }
+  if (cache) { try { cache.remove(key); } catch (e) { } }
+  return { ok: true };
+}
+
+// B38: איזה רשומות משלוח מגיעות להזמנה, לפי סוג ולפי שינוע.
+// השכרה  → אספקה בתאריך ההתחלה, איסוף בתאריך ההחזרה.
+// כביסה  → רק אם נבחר שינוע (delivery_fee > 0):
+//          איסוף בתאריך ההתחלה (איסוף הכביסה מהלקוח)
+//          אספקה בתאריך ההחזרה (החזרת הכביסה הנקייה)
+// הסדר הפוך מהשכרה בכוונה — כך מוגדרים השדות בטופס ההזמנה:
+// "תאריך אירוע / איסוף" ו-"תאריך החזרה".
+function b38PlannedDeliveries(o) {
+  if (String(o.type) === 'השכרה')
+    return [{ kind: 'אספקה', date: o.start_date }, { kind: 'איסוף', date: o.end_date }];
+  if (String(o.type) === 'כביסה' && Number(o.delivery_fee || 0) > 0)
+    return [{ kind: 'איסוף', date: o.start_date }, { kind: 'אספקה', date: o.end_date }];
+  return [];   // כביסה באיסוף עצמי — אין נסיעות
+}
+
+// B38: יוצר רק את מה שחסר. בטוח להרצה חוזרת.
+function b38EnsureOrderDeliveries(db, o) {
+  var plan = b38PlannedDeliveries(o);
+  if (!plan.length) return 0;
+  var mine = (db.deliveries || []).filter(function (d) { return d.order_id === o.id; });
+  var n = 0;
+  plan.forEach(function (pl) {
+    if (mine.some(function (d) { return String(d.kind) === pl.kind; })) return;
+    db.deliveries.push({
+      id: genId('DELV'), order_id: o.id, kind: pl.kind, date: pl.date || '',
+      driver: '', status: 'מתוכנן', note: ''
+    });
+    n++;
+  });
+  return n;
+}
+
+// B38 (תיקון החזרות): תאריכי ההזמנה זזו — משלוחי האספקה והאיסוף הפתוחים זזים איתם.
+// עד כה שינוי תאריך החזרה בהזמנה לא עדכן את רשומת האיסוף, ולכן ההזמנה
+// לא הופיעה ב"אמור לחזור היום". רשומה שכבר בוצעה/בוטלה לעולם לא נוגעים בה.
+var B38_OPEN_DELIV = ['מתוכנן', 'בדרך'];
+function b38SyncOrderDeliveries(db, o, oldStart, oldEnd) {
+  var startMoved = String(oldStart == null ? '' : oldStart) !== String(o.start_date == null ? '' : o.start_date);
+  var endMoved = String(oldEnd == null ? '' : oldEnd) !== String(o.end_date == null ? '' : o.end_date);
+  if (!startMoved && !endMoved) return 0;
+  var n = 0;
+  var planned = {};
+  b38PlannedDeliveries(o).forEach(function (pl) { planned[pl.kind] = pl.date; });
+  (db.deliveries || []).forEach(function (d) {
+    if (d.order_id !== o.id) return;
+    if (B38_OPEN_DELIV.indexOf(String(d.status)) === -1) return;
+    var want = planned[String(d.kind)];
+    if (!want) return;
+    var relevant = (String(want) === String(o.start_date)) ? startMoved : endMoved;
+    if (relevant && String(d.date || '') !== String(want)) { d.date = want; n++; }
+  });
+  if (n) writeTable('deliveries', db.deliveries);
+  return n;
 }
 
 function loadDb() {
@@ -697,7 +798,8 @@ function handle(action, p, db, user) {
       if (String(p._verified_role || '') === 'נהג' && p._verified_employee_id) {
         return { ok: true, db: getDriverFilteredPayload(db, p._verified_employee_id) };
       }
-      return { ok: true, db: getAllCached(db) }; // G1+B12: שדות ארוכים קוצצו, ומטמון קצר לפי data_version
+      // B38: המטמון משותף לכל התפקידים — לכן הסינון נעשה אחריו, על עותק, ולא נכנס למטמון
+      return { ok: true, db: b38ScrubEmployees(getAllCached(db), p._verified_role) };
     }
 
     // G1: שליפת הטקסט המלא של רשומות ספציפיות (רק שדות הטקסט המוגדרים — לא רשומה שלמה)
@@ -875,12 +977,90 @@ function handle(action, p, db, user) {
         return { ok: false, error: 'ברקוד זה כבר קיים על פריט אחר' };
       // B34a: מדף ותיק בלי ברקוד — מקבל ברקוד אוטומטית בעריכה הראשונה
       if (p.table === 'shelves' && !rec.barcode && !p.row.barcode) p.row.barcode = 'SH-' + nextNumber(db, 'shelf', 201);
+      // B38: המספר האישי והגיבוב אינם ניתנים לעדכון על ידי מי שאינו מנהל,
+      // וגיבוב הסיסמה לעולם לא מתעדכן דרך update (רק דרך setPassword).
+      if (p.table === 'employees') {
+        delete p.row.password_hash; delete p.row.has_password; delete p.row.has_pin;
+        if (String(p._verified_role || '') !== 'מנהל' && !isSuperAdmin(p._verified_employee_id)) delete p.row.pin;
+        if ('pin' in p.row) {
+          var newPinB38 = String(p.row.pin == null ? '' : p.row.pin).trim();
+          if (newPinB38 !== '' && db.employees.some(function (x) { return x.id !== p.id && String(x.pin) === newPinB38; }))
+            return { ok: false, error: 'המספר האישי הזה כבר תפוס' };
+        }
+      }
+      var b38OldStart = null, b38OldEnd = null, b38OldFee = 0;
+      if (p.table === 'orders') { b38OldStart = rec.start_date; b38OldEnd = rec.end_date; b38OldFee = Number(rec.delivery_fee || 0); }
       Object.keys(p.row).forEach(function (k) { if (k !== 'id') rec[k] = p.row[k]; });
       writeTable(p.table, arr);
+      if (p.table === 'orders') {
+        // B38: תאריכי ההזמנה השתנו — מיישרים את המשלוחים הפתוחים לתאריכים החדשים
+        var movedB38 = b38SyncOrderDeliveries(db, rec, b38OldStart, b38OldEnd);
+        // B38: השינוע נוסף או בוטל אחרי האישור — הנסיעות נוצרות או מבוטלות בהתאם
+        var newFeeB38 = Number(rec.delivery_fee || 0);
+        var approvedB38 = ['מאושרת', 'סופקה'].indexOf(String(rec.status)) > -1;
+        var feeChangedB38 = false;
+        if (approvedB38 && b38OldFee <= 0 && newFeeB38 > 0) {
+          feeChangedB38 = b38EnsureOrderDeliveries(db, rec) > 0;
+        } else if (approvedB38 && b38OldFee > 0 && newFeeB38 <= 0 && String(rec.type) === 'כביסה') {
+          (db.deliveries || []).forEach(function (d) {
+            if (d.order_id === rec.id && String(d.status) === 'מתוכנן') { d.status = 'בוטל'; feeChangedB38 = true; }
+          });
+        }
+        if (movedB38 || feeChangedB38) writeTable('deliveries', db.deliveries);
+      }
       return { ok: true, row: rec };
     }
 
+    // ---- B38 ----
+    // אימות מספר אישי של מנהל לפעולות שאין להן פעולת שרת משלהן
+    // (יציאה ממצב טאבלט משותף וכדומה). האימות נעשה בשרת בלבד.
+    case 'b38CheckManagerPin': {
+      var vChk = b38VerifyManagerPin(db, p.mgr_pin, user);
+      if (!vChk.ok) return vChk;
+      return { ok: true, bypass: !!vChk.bypass, auditNote: 'אישור מנהל אומת' };
+    }
+
+    // B38: סנכרון איסופים — משלים רשומות איסוף חסרות ומיישר תאריכים שנותקו.
+    // מנהל בלבד. קיים כדי לרפא הזמנות ותיקות שאושרו לפני האוטומציה,
+    // או שתאריך ההחזרה שלהן שונה בלי שרשומת האיסוף זזה.
+    case 'b38FixPickups': {
+      var createdB38 = 0, fixedB38 = 0;
+      (db.orders || []).forEach(function (o) {
+        if (['מאושרת', 'סופקה'].indexOf(String(o.status)) === -1) return;
+        var planB38 = b38PlannedDeliveries(o);
+        if (!planB38.length) return;
+        // הזמנה שכבר סופקה — הרגל הראשונה (בתאריך ההתחלה) התרחשה בפועל,
+        // ואין ליצור לה רשומה חדשה כ"מתוכנן". משלימים רק את מה שעוד לפנינו.
+        var skipFirstB38 = String(o.status) === 'סופקה';
+        planB38.forEach(function (pl) {
+          if (skipFirstB38 && String(pl.date) === String(o.start_date)) return;
+          if ((db.deliveries || []).some(function (d) { return d.order_id === o.id && String(d.kind) === pl.kind; })) return;
+          db.deliveries.push({
+            id: genId('DELV'), order_id: o.id, kind: pl.kind, date: pl.date || '',
+            driver: '', status: 'מתוכנן', note: 'הושלם בסנכרון B38'
+          });
+          createdB38++;
+        });
+        planB38.forEach(function (pl) {
+          if (!pl.date) return;
+          (db.deliveries || []).forEach(function (d) {
+            if (d.order_id !== o.id || String(d.kind) !== pl.kind) return;
+            if (B38_OPEN_DELIV.indexOf(String(d.status)) === -1) return;
+            if (String(d.date || '') !== String(pl.date)) { d.date = pl.date; fixedB38++; }
+          });
+        });
+      });
+      if (createdB38 || fixedB38) writeTable('deliveries', db.deliveries);
+      return {
+        ok: true, created: createdB38, fixed: fixedB38,
+        auditNote: 'סנכרון איסופים — נוצרו ' + createdB38 + ', תוקנו ' + fixedB38
+      };
+    }
+
     case 'delete': {
+      // B38: אישור מנהל מאומת בשרת — לא בדפדפן
+      var vDel = b38VerifyManagerPin(db, p.mgr_pin, user);
+      if (!vDel.ok) return vDel;
       var arr2 = db[TMAP[p.table]];
       if (!arr2) return { ok: false, error: 'טבלה לא קיימת' };
       var idx = arr2.findIndex(function (x) { return x.id === p.id; });
@@ -966,11 +1146,8 @@ function handle(action, p, db, user) {
         writeTable('orders', db.orders);
         // אוטומציה: יצירת משלוחי אספקה ואיסוף
         var oo = r.order;
-        if (oo.type === 'השכרה') {
-          db.deliveries.push({ id: genId('DELV'), order_id: oo.id, kind: 'אספקה', date: oo.start_date, driver: '', status: 'מתוכנן', note: '' });
-          db.deliveries.push({ id: genId('DELV'), order_id: oo.id, kind: 'איסוף', date: oo.end_date, driver: '', status: 'מתוכנן', note: '' });
-          writeTable('deliveries', db.deliveries);
-        }
+        // B38: גם הזמנת כביסה עם שינוע מייצרת נסיעות — לא רק השכרה
+        if (b38EnsureOrderDeliveries(db, oo)) writeTable('deliveries', db.deliveries);
         // C2: עדכון ללקוח במייל
         try {
           var cAp = db.customers.find(function (x) { return x.id === oo.customer_id; });
@@ -1442,18 +1619,10 @@ function handle(action, p, db, user) {
       // B36a: עובד רגיל מחתים את עצמו בלבד — הוא מזוהה מהסשן ואינו יכול להזין קוד.
       // הזנת מספר אישי (= החתמה על שם מישהו אחר) מותרת למנהל / מנהל ראשי בלבד,
       // והיא גוברת על הסשן, כדי שמנהל יוכל להחתים עובד שאין לו גישה למערכת.
-      // B37: מנהל יכול גם לבחור עובד מרשימה נפתחת, בלי להקליד מספר אישי.
-      // הבחירה ברשימה שקולה להזנת מספר אישי — ולכן מותרת למנהל בלבד, בדיוק כמוה.
       var clockIsMgr = p._verified_role === 'מנהל' || isSuperAdmin(p._verified_employee_id);
       var typedPin = String(p.pin || '').trim();
-      var pickedEmpId = String(p.employee_id || '').trim();
       var ce = null;
-      if (pickedEmpId) {
-        if (!clockIsMgr) return { ok: false, error: 'בחירת עובד להחתמה מותרת למנהל בלבד' };
-        ce = db.employees.find(function (x) { return x.id === pickedEmpId && x.active !== 'לא'; });
-        if (!ce) return { ok: false, error: 'העובד לא נמצא או אינו פעיל' };
-      }
-      if (!ce && typedPin) {
+      if (typedPin) {
         if (!clockIsMgr) return { ok: false, error: 'הזנת מספר אישי מותרת למנהל בלבד' };
         ce = db.employees.find(function (x) { return String(x.pin || '') !== '' && String(x.pin) === typedPin && x.active !== 'לא'; });
         if (!ce) return { ok: false, error: 'מספר אישי שגוי' };
@@ -1468,7 +1637,6 @@ function handle(action, p, db, user) {
         open.out_time = hhmm;
         open.hours = calcHours(open.in_time, open.out_time);
         writeTable('attendance', db.attendance);
-        syncDraftPayroll(db, ce.id, String(open.date || '').substring(0, 7)); // B37
         return { ok: true, mode: 'out', name: ce.name, hours: open.hours, auditNote: 'החתמת יציאה — ' + ce.name + ' ' + hhmm + ' · ' + open.hours + ' שעות' };
       }
       db.attendance.push({ id: genId('ATT'), employee_id: ce.id, date: t, in_time: hhmm, out_time: '', hours: '' });
@@ -1486,7 +1654,6 @@ function handle(action, p, db, user) {
         in_date: inDate, out_date: outDate, in_time: p.in_time, out_time: p.out_time, hours: h
       });
       writeTable('attendance', db.attendance);
-      syncDraftPayroll(db, p.employee_id, String(inDate).substring(0, 7)); // B37
       return { ok: true, hours: h };
     }
 
@@ -1664,6 +1831,10 @@ function handle(action, p, db, user) {
       var uIds = Array.isArray(p.unit_ids) ? p.unit_ids : (p.unit_id ? [p.unit_id] : []);
       if (!uIds.length) return { ok: false, error: 'לא נבחרו יחידות' };
       var hard = p.mode === 'hard';
+      if (hard) {   // B38: מחיקה בלתי הפיכה — אישור מנהל מאומת בשרת
+        var vDU = b38VerifyManagerPin(db, p.mgr_pin, user);
+        if (!vDU.ok) return vDU;
+      }
       var blocked = [], done = [];
       uIds.forEach(function (uid) {
         var u27 = db.units.find(function (x) { return x.id === uid; });
@@ -2490,8 +2661,7 @@ function buildPayrollForMonth(db, month) {
       recomputePayrollTotal(ex, db);
       updated++;
     } else {
-      // B37: עד כה עובד שעתי בלי נוכחות (וכל עובד חדש) דולג — ולכן לא הופיע לעולם ברשימת השכר.
-      // עכשיו נוצרת רשומת טיוטה לכל עובד פעיל, גם בסכום 0. היא תתעדכן לבד כשתירשם נוכחות.
+      if (c.base <= 0) return; // אין מה ליצור — עובד שעתי בלי נוכחות, או גלובלי בלי סכום מוגדר
       db.payroll.push({
         id: genId('PAYR'), employee_id: e.id, month: month, pay_type: c.pay_type,
         hours: c.hours, hourly_rate: c.rate, base_pay: c.base,
@@ -2541,16 +2711,6 @@ function rebuildPayrollFromAttendance(db, pr) {
   pr.hourly_rate = rate;
   pr.base_pay = Math.round(hrs * rate * 100) / 100;
   recomputePayrollTotal(pr, db);
-}
-// B37: אחרי כל שינוי נוכחות — טיוטת השכר של אותו חודש מתעדכנת מיד.
-// רשומה שאושרה או שולמה לעולם אינה נדרסת. אם אין רשומה לחודש — לא נוצרת כאן אחת
-// (יצירה נעשית רק ב"הפק שכר" ובטריגר החודשי), כדי שלא ייווצרו טיוטות מחודשים ישנים.
-function syncDraftPayroll(db, employeeId, month) {
-  if (!employeeId || !month) return;
-  var pr = db.payroll.find(function (x) { return x.employee_id === employeeId && x.month === month; });
-  if (!pr || pr.status !== 'טיוטה') return;
-  rebuildPayrollFromAttendance(db, pr);
-  writeTable('payroll', db.payroll);
 }
 // B20: חישוב total מחדש = בסיס + בונוס ישן (תאימות) + תוספות/ניכויים מפורטים
 function recomputePayrollTotal(pr, db) {
