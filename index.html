@@ -88,6 +88,37 @@ main{padding:20px;max-width:1080px;margin:0 auto;padding-bottom:48px}
 .btn.sm{padding:6px 13px;font-size:13px}
 .section-title{display:flex;align-items:center;justify-content:space-between;margin:24px 0 12px;flex-wrap:wrap;gap:8px}
 .section-title h2{font-size:18px;font-weight:600;color:var(--navy)}
+/* ===== B32: שפת עיצוב אחידה — היררכיה, רצועת סטטוס, תפריט "עוד" =====
+   כללית לכל התוכנה. עיקרון: דבר ראשי אחד בכל תצוגה, פרטים בטקסט אפור,
+   עד שלושה כפתורים גלויים והשאר בתפריט שלוש הנקודות. */
+.card.banded{padding:0!important;overflow:visible}
+.card.banded>.bd{padding:15px 16px 16px}
+.hdr-band{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--navy);color:#fff;padding:11px 15px;border-radius:7px 7px 0 0}
+.hdr-band .hb-t{font-size:15.5px;font-weight:600;letter-spacing:.2px}
+.hdr-band .hb-s{font-size:12px;color:#A8B4C6;font-weight:600}
+.hdr-band.ok{background:var(--ok)}
+.hdr-band.warn{background:var(--amber)}
+.hdr-band.bad{background:var(--danger)}
+.hdr-band.calm{background:var(--navy2)}
+.lead{font-size:19px;font-weight:600;color:var(--ink);margin-bottom:4px;line-height:1.35}
+.sub{font-size:14px;color:var(--muted);line-height:1.7}
+.sub a,.sub .lnk{color:var(--navy2);font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.actrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.actrow .pri{flex:1;min-width:120px;text-align:center}
+.actrow .ico{padding:9px 13px;line-height:1}
+.more-wrap{position:relative;display:inline-block}
+.more-pop{position:absolute;z-index:70;left:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 26px rgba(16,24,40,.16);padding:6px;min-width:200px;display:none;text-align:right}
+.more-pop.on{display:block}
+.more-pop .btn,.more-pop a.btn{display:block;width:100%;text-align:right;margin:2px 0;background:#fff;color:#344054;border:none;font-weight:500;padding:9px 12px}
+.more-pop .btn:hover,.more-pop a.btn:hover{background:#F5F7FA}
+.more-pop .btn.dng{color:var(--danger)}
+.stop-done{opacity:.6}
+.stop-done .lead{font-size:15px;font-weight:500;color:var(--muted)}
+.route-prog{height:4px;background:var(--line);border-radius:99px;overflow:hidden;margin:4px 0 14px}
+.route-prog>i{display:block;height:100%;background:var(--ok);border-radius:99px}
+.doc-quiet{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+body.driver-mode .card.banded>.bd{padding:16px}
+body.driver-mode .more-pop{left:auto;right:0}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 @media(max-width:640px){.grid3{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}}
@@ -319,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.15-B31d · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.16-B32 · 23.07.2026</div>
   </div>
 </div>
 
@@ -736,6 +767,24 @@ function orderBalance(oid){
 }
 function closeModal(){ el('modalBg').style.display='none'; }
 function openModal(html){ el('modal').innerHTML = '<button class="mclose" onclick="closeModal()" title="סגור">✕</button>' + html; el('modalBg').style.display='flex'; }
+/* ===== B32: תפריט שלוש הנקודות — רכיב כללי לכל מסך =====
+   moreMenu(items) מקבל מערך של מחרוזות HTML (כפתורים/קישורים) ומחזיר את הכפתור + התפריט.
+   פריט ריק מסונן אוטומטית, וכשלא נשאר כלום התפריט לא מוצג בכלל. */
+function moreMenu(items){
+  var list = (items||[]).filter(function(x){ return x && String(x).trim(); });
+  if(!list.length) return '';
+  return '<span class="more-wrap"><button class="btn ghost sm ico" title="פעולות נוספות" aria-label="פעולות נוספות" onclick="toggleMore(this,event)">⋯</button>'+
+    '<span class="more-pop">'+list.join('')+'</span></span>';
+}
+function closeMore(){ document.querySelectorAll('.more-pop.on').forEach(function(p){ p.classList.remove('on'); }); }
+function toggleMore(btn,ev){
+  if(ev){ ev.stopPropagation(); }
+  var pop = btn.parentNode.querySelector('.more-pop');
+  var wasOn = pop.classList.contains('on');
+  closeMore();
+  if(!wasOn) pop.classList.add('on');
+}
+document.addEventListener('click', function(e){ if(!e.target.closest('.more-wrap')) closeMore(); });
 function sel(id, arr, labelFn, valFn){
   return '<select id="'+id+'">'+arr.map(x=>'<option value="'+(valFn?valFn(x):x.id)+'">'+esc(labelFn(x))+'</option>').join('')+'</select>';
 }
@@ -1997,50 +2046,92 @@ function b5MyFuture(){
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
 }
 var DRV_TAB = 'today';
+/* B32: עצירות שכבר בוצעו היום נשארות בתצוגה — מכווצות ומועמות — כדי שהנהג
+   יראה מה נסגר ומה עוד נותר. סינון תצוגה בלבד; אין שינוי בנתונים או בסטטוסים. */
+function b5DoneToday(){
+  var t = todayYMD();
+  return DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')===t)
+    .sort((a,b)=>(String(a.id)<String(b.id)?-1:1));
+}
 function rDriverRoute(){
   var mine = b5MyRoute();
+  var doneT = b5DoneToday();
   var future = b5MyFuture();
   var history = DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status))
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,40);
   var tb = function(k,l,n){ return '<button class="btn '+(DRV_TAB===k?'':'ghost')+' grow" onclick="DRV_TAB=\''+k+'\';rDriverRoute()">'+l+(n?' ('+n+')':'')+'</button>'; };
-  var body;
-  if(DRV_TAB==='future')
-    body = future.length? future.map(d=>driverStopCard(d,-1,0,true)).join('') : '<div class="card empty">אין נסיעות עתידיות משובצות לך</div>';
-  else if(DRV_TAB==='history')
-    body = history.length? history.map(d=>driverStopCard(d,-1,0,true)).join('') : '<div class="card empty">אין היסטוריית נסיעות</div>';
-  else
-    body = mine.length? mine.map((d,i)=>driverStopCard(d,i,mine.length,false)).join('') : '<div class="card empty">אין משלוחים להיום במסלול שלך</div>';
-  el('main').innerHTML = '<div class="section-title"><h2>המסלול שלי</h2><span class="muted">'+mine.length+' עצירות להיום</span></div>'+
-    '<div class="row" style="margin:8px 0;gap:6px">'+tb('today','היום',mine.length)+tb('future','עתידי',future.length)+tb('history','היסטוריה','')+'</div>'+body;
+  var body, head;
+  if(DRV_TAB==='future'){
+    body = future.length? future.map(d=>driverStopCard(d,-1,0,'plain')).join('') : '<div class="card empty">אין נסיעות עתידיות משובצות לך</div>';
+    head = '';
+  } else if(DRV_TAB==='history'){
+    body = history.length? history.map(d=>driverStopCard(d,-1,0,'plain')).join('') : '<div class="card empty">אין היסטוריית נסיעות</div>';
+    head = '';
+  } else {
+    var tot = mine.length + doneT.length;
+    head = tot? '<div class="route-prog"><i style="width:'+Math.round(doneT.length/tot*100)+'%"></i></div>' : '';
+    body = (mine.length? mine.map((d,i)=>driverStopCard(d,i,mine.length,'open')).join('') : (doneT.length?'<div class="card empty">כל העצירות להיום הושלמו</div>':'<div class="card empty">אין משלוחים להיום במסלול שלך</div>'))+
+      (doneT.length? '<div class="muted" style="margin:16px 0 8px;font-size:13px;font-weight:600">הושלמו היום</div>'+doneT.map(d=>driverStopCard(d,-1,0,'done')).join('') : '');
+  }
+  var cnt = DRV_TAB==='today'? (doneT.length+' מתוך '+(mine.length+doneT.length)+' הושלמו') : (mine.length+' עצירות להיום');
+  el('main').innerHTML = '<div class="section-title"><h2>המסלול שלי</h2><span class="muted">'+cnt+'</span></div>'+
+    '<div class="row" style="margin:8px 0;gap:6px">'+tb('today','היום',mine.length)+tb('future','עתידי',future.length)+tb('history','היסטוריה','')+'</div>'+head+body;
 }
-function driverStopCard(d,idx,total,isHistory){
+/* B32: כרטיס עצירה לפי שפת העיצוב האחידה.
+   mode: 'open' = עצירה פעילה (רצועת סטטוס + פעולות), 'done' = בוצעה היום (מכווץ ומועם),
+   'plain' = עתידי/היסטוריה (בלי פעולות). */
+function driverStopCard(d,idx,total,mode){
+  if(typeof mode!=='string') mode = mode? 'plain' : 'open';
   var o = DB.orders.find(x=>x.id===d.order_id)||{};
   var c = o.customer_id? DB.customers.find(x=>x.id===o.customer_id) : null;
   var addr = c? (c.address||'') : '';
   var wazeUrl = addr? 'https://waze.com/ul?q='+encodeURIComponent(addr)+'&navigate=yes' : '';
   var gmapUrl = addr? 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr) : '';
-  return '<div class="card" style="border-right:5px solid '+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+'"><div class="row"><div class="grow">'+kindChip(d)+' <b>'+esc(c?c.name:'—')+'</b>'+
-    '<div class="muted">'+esc(d.date||'')+' · '+esc(addr||'אין כתובת רשומה בכרטיס הלקוח')+'</div>'+
-    (d.note?'<div class="muted" style="font-size:12px">'+esc(d.note)+'</div>':'')+
-    (d.eta_text?'<div style="margin-top:4px"><span class="chip" style="background:var(--navy2)">'+esc(d.eta_text)+'</span></div>':'')+
-    '</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>'+
-    (!isHistory?'<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">'+
-      (total>1&&idx>0?'<button class="btn ghost sm" onclick="driverMove(\''+d.id+'\',-1)">▲ למעלה</button>':'')+
-      (total>1&&idx<total-1?'<button class="btn ghost sm" onclick="driverMove(\''+d.id+'\',1)">▼ למטה</button>':'')+
-      (wazeUrl?'<a class="btn ghost sm" href="'+wazeUrl+'" target="_blank" rel="noopener">ניווט Waze</a>':'')+
-      (gmapUrl?'<a class="btn ghost sm" href="'+gmapUrl+'" target="_blank" rel="noopener">ניווט Google Maps</a>':'')+
-      (c&&c.phone?'<a class="btn ghost sm" href="tel:'+encodeURIComponent(c.phone)+'">חייג ללקוח</a>':'')+
-      '<button class="btn ghost sm" onclick="driverLogCallForm(\''+d.id+'\')">תיעוד שיחה</button>'+
-      '<button class="btn sm" onclick="driverMarkTransit(\''+d.id+'\')">'+(d.status==='בדרך'?'עדכן סטטוס':'יצאתי לדרך')+'</button>'+
-      (d.photo_url?'<a class="btn ghost sm" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום</a>':'<button class="btn ghost sm" onclick="deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>')+
-      (d.signature_url?'<a class="btn ghost sm" href="'+esc(d.signature_url)+'" target="_blank">צפה בחתימה</a>':'')+
-      (d.kind!=='איסוף'?'<button class="btn sm" style="background:var(--ok,#3a9d5c)" onclick="driverMarkDelivered(\''+d.id+'\')">נמסר</button>'
-        :(d.photo_url||d.status==='בוצע'
-          ?'<span class="chip" style="background:var(--ok,#3a9d5c);color:#fff">✔ נאסף — נקלט בשקילה במשרד</span>'
-          :'<button class="btn sm" style="background:#8a5a1f;color:#fff" onclick="driverCollectPickup(\''+d.id+'\')">איסוף (צילום חובה)</button>'))+
-      '<button class="btn ghost sm" style="color:var(--danger)" onclick="driverRemoveForm(\''+d.id+'\')">הסר מהמסלול</button>'+
-    '</div>':'')+
-  '</div>';
+  var pick = isPickup(d);
+
+  if(mode==='done')
+    return '<div class="card stop-done" style="cursor:pointer;padding:11px 15px" onclick="openDelivery(\''+d.id+'\')">'+
+      '<div class="row" style="gap:9px;align-items:center"><span style="color:var(--ok);font-size:17px;font-weight:700">✓</span>'+
+      '<div class="grow"><div class="lead" style="margin:0">'+esc(c?c.name:'—')+'</div>'+
+      '<div class="muted" style="font-size:12.5px">'+esc(d.status)+' · '+esc(pick?'איסוף':'אספקה')+(addr?' · '+esc(addr):'')+'</div></div></div></div>';
+
+  if(mode==='plain')
+    return '<div class="card banded"><div class="hdr-band calm"><span class="hb-t">'+esc(d.status)+'</span><span class="hb-s">'+esc(pick?'איסוף':'אספקה')+'</span></div>'+
+      '<div class="bd"><div class="lead">'+esc(c?c.name:'—')+'</div>'+
+      '<div class="sub">'+esc(d.date||'')+(addr?'<br>'+esc(addr):'')+(d.note?'<br>'+esc(d.note):'')+'</div></div></div>';
+
+  var isNext = idx===0;
+  var band = d.status==='בדרך'? '' : 'calm';
+  var bandTxt = (d.status==='בדרך'?'בדרך':'מתוכנן')+(isNext?' · העצירה הבאה':'');
+  /* פעולה ראשית אחת לפי מצב העצירה — זו הפעולה של הרגע הזה */
+  var pri;
+  if(d.status!=='בדרך') pri = '<button class="btn pri" onclick="driverMarkTransit(\''+d.id+'\')">יצאתי לדרך</button>';
+  else if(!pick) pri = '<button class="btn pri" style="background:var(--ok)" onclick="driverMarkDelivered(\''+d.id+'\')">סימון כנמסר</button>';
+  else if(d.photo_url||d.status==='בוצע') pri = '<span class="chip" style="background:var(--ok);color:#fff;flex:1;text-align:center;padding:10px">✔ נאסף — נקלט בשקילה במשרד</span>';
+  else pri = '<button class="btn pri" style="background:var(--amber);color:#fff" onclick="driverCollectPickup(\''+d.id+'\')">איסוף — צילום חובה</button>';
+
+  return '<div class="card banded"'+(isNext?' style="border-color:#C3CCD9"':'')+'>'+
+    '<div class="hdr-band '+band+'"><span class="hb-t">'+esc(bandTxt)+'</span><span class="hb-s">'+esc(pick?'איסוף':'אספקה')+'</span></div>'+
+    '<div class="bd">'+
+      '<div class="lead" style="cursor:pointer" onclick="openDelivery(\''+d.id+'\')">'+esc(c?c.name:'—')+'</div>'+
+      '<div class="sub">'+esc(addr||'אין כתובת רשומה בכרטיס הלקוח')+
+        (d.note?'<br>'+esc(d.note):'')+(d.eta_text?'<br>'+esc(d.eta_text):'')+'</div>'+
+      '<div class="actrow">'+pri+
+        (wazeUrl?'<a class="btn ghost sm ico" href="'+wazeUrl+'" target="_blank" rel="noopener" title="ניווט Waze" aria-label="ניווט Waze">➤</a>':'')+
+        (c&&c.phone?'<a class="btn ghost sm ico" href="tel:'+encodeURIComponent(c.phone)+'" title="חייג ללקוח" aria-label="חייג ללקוח">✆</a>':'')+
+        moreMenu([
+          gmapUrl?'<a class="btn" href="'+gmapUrl+'" target="_blank" rel="noopener">ניווט Google Maps</a>':'',
+          d.status==='בדרך'?'<button class="btn" onclick="closeMore();driverMarkTransit(\''+d.id+'\')">עדכן סטטוס ללקוח</button>':'',
+          '<button class="btn" onclick="closeMore();openDelivery(\''+d.id+'\')">פרטי המשלוח</button>',
+          '<button class="btn" onclick="closeMore();driverLogCallForm(\''+d.id+'\')">תיעוד שיחה</button>',
+          d.photo_url?'<a class="btn" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום מסירה</a>':'<button class="btn" onclick="closeMore();deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>',
+          d.signature_url?'<a class="btn" href="'+esc(d.signature_url)+'" target="_blank">צפה בחתימה</a>':'',
+          total>1&&idx>0?'<button class="btn" onclick="closeMore();driverMove(\''+d.id+'\',-1)">הזז למעלה במסלול</button>':'',
+          total>1&&idx<total-1?'<button class="btn" onclick="closeMore();driverMove(\''+d.id+'\',1)">הזז למטה במסלול</button>':'',
+          '<button class="btn dng" onclick="closeMore();driverRemoveForm(\''+d.id+'\')">הסר מהמסלול</button>'
+        ])+
+      '</div>'+
+    '</div></div>';
 }
 async function driverMove(did,delta){
   var mine = b5MyRoute();
@@ -2195,27 +2286,42 @@ function openDelivery(did){
   var lines = DB.orderLines.filter(l=>l.order_id===d.order_id);
   var drv = d.driver? DB.employees.find(e=>e.name===d.driver) : null;
   var isReturn = d.kind==='איסוף';
-  var actions = '';
-  if(d.status==='מתוכנן') actions += '<button class="btn sm" onclick="driverForm(\''+d.id+'\')">שבץ נהג ורכב</button> ';
-  /* B19c (L3): פיצול משלוח בין נהגים — משרד/מנהל, רק משלוח אספקה מתוכנן עם הזמנה */
-  if(d.status==='מתוכנן' && !isReturn && d.order_id && (ROLE==='מנהל'||ROLE==='משרד')) actions += '<button class="btn ghost sm" onclick="splitDeliveryForm(\''+d.id+'\')">פצל משלוח</button> ';
-  if(d.note_number) actions += '<button class="btn ghost sm" onclick="printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button> ';
-  if(isReturn && d.status!=='בוצע') actions += '<button class="btn ghost sm" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button> ';
-  actions += d.photo_url? '<a class="btn ghost sm" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום מסירה</a>' : '<button class="btn ghost sm" onclick="deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>';
-  if(d.signature_url) actions += ' <a class="btn ghost sm" href="'+esc(d.signature_url)+'" target="_blank">צפה בחתימת לקוח</a>';
-  openModal('<h2>'+(isReturn?'איסוף (החזרה)':'משלוח — '+esc(d.kind))+' <span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></h2>'+
-    (d.order_id?docChainHtml(d.order_id, isReturn?'return':'delivery'):'')+
-    '<div class="doc-meta" style="margin-bottom:10px">תאריך: '+esc(d.date||'—')+(d.note_number?' · תעודה מס\' '+esc(d.note_number):'')+'</div>'+
-    '<div style="line-height:2;margin-bottom:10px">'+
-    '<b>לקוח:</b> <span class="chip" style="background:var(--navy2);cursor:pointer" title="פתח את כרטיס הלקוח" onclick="openCust(\''+esc(o.customer_id||'')+'\')">'+esc(cust(o.customer_id))+' ↗</span>'+
-    (o.id?'<br><b>הזמנה:</b> <span class="chip" style="background:var(--navy2);cursor:pointer" title="פתח את ההזמנה" onclick="openOrder(\''+o.id+'\')">'+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date||'')+' — '+esc(o.end_date||'')+' ↗</span>':'')+
-    '<br><b>נהג:</b> '+(d.driver?esc(d.driver)+' '+(drv?contactBtns(drv.phone,''):''):'<span style="color:var(--danger)">טרם שובץ</span>')+
-    (d.vehicle_id?' · <b>רכב:</b> '+esc(vehName(d.vehicle_id)):'')+
+  /* B32: היררכיה — הסטטוס הוא הדבר הראשי ויושב ברצועה עליונה; פרטי המשנה
+     בטקסט אפור בלי צ'יפים כהים; פעולה ראשית אחת גלויה והשאר בתפריט "עוד". */
+  var cRec = o.customer_id? DB.customers.find(x=>x.id===o.customer_id) : null;
+  var band = (d.status==='בוצע'||d.status==='התקבלה')? 'ok' : (d.status==='בדרך'? '' : 'calm');
+  var isMgr = (ROLE==='מנהל'||ROLE==='משרד');
+  var pri = '';
+  if(!isMgr) pri = '';
+  else if(d.status==='מתוכנן') pri = '<button class="btn pri" onclick="driverForm(\''+d.id+'\')">שבץ נהג ורכב</button>';
+  else if(d.note_number) pri = '<button class="btn pri" onclick="printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>';
+  else if(isReturn && d.status!=='בוצע') pri = '<button class="btn pri" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>';
+  /* B32: פעולות ניהוליות מוסתרות מנהג — נשמרת הפרדת התפקידים של B17 */
+  var mgr = isMgr;
+  var more = moreMenu([
+    (mgr && d.status==='מתוכנן' && !isReturn && d.order_id)?'<button class="btn" onclick="closeMore();splitDeliveryForm(\''+d.id+'\')">פצל משלוח בין נהגים</button>':'',
+    (mgr && d.status!=='מתוכנן')?'<button class="btn" onclick="closeMore();driverForm(\''+d.id+'\')">שנה נהג ורכב</button>':'',
+    (mgr && d.note_number && d.status==='מתוכנן')?'<button class="btn" onclick="closeMore();printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>':'',
+    (mgr && isReturn && d.status!=='בוצע' && d.note_number)?'<button class="btn" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>':'',
+    (mgr && o.id)?'<button class="btn" onclick="closeMore();closeModal();openOrder(\''+o.id+'\')">פתח את ההזמנה</button>':'',
+    (mgr && o.customer_id)?'<button class="btn" onclick="closeMore();closeModal();openCust(\''+esc(o.customer_id)+'\')">פתח כרטיס לקוח</button>':'',
+    d.photo_url? '<a class="btn" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום מסירה</a>' : '<button class="btn" onclick="closeMore();deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>',
+    d.signature_url? '<a class="btn" href="'+esc(d.signature_url)+'" target="_blank">צפה בחתימת לקוח</a>' : ''
+  ]);
+  openModal('<div class="hdr-band '+band+'" style="border-radius:7px;margin-bottom:14px"><span class="hb-t">'+esc(d.status)+'</span><span class="hb-s">'+(isReturn?'איסוף — החזרה':'משלוח — '+esc(d.kind))+'</span></div>'+
+    '<div class="lead" style="font-size:21px">'+esc(cust(o.customer_id))+'</div>'+
+    '<div class="sub" style="margin-bottom:4px">'+esc(d.date||'—')+
+      (cRec&&cRec.address?'<br>'+esc(cRec.address)+(cRec.city?', '+esc(cRec.city):''):'')+
+      (o.id?'<br>הזמנה <span class="lnk" onclick="closeModal();openOrder(\''+o.id+'\')">'+(o.order_number?'#'+esc(o.order_number):esc(o.id))+'</span> · '+esc(o.start_date||'')+' — '+esc(o.end_date||''):'')+
+      '<br>נהג: '+(d.driver?esc(d.driver)+(drv?' '+contactBtns(drv.phone,''):''):'<span style="color:var(--danger);font-weight:600">טרם שובץ</span>')+
+      (d.vehicle_id?' · רכב '+esc(vehName(d.vehicle_id)):'')+
+      (d.note_number?'<br>תעודה מס\' '+esc(d.note_number):'')+
     '</div>'+
-    (lines.length?'<h3>פריטים בהזמנה</h3><table><tr><th>פריט</th><th>כמות</th></tr>'+
-      lines.map(function(l){ return '<tr><td>'+esc(item(l.item_id))+'</td><td>'+esc(l.qty)+'</td></tr>'; }).join('')+'</table>':'<div class="muted">אין שורות פריטים להזמנה</div>')+
-    (o.notes?'<div class="doc-meta" style="margin-top:8px">הערות הזמנה:</div><div style="white-space:pre-wrap">'+esc(o.notes)+'</div>':'')+
-    '<div class="row" style="margin-top:14px;flex-wrap:wrap;gap:6px">'+actions+'</div>');
+    (lines.length?'<h3 style="margin-top:16px">פריטים בהזמנה</h3><table><tr><th>פריט</th><th>כמות</th></tr>'+
+      lines.map(function(l){ return '<tr><td>'+esc(item(l.item_id))+'</td><td>'+esc(l.qty)+'</td></tr>'; }).join('')+'</table>':'<div class="muted" style="margin-top:12px">אין שורות פריטים להזמנה</div>')+
+    (o.notes?'<div class="doc-meta" style="margin-top:10px">הערות הזמנה:</div><div class="sub" style="white-space:pre-wrap">'+esc(o.notes)+'</div>':'')+
+    '<div class="actrow">'+pri+more+'</div>'+
+    ((d.order_id&&isMgr)?'<div class="doc-quiet">'+docChainHtml(d.order_id, isReturn?'return':'delivery')+'</div>':''));
 }
 /* B19c (L3): טופס פיצול משלוח — בוחרים אילו כמויות עוברות למשלוח החדש, ונהג/רכב משלו */
 function splitDeliveryForm(did){
