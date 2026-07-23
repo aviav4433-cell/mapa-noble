@@ -144,7 +144,8 @@ var TABLES = {
   payroll_payments: ['id', 'payroll_id', 'employee_id', 'amount', 'method', 'note', 'paid_at', 'created_by'],
   // B20: הוצאות עתידיות (שכר שאושר וטרם שולם + הוצאות אחרות מתוכננות)
   // B27: נוספו supplier_id (חוב לספק) ו-vat_amount (רכיב המע"מ בתוך הסכום)
-  future_expenses: ['id', 'source', 'ref_id', 'employee_id', 'category', 'description', 'amount', 'due_date', 'urgency', 'status', 'created_at', 'supplier_id', 'vat_amount'],
+  // B28: נוספו עמודות מחיקה רכה בסוף — deleted / delete_reason / deleted_by / deleted_at
+  future_expenses: ['id', 'source', 'ref_id', 'employee_id', 'category', 'description', 'amount', 'due_date', 'urgency', 'status', 'created_at', 'supplier_id', 'vat_amount', 'deleted', 'delete_reason', 'deleted_by', 'deleted_at'],
   // B27: תשלומים בפועל כנגד הוצאה עתידית (מלא או חלקי)
   expense_payments: ['id', 'fexp_id', 'supplier_id', 'amount', 'method', 'note', 'paid_at', 'created_by', 'created_at'],
   // B27: אסמכתאות תשלום — כמה קבצים/הערות לכל תשלום. pay_kind = 'expense' / 'payroll'
@@ -209,6 +210,8 @@ var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'setBonus', 'appr
   'addPayrollAdjustment', 'payPayroll', 'addFutureExpense', 'markFutureExpensePaid', 'repairTimeFields',
   // B27: מחיקת יחידות, איפוס מונה, ותשלום כנגד הוצאה עתידית — מנהל בלבד
   'deleteUnits', 'resetUnitCounter', 'payFutureExpense',
+  // B28: מחיקה רכה של הוצאה עתידית והשלמת תאריך יעד — מנהל בלבד
+  'deleteFutureExpense', 'setFutureExpenseDue',
   // B21: פסילת שעות נוכחות — מנהל בלבד
   'voidAttendance'];
 
@@ -387,6 +390,19 @@ function genId(prefix) {
 }
 function today() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
 function nowTs() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
+// B28: בדיקת תקינות תאריך בפורמט yyyy-MM-dd (תאריך יעד להוצאה עתידית — שדה חובה)
+function isDateStr(v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); }
+// B28: תאריך היעד לתשלום שכר — ה-9 בחודש שאחרי חודש השכר (המועד החוקי בישראל).
+// month מגיע בפורמט yyyy-MM.
+function payrollDueDate(month) {
+  var m = String(month || '');
+  if (!/^\d{4}-\d{2}$/.test(m)) return '';
+  var y = Number(m.substring(0, 4)), mo = Number(m.substring(5, 7));
+  mo++; if (mo > 12) { mo = 1; y++; }
+  return y + '-' + ('0' + mo).slice(-2) + '-09';
+}
+// B28: הוצאה עתידית "חיה" — לא נמחקה במחיקה רכה
+function fexpAlive(x) { return String(x.deleted || '') !== 'כן'; }
 
 // מונה מסמכים רץ (חשבוניות מ-1001, קבלות מ-5001)
 function nextNumber(db, key, start) {
@@ -1037,6 +1053,8 @@ function handle(action, p, db, user) {
       var pu = db.purchases.find(function (x) { return x.id === p.purchase_id; });
       if (!pu) return { ok: false, error: 'רכש לא נמצא' };
       if (pu.status !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל' };
+      // B28: תאריך תשלום משוער לספק — שדה חובה
+      if (!isDateStr(p.due_date)) return { ok: false, error: 'תאריך תשלום משוער לספק הוא שדה חובה' };
       var lines = db.purchaseLines.filter(function (l) { return l.purchase_id === pu.id; });
       if (!lines.length) return { ok: false, error: 'אין שורות ברכש' };
       var netSum = 0;
@@ -1051,8 +1069,9 @@ function handle(action, p, db, user) {
       var feRP = {
         id: genId('FEXP'), source: 'purchase', ref_id: pu.id, employee_id: '', category: 'רכש מלאי',
         description: 'רכש ' + (supRP ? supRP.name : '') + (pu.invoice_number ? ' · חשבונית ' + pu.invoice_number : '') + ' · ' + lines.length + ' שורות',
-        amount: grossSum, due_date: p.due_date || '', urgency: 'רגיל', status: 'ממתין', created_at: nowTs(),
-        supplier_id: pu.supplier_id || '', vat_amount: vatSum
+        amount: grossSum, due_date: String(p.due_date), urgency: 'רגיל', status: 'ממתין', created_at: nowTs(),
+        supplier_id: pu.supplier_id || '', vat_amount: vatSum,
+        deleted: '', delete_reason: '', deleted_by: '', deleted_at: ''
       };
       db.futureExpenses.push(feRP);
       pu.status = 'התקבלה';
@@ -1383,10 +1402,13 @@ function handle(action, p, db, user) {
     // B20: הוצאה עתידית ידנית (לא קשורה לשכר) — למשל תשלום ספק צפוי, ביטוח, וכו'
     case 'addFutureExpense': {
       if (!p.category || !p.amount) return { ok: false, error: 'שדות חובה חסרים' };
+      // B28: תאריך תשלום משוער הוא שדה חובה — בלעדיו אי אפשר להציג מה צריך לשלם ומתי
+      if (!isDateStr(p.due_date)) return { ok: false, error: 'תאריך תשלום משוער הוא שדה חובה' };
       db.futureExpenses.push({
         id: genId('FEXP'), source: 'אחר', ref_id: '', employee_id: p.employee_id || '', category: p.category,
-        description: p.description || '', amount: Number(p.amount) || 0, due_date: p.due_date || '',
-        urgency: ['רגיל', 'דחוף', 'קריטי'].indexOf(p.urgency) > -1 ? p.urgency : 'רגיל', status: 'ממתין', created_at: nowTs()
+        description: p.description || '', amount: Number(p.amount) || 0, due_date: String(p.due_date),
+        urgency: ['רגיל', 'דחוף', 'קריטי'].indexOf(p.urgency) > -1 ? p.urgency : 'רגיל', status: 'ממתין', created_at: nowTs(),
+        deleted: '', delete_reason: '', deleted_by: '', deleted_at: ''
       });
       writeTable('future_expenses', db.futureExpenses);
       return { ok: true };
@@ -1394,6 +1416,7 @@ function handle(action, p, db, user) {
     case 'markFutureExpensePaid': {
       var fe = db.futureExpenses.find(function (x) { return x.id === p.id; });
       if (!fe) return { ok: false, error: 'לא נמצא' };
+      if (!fexpAlive(fe)) return { ok: false, error: 'ההוצאה נמחקה' };  // B28
       if (fe.status === 'שולם') return { ok: false, error: 'כבר שולם' };
       if (fe.source === 'payroll') return { ok: false, error: 'הוצאת שכר מסולקת דרך מסך השכר (תשלום), לא כאן' };
       fe.status = 'שולם';
@@ -1453,6 +1476,7 @@ function handle(action, p, db, user) {
     case 'payFutureExpense': {
       var feP = db.futureExpenses.find(function (x) { return x.id === p.id; });
       if (!feP) return { ok: false, error: 'הוצאה עתידית לא נמצאה' };
+      if (!fexpAlive(feP)) return { ok: false, error: 'ההוצאה נמחקה — אי אפשר לשלם עליה' };  // B28
       if (feP.source === 'payroll') return { ok: false, error: 'יתרת שכר משולמת דרך מסך השכר' };
       var amtP = Math.round((Number(p.amount) || 0) * 100) / 100;
       if (amtP <= 0) return { ok: false, error: 'סכום לא תקין' };
@@ -1508,6 +1532,38 @@ function handle(action, p, db, user) {
       return { ok: true, id: docId, url: urlD, auditNote: 'אסמכתא לתשלום ' + p.pay_id };
     }
     // ===================== סוף B27 =====================
+
+    // ===================== B28 =====================
+    // מחיקה רכה של הוצאה עתידית, עם סיבה חובה. אותו דפוס בדיוק כמו מחיקת
+    // היחידות ב-B27: השורה נשארת בטבלה להיסטוריה ומוסתרת מכל תצוגה וחישוב.
+    // חסימות: הוצאה שכבר שולם כנגדה, והוצאת שכר (נסגרת דרך מסך השכר בלבד).
+    case 'deleteFutureExpense': {
+      var feD = db.futureExpenses.find(function (x) { return x.id === p.id; });
+      if (!feD) return { ok: false, error: 'הוצאה עתידית לא נמצאה' };
+      if (!fexpAlive(feD)) return { ok: false, error: 'ההוצאה כבר מחוקה' };
+      var reasonD = String(p.reason || '').trim();
+      if (!reasonD) return { ok: false, error: 'סיבת המחיקה היא שדה חובה' };
+      if (feD.source === 'payroll') return { ok: false, error: 'חוב שכר נסגר דרך מסך השכר, לא במחיקה' };
+      var paidD = expensePaidSum(db, feD.id);
+      if (paidD > 0) return { ok: false, error: 'כבר בוצע תשלום כנגד ההוצאה (' + paidD + ' ₪) — אי אפשר למחוק' };
+      feD.deleted = 'כן';
+      feD.delete_reason = reasonD;
+      feD.deleted_by = user || '';
+      feD.deleted_at = nowTs();
+      writeTable('future_expenses', db.futureExpenses);
+      return { ok: true, auditNote: 'מחיקת הוצאה עתידית ' + (feD.description || feD.category) + ' · סיבה: ' + reasonD };
+    }
+    // השלמת תאריך תשלום משוער לרשומות ישנות שנוצרו לפני שהשדה הפך לחובה
+    case 'setFutureExpenseDue': {
+      var feU = db.futureExpenses.find(function (x) { return x.id === p.id; });
+      if (!feU) return { ok: false, error: 'הוצאה עתידית לא נמצאה' };
+      if (!fexpAlive(feU)) return { ok: false, error: 'ההוצאה נמחקה' };
+      if (!isDateStr(p.due_date)) return { ok: false, error: 'תאריך לא תקין' };
+      feU.due_date = String(p.due_date);
+      writeTable('future_expenses', db.futureExpenses);
+      return { ok: true, auditNote: 'עדכון תאריך יעד ' + feU.id + ' ל-' + p.due_date };
+    }
+    // ===================== סוף B28 =====================
 
     // B20: תיקון חד-פעמי — משחזר שדות תאריך/שעה שגוגל שיטס המיר בטעות ל-Date לפני התיקון בשורש (writeTable)
     case 'repairTimeFields': {
@@ -2142,17 +2198,21 @@ function recomputePayrollTotal(pr, db) {
 function syncFutureExpenseForPayroll(db, pr) {
   var paid = payrollPaidSum(db, pr.id);
   var remaining = Math.round((Number(pr.total || 0) - paid) * 100) / 100;
-  var fe = db.futureExpenses.find(function (x) { return x.source === 'payroll' && x.ref_id === pr.id; });
+  var fe = db.futureExpenses.find(function (x) { return x.source === 'payroll' && x.ref_id === pr.id && fexpAlive(x); });
+  // B28: תאריך יעד לחוב שכר — ה-9 בחודש שאחרי חודש השכר
+  var dueP = payrollDueDate(pr.month);
   if (remaining <= 0) {
     if (fe) { fe.status = 'שולם'; fe.amount = 0; }
   } else if (fe) {
     fe.amount = remaining;
+    if (!isDateStr(fe.due_date)) fe.due_date = dueP;
     if (fe.status === 'שולם') fe.status = 'ממתין';
   } else {
     db.futureExpenses.push({
       id: genId('FEXP'), source: 'payroll', ref_id: pr.id, employee_id: pr.employee_id,
-      category: 'שכר', description: 'יתרת שכר לתשלום', amount: remaining, due_date: '',
-      urgency: 'רגיל', status: 'ממתין', created_at: nowTs()
+      category: 'שכר', description: 'יתרת שכר לתשלום ' + (pr.month || ''), amount: remaining, due_date: dueP,
+      urgency: 'רגיל', status: 'ממתין', created_at: nowTs(),
+      deleted: '', delete_reason: '', deleted_by: '', deleted_at: ''
     });
   }
   writeTable('future_expenses', db.futureExpenses);
