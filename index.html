@@ -319,7 +319,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.11-B26 · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.12-B27 · 23.07.2026</div>
   </div>
 </div>
 
@@ -1981,23 +1981,28 @@ function futureExpensesHtml(){
   function row(x){
     var overdue = x.due_date && x.due_date < today;
     var emp = x.employee_id? DB.employees.find(e=>e.id===x.employee_id):null;
+    var paid = fexpPaid(x.id), rem = fexpRemain(x);
     return '<tr>'+
       '<td><span style="color:'+(URG_COLOR[x.urgency]||'inherit')+';font-weight:600">'+esc(x.urgency||'רגיל')+'</span></td>'+
-      '<td>'+esc(x.category)+(emp?' · '+esc(emp.name):'')+'</td>'+
+      '<td>'+esc(x.category)+(emp?' · '+esc(emp.name):'')+(x.supplier_id?' · '+esc(supp(x.supplier_id)):'')+'</td>'+
       '<td>'+esc(x.description||(x.source==='payroll'?'יתרת שכר לתשלום':''))+'</td>'+
       '<td'+(overdue?' style="color:var(--danger);font-weight:700"':'')+'>'+(x.due_date?esc(x.due_date):'—')+(overdue?' ⚠':'')+'</td>'+
       '<td class="tot">'+ils(x.amount)+'</td>'+
+      '<td>'+(paid>0?ils(paid):'—')+'</td>'+
+      '<td'+(rem>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(rem)+'</td>'+
       '<td>'+(x.source==='payroll'?
         '<button class="btn ghost sm" onclick="go(\'payroll\')">למסך שכר</button>':
-        '<button class="btn sm" onclick="doMarkFutureExpensePaid(\''+x.id+'\')">סמן כשולם</button>')+'</td>'+
+        '<button class="btn sm" onclick="payFexpForm(\''+x.id+'\')">תשלום</button> '+
+        '<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>')+'</td>'+
     '</tr>';
   }
-  var totalOpen = open.reduce((s,x)=>s+Number(x.amount||0),0);
+  var totalOpen = open.reduce((s,x)=>s+fexpRemain(x),0);
   return '<div class="card"><div class="row"><b>סה"כ צפוי לתשלום:</b> <span class="tot">'+ils(totalOpen)+'</span></div></div>'+
-    (open.length? '<div class="card"><table><tr><th>דחיפות</th><th>קטגוריה</th><th>תיאור</th><th>תאריך יעד</th><th>סכום</th><th></th></tr>'+
+    (open.length? '<div class="card"><table><tr><th>דחיפות</th><th>קטגוריה</th><th>תיאור</th><th>תאריך יעד</th><th>סכום</th><th>שולם</th><th>יתרה</th><th></th></tr>'+
       open.map(row).join('')+'</table></div>' : '<div class="card empty">אין הוצאות עתידיות פתוחות</div>')+
-    (paid.length? '<h3 style="margin:14px 0 8px">שולמו</h3><div class="card"><table><tr><th>קטגוריה</th><th>תיאור</th><th>סכום</th></tr>'+
-      paid.slice().reverse().slice(0,20).map(x=>'<tr><td>'+esc(x.category)+'</td><td>'+esc(x.description||'')+'</td><td>'+ils(x.amount)+'</td></tr>').join('')+'</table></div>':'');
+    (paid.length? '<h3 style="margin:14px 0 8px">שולמו</h3><div class="card"><table><tr><th>קטגוריה</th><th>תיאור</th><th>סכום</th><th></th></tr>'+
+      paid.slice().reverse().slice(0,20).map(x=>'<tr><td>'+esc(x.category)+'</td><td>'+esc(x.description||'')+'</td><td>'+ils(x.amount)+'</td>'+
+        '<td>'+(x.source==='payroll'?'':'<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>')+'</td></tr>').join('')+'</table></div>':'');
 }
 function futureExpForm(){
   openModal('<h2>הוצאה עתידית</h2>'+
@@ -2017,6 +2022,147 @@ async function doMarkFutureExpensePaid(id){
   if(!confirm('לסמן כשולם? תירשם הוצאה בפועל.')) return;
   await act('markFutureExpensePaid',{id:id},'סומן כשולם ונרשם כהוצאה');
 }
+
+/* ================= B27: פירוט יתרה, תשלום מפוצל ואסמכתאות =================
+   נבנה לפי המבנה של חלון פירוט השכר (B22), עם התוספות: תשלום חלקי,
+   אסמכתאות מרובות, ופירוט לחיצה על היתרה. חלון השכר הקיים לא שונה. */
+
+// פירוט הוצאה עתידית — מה מרכיב את הסכום, מה שולם, ומה נשאר
+function fexpBreakdown(id){
+  var fe = (DB.futureExpenses||[]).find(x=>x.id===id); if(!fe) return;
+  var paid = fexpPaid(id), rem = fexpRemain(fe);
+  var pays = (DB.expensePayments||[]).filter(x=>x.fexp_id===id).slice().reverse();
+  var net = Math.round((Number(fe.amount||0)-Number(fe.vat_amount||0))*100)/100;
+  var pur = fe.source==='purchase' ? (DB.purchases||[]).find(x=>x.id===fe.ref_id) : null;
+  var lines = pur ? (DB.purchaseLines||[]).filter(l=>l.purchase_id===pur.id) : [];
+  var rows = '';
+  if(lines.length){
+    rows += lines.map(function(l){
+      return '<tr><td>'+esc(item(l.item_id))+' <span class="muted">× '+esc(l.qty)+'</span>'+
+        '<div class="muted" style="font-size:11.5px">'+ils(l.unit_cost)+' ליחידה</div></td>'+
+        '<td>'+ils(Number(l.qty)*Number(l.unit_cost))+'</td></tr>';
+    }).join('');
+    rows += '<tr><td>סה"כ לפני מע"מ</td><td>'+ils(net)+'</td></tr>';
+  } else {
+    rows += '<tr><td>'+esc(fe.description||fe.category)+'</td><td>'+ils(net)+'</td></tr>';
+  }
+  if(Number(fe.vat_amount)) rows += '<tr><td>מע"מ</td><td>'+ils(fe.vat_amount)+'</td></tr>';
+  openModal('<h2>פירוט — '+esc(fe.category||'')+'</h2>'+
+    '<div class="muted" style="margin-bottom:8px">'+esc(fe.description||'')+
+      (fe.supplier_id?' · ספק '+esc(supp(fe.supplier_id)):'')+' · סטטוס '+esc(fe.status||'')+'</div>'+
+    '<div class="card"><table><tr><th>רכיב</th><th>סכום</th></tr>'+rows+
+      '<tr><td><b>סה"כ לתשלום</b></td><td class="tot"><b>'+ils(fe.amount)+'</b></td></tr>'+
+      '<tr><td>שולם</td><td>'+ils(paid)+'</td></tr>'+
+      '<tr><td><b>יתרה</b></td><td'+(rem>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(rem)+'</td></tr>'+
+      '</table></div>'+
+    (pays.length?'<h3 style="margin:12px 0 6px">תשלומים שבוצעו</h3><div class="card"><table><tr><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>פירוט</th><th>אסמכתאות</th></tr>'+
+      pays.map(function(x){
+        var d = payDocsOf('expense',x.id);
+        return '<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method||'')+'</td><td>'+esc(x.note||'')+'</td>'+
+          '<td><button class="btn ghost sm" onclick="payDocsForm(\'expense\',\''+x.id+'\',\'fexp\',\''+id+'\')">'+(d.length?d.length+' מצורפות':'הוסף')+'</button></td></tr>';
+      }).join('')+'</table></div>':'')+
+    '<div class="row" style="margin-top:10px;gap:6px">'+
+      (rem>0.01?'<button class="btn" onclick="payFexpForm(\''+id+'\')">רשום תשלום</button>':'<span class="muted">שולם במלואו.</span>')+
+      (fe.supplier_id?'<button class="btn ghost sm" onclick="supBalanceCard(\''+fe.supplier_id+'\')">כרטיס הספק</button>':'')+
+    '</div>');
+}
+
+// טופס תשלום כנגד הוצאה עתידית — מלא או חלקי
+function payFexpForm(id){
+  var fe = (DB.futureExpenses||[]).find(x=>x.id===id); if(!fe) return toast('ההוצאה לא נמצאה', true);
+  var rem = fexpRemain(fe);
+  if(rem<=0.01) return toast('אין יתרה לתשלום', true);
+  openModal('<h2>תשלום — '+esc(fe.category||'')+'</h2>'+
+    '<div class="muted" style="margin-bottom:8px">'+esc(fe.description||'')+(fe.supplier_id?' · ספק '+esc(supp(fe.supplier_id)):'')+'</div>'+
+    '<div class="card"><table><tr><td>סה"כ</td><td class="tot"><b>'+ils(fe.amount)+'</b></td>'+
+      '<td>שולם</td><td>'+ils(fexpPaid(id))+'</td><td>יתרה</td><td style="color:var(--danger);font-weight:700">'+ils(rem)+'</td></tr></table></div>'+
+    '<fieldset style="margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px">'+
+    '<legend style="font-weight:700;font-size:13px;padding:0 6px">רישום תשלום</legend>'+
+    '<div class="grid2">'+
+      '<div class="frow"><label>סכום לתשלום</label><input id="f_fpamt" type="number" min="0" step="0.01" max="'+rem+'" value="'+rem+'"></div>'+
+      '<div class="frow"><label>תאריך התשלום</label><input id="f_fpdate" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+      '<div class="frow"><label>אמצעי תשלום</label><select id="f_fpmethod">'+
+        ['העברה בנקאית','שיק','מזומן','כרטיס אשראי','הוראת קבע','אחר'].map(m=>'<option>'+m+'</option>').join('')+'</select></div>'+
+      '<div class="frow"><label>פירוט / אסמכתא</label><input id="f_fpnote" placeholder="מספר אסמכתא, מספר שיק, פירוט"></div>'+
+    '</div>'+
+    '<div class="muted" style="font-size:12px;margin:6px 0 8px">לתשלום חלקי — שנה את הסכום. היתרה תישאר פתוחה כחוב.</div>'+
+    '<button class="btn" onclick="savePayFexp(\''+id+'\')">רשום תשלום והמשך לאסמכתאות</button></fieldset>');
+}
+async function savePayFexp(id){
+  var amt = Number(el('f_fpamt').value)||0;
+  if(amt<=0) return toast('סכום לא תקין', true);
+  var r = await act('payFutureExpense',{id:id, amount:amt, method:el('f_fpmethod').value,
+    note:el('f_fpnote').value, paid_at:el('f_fpdate').value}, 'התשלום נרשם');
+  if(r) payDocsForm('expense', r.pay_id, 'fexp', id);
+}
+
+// אסמכתאות לתשלום — אפשר לצרף כמה שרוצים, קובץ ו/או פירוט בכתב
+function payDocsForm(kind, payId, backKind, backId){
+  var docs = payDocsOf(kind, payId);
+  openModal('<h2>אסמכתאות לתשלום</h2>'+
+    '<div class="muted" style="margin-bottom:8px">ניתן לצרף כמה אסמכתאות לאותו תשלום — צילום מסך של העברה, חשבונית, שיק סרוק, או פירוט בכתב בלבד.</div>'+
+    (docs.length?'<div class="card"><table><tr><th>תיאור</th><th>פירוט</th><th>קובץ</th><th>נוצר</th></tr>'+
+      docs.map(d=>'<tr><td>'+esc(d.name||'—')+'</td><td>'+esc(d.note||'')+'</td>'+
+        '<td>'+(d.url?'<a href="'+esc(d.url)+'" target="_blank">פתח</a>':'—')+'</td>'+
+        '<td class="muted">'+esc(fmtTs(d.created_at))+'</td></tr>').join('')+'</table></div>'
+      :'<div class="card empty">אין אסמכתאות עדיין</div>')+
+    '<fieldset style="margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px">'+
+    '<legend style="font-weight:700;font-size:13px;padding:0 6px">הוספת אסמכתא</legend>'+
+    '<div class="grid2">'+
+      '<div class="frow"><label>תיאור קצר</label><input id="f_pdname" placeholder="למשל: צילום העברה בנקאית"></div>'+
+      '<div class="frow"><label>קובץ / צילום (עד 4MB)</label><input id="f_pdfile" type="file" accept="image/*,.pdf"></div>'+
+    '</div>'+
+    '<div class="frow"><label>פירוט</label><input id="f_pdnote" placeholder="מספר אסמכתא, בנק, הערות"></div>'+
+    '<button class="btn" onclick="addPayDoc(\''+kind+'\',\''+payId+'\',\''+(backKind||'')+'\',\''+(backId||'')+'\')">הוסף אסמכתא</button></fieldset>'+
+    '<div class="row" style="margin-top:10px;gap:6px">'+
+      (backKind==='fexp'?'<button class="btn ghost sm" onclick="fexpBreakdown(\''+backId+'\')">חזרה לפירוט</button>':'')+
+      (backKind==='payroll'?'<button class="btn ghost sm" onclick="payrollDetail(\''+backId+'\')">חזרה לשכר</button>':'')+
+      '<button class="btn ghost sm" onclick="closeModal()">סיום</button></div>');
+}
+async function addPayDoc(kind, payId, backKind, backId){
+  var name = el('f_pdname').value, note = el('f_pdnote').value;
+  var f = el('f_pdfile').files[0];
+  if(!f && !note && !name) return toast('צרף קובץ או כתוב פירוט', true);
+  var b64 = '', mime = '';
+  if(f){
+    if(f.size > 4*1024*1024) return toast('הקובץ גדול מ-4MB', true);
+    toast('מעלה קובץ...');
+    b64 = await new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(rd.result.split(',')[1]);}; rd.readAsDataURL(f); });
+    mime = f.type || 'application/octet-stream';
+  }
+  var r = await act('uploadPaymentDoc',{pay_kind:kind, pay_id:payId, base64:b64, mime:mime, name:name, note:note||name}, 'האסמכתא נוספה');
+  if(r) payDocsForm(kind, payId, backKind, backId);
+}
+
+// כרטיס יתרה לספק — לחיצה על היתרה מציגה את הפירוט שמרכיב אותה
+function supBalanceCard(sid){
+  var sp = (DB.suppliers||[]).find(x=>x.id===sid); if(!sp) return;
+  var open = supOpenFexp(sid);
+  var bal = supBalance(sid);
+  var allPays = (DB.expensePayments||[]).filter(x=>String(x.supplier_id||'')===String(sid)).slice().reverse().slice(0,20);
+  openModal('<h2>כרטיס ספק — '+esc(sp.name)+'</h2>'+
+    '<div class="muted" style="margin-bottom:8px">'+esc(sp.contact_name||'')+' '+esc(sp.phone||'')+(sp.payment_terms?' · '+esc(sp.payment_terms):'')+'</div>'+
+    '<div class="card"><div class="row"><b>יתרה לתשלום:</b> <span class="tot" style="font-size:18px'+(bal>0.01?';color:var(--danger)':'')+'"><b>'+ils(bal)+'</b></span>'+
+      '<span class="muted">מורכבת מ-'+open.length+' רשומות פתוחות — לחץ על שורה לפירוט</span></div></div>'+
+    (open.length?'<div class="card"><table><tr><th>תיאור</th><th>תאריך יעד</th><th>סה"כ</th><th>שולם</th><th>יתרה</th><th></th></tr>'+
+      open.map(function(x){
+        var rem = fexpRemain(x);
+        return '<tr style="cursor:pointer" onclick="fexpBreakdown(\''+x.id+'\')">'+
+          '<td><b style="text-decoration:underline">'+esc(x.description||x.category)+'</b></td>'+
+          '<td>'+(x.due_date?esc(x.due_date):'—')+'</td>'+
+          '<td>'+ils(x.amount)+'</td><td>'+ils(fexpPaid(x.id))+'</td>'+
+          '<td style="color:var(--danger);font-weight:700">'+ils(rem)+'</td>'+
+          '<td><button class="btn sm" onclick="event.stopPropagation();payFexpForm(\''+x.id+'\')">תשלום</button></td></tr>';
+      }).join('')+'</table></div>':'<div class="card empty">אין חוב פתוח לספק זה</div>')+
+    (allPays.length?'<h3 style="margin:12px 0 6px">תשלומים אחרונים</h3><div class="card"><table><tr><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>פירוט</th><th>אסמכתאות</th></tr>'+
+      allPays.map(function(x){
+        var d = payDocsOf('expense',x.id);
+        return '<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method||'')+'</td><td>'+esc(x.note||'')+'</td>'+
+          '<td><button class="btn ghost sm" onclick="payDocsForm(\'expense\',\''+x.id+'\',\'\',\'\')">'+(d.length?d.length:'הוסף')+'</button></td></tr>';
+      }).join('')+'</table></div>':'')+
+    '<div style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+
 function cancelInv(vid){
   confirmModal('לבטל את החשבונית? הפעולה בלתי הפיכה.', 'בטל חשבונית', function(){
     undoToast('מבטל את החשבונית — ניתן לבטל תוך 5 שניות', async function(){
@@ -2404,7 +2550,7 @@ function rItems(){
         (wash?'<div style="text-align:center"><div class="big" style="color:var(--amber)">'+wash+'</div><div class="muted">בכביסה</div></div>':'')+
         '<button class="btn ghost sm" onclick="itemForm(\''+i.id+'\')">עריכה</button>'+
         '<button class="btn ghost sm" onclick="availForm(\''+i.id+'\')">זמינות</button>'+
-        '<button class="btn ghost sm" onclick="unitsModal(\''+i.id+'\')">יחידות ('+DB.units.filter(u=>u.item_id===i.id&&u.status!=='גרוט').length+')</button>'+
+        '<button class="btn ghost sm" title="מספר סידורי וברקוד לכל פריט בנפרד — אינו משנה את כמות המלאי" onclick="unitsModal(\''+i.id+'\')">מספור יחידות ('+liveUnits(i.id).filter(u=>u.status!=='גרוט').length+')</button>'+
         notesBtn('item',i.id)+tagBtn('item',i.id)+
         (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת פריט (קוד מנהל)" onclick="delRecord(\'items\',\''+i.id+'\',\'את הפריט\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></span>':'')+'</div>'+linksSection('item',i.id)+'</div>';
     }).join(''):'<div class="card empty">אין פריטים עדיין</div>');
@@ -2630,7 +2776,8 @@ async function runAvail(iid){
 /* ================= רכש וספקים ================= */
 function rPurchasing(){
   el('main').innerHTML = '<div class="section-title"><h2>ספקים</h2><button class="btn ghost sm" onclick="supForm()">+ ספק</button></div>'+
-    (DB.suppliers.length? DB.suppliers.map(s=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(s.name)+'</b><div class="muted">'+esc(s.contact_name||'')+' '+esc(s.phone||'')+(s.payment_terms?' · '+esc(s.payment_terms):'')+'</div></div>'+
+    (DB.suppliers.length? DB.suppliers.map(s=>'<div class="card"><div class="row"><div class="grow" style="cursor:pointer" onclick="supBalanceCard(\''+s.id+'\')"><b style="text-decoration:underline">'+esc(s.name)+'</b><div class="muted">'+esc(s.contact_name||'')+' '+esc(s.phone||'')+(s.payment_terms?' · '+esc(s.payment_terms):'')+'</div></div>'+
+    (supBalance(s.id)>0.01?'<div style="text-align:center;cursor:pointer" onclick="supBalanceCard(\''+s.id+'\')"><div class="big" style="color:var(--danger)">'+ils(supBalance(s.id))+'</div><div class="muted">יתרה לתשלום</div></div>':'')+
     contactBtns(s.phone, s.email)+notesBtn('supplier',s.id)+tagBtn('supplier',s.id)+
     (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת ספק (קוד מנהל)" onclick="delRecord(\'suppliers\',\''+s.id+'\',\'את הספק\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></span>':'')+'</div>'+linksSection('supplier',s.id)+'</div>').join(''):'<div class="card empty">אין ספקים</div>')+
     '<div class="section-title"><h2>הזמנות רכש</h2><button class="btn" onclick="purForm()">+ רכש</button></div>'+
@@ -2713,16 +2860,32 @@ async function savePurLine(pid){
   var r = await act('create',{table:'purchase_lines',row:{purchase_id:pid,item_id:itemId,qty:q,unit_cost:Number(el('f_plcost').value)||0}},'נוסף');
   if(r) closeModal();
 }
-async function doReceivePur(pid){
-  if(DB.warehouses.length){
-    openModal('<h2>קבלת רכש למלאי</h2><div class="frow"><label>לאיזה מחסן?</label><select id="f_rwh">'+whOptions()+'</select></div>'+
-      '<button class="btn" onclick="doReceivePur2(\''+pid+'\')">קבל למלאי</button>');
-  } else if(confirm('לקבל את הרכש? המלאי יגדל ותירשם הוצאה.'))
-    await act('receivePurchase',{purchase_id:pid},'הרכש נקלט');
+// B27: קבלת רכש — המלאי גדל ונוצר חוב לספק ב"הוצאות עתידיות".
+// אם נבחר "שולם" — נפתח מיד חלון התשלום על אותו חוב (מלא או חלקי + אסמכתאות).
+function doReceivePur(pid){
+  var pu = DB.purchases.find(x=>x.id===pid)||{};
+  var lines = (DB.purchaseLines||[]).filter(l=>l.purchase_id===pid);
+  var net = lines.reduce((s,l)=>s+Number(l.qty)*Number(l.unit_cost),0);
+  var gross = Math.round(net*(1+VAT_RATE)*100)/100;
+  openModal('<h2>קבלת רכש למלאי</h2>'+
+    '<div class="card"><table><tr><td>ספק</td><td><b>'+esc(supp(pu.supplier_id))+'</b></td>'+
+      '<td>סכום לפני מע"מ</td><td>'+ils(net)+'</td><td>לתשלום כולל מע"מ</td><td class="tot"><b>'+ils(gross)+'</b></td></tr></table></div>'+
+    (DB.warehouses.length?'<div class="frow"><label>לאיזה מחסן?</label><select id="f_rwh">'+whOptions()+'</select></div>':'')+
+    '<div class="frow"><label>מצב תשלום לספק</label><select id="f_rpaymode">'+
+      '<option value="לתשלום בהמשך">לתשלום בהמשך — ייכנס להוצאות עתידיות</option>'+
+      '<option value="שולם">שולם — פתח עכשיו את חלון התשלום</option></select></div>'+
+    '<div class="frow"><label>תאריך יעד לתשלום (לא חובה)</label><input id="f_rdue" type="date"></div>'+
+    '<button class="btn" onclick="doReceivePur2(\''+pid+'\')">קבל למלאי</button>');
 }
 async function doReceivePur2(pid){
-  var r = await act('receivePurchase',{purchase_id:pid,warehouse_id:el('f_rwh').value},'הרכש נקלט למחסן');
-  if(r) closeModal();
+  var mode = el('f_rpaymode')?el('f_rpaymode').value:'לתשלום בהמשך';
+  var r = await act('receivePurchase',{purchase_id:pid,
+    warehouse_id:(el('f_rwh')?el('f_rwh').value:''),
+    payment_mode:mode, due_date:(el('f_rdue')?el('f_rdue').value:'')},'הרכש נקלט למלאי');
+  if(!r) return;
+  closeModal();
+  if(mode==='שולם' && r.fexp_id) payFexpForm(r.fexp_id);
+  else toast('נוצר חוב לספק בסך '+ils(r.amount)+' במסך הוצאות עתידיות');
 }
 
 /* ================= סריקה ================= */
@@ -3371,20 +3534,79 @@ function printBarcodes(){
     '<script>window.onload=function(){window.print();}<\/script></body></html>');
   w.document.close();
 }
+/* ===== B27: helpers ===== */
+function liveUnits(iid){ return (DB.units||[]).filter(u=>u.item_id===iid && u.deleted!=='כן'); }
+function fexpPaid(id){ return Math.round(((DB.expensePayments||[]).filter(x=>x.fexp_id===id).reduce((s,x)=>s+Number(x.amount||0),0))*100)/100; }
+function fexpRemain(fe){ return Math.round((Number(fe.amount||0)-fexpPaid(fe.id))*100)/100; }
+function supOpenFexp(sid){ return (DB.futureExpenses||[]).filter(x=>String(x.supplier_id||'')===String(sid) && x.status!=='שולם'); }
+function supBalance(sid){ return Math.round(supOpenFexp(sid).reduce((s,x)=>s+fexpRemain(x),0)*100)/100; }
+function payDocsOf(kind,pid){ return (DB.paymentDocs||[]).filter(d=>d.pay_kind===kind && String(d.pay_id)===String(pid)); }
+var UNITS_SHOW_DEL = false;
+
+// B27: חלון מספור היחידות — הסבר מפורש מה זה עושה, בחירה מרובה, ומחיקה רכה/מלאה
 function unitsModal(iid){
-  var it = DB.items.find(x=>x.id===iid);
-  var units = DB.units.filter(u=>u.item_id===iid);
-  openModal('<h2>יחידות — '+esc(it.name)+'</h2>'+
-    (it.prefix?'<div class="row" style="margin-bottom:12px"><input id="f_uqty" type="number" min="1" max="500" placeholder="כמה יחידות" style="width:130px"><button class="btn" onclick="doCreateUnits(\''+iid+'\')">+ צור יחידות ממוספרות ('+esc(it.prefix)+'...)</button><span class="muted">כל היחידות נושאות את ברקוד הפריט: '+esc(it.barcode||'אין — הגדר בעריכה')+'</span></div>'
-    :'<p class="muted" style="margin-bottom:10px">כדי ליצור יחידות, הגדר לפריט קידומת באנגלית (למשל MAPA) בעריכת הפריט.</p>')+
-    (units.length?'<table><tr><th>מזהה</th><th>סטטוס</th><th></th></tr>'+units.map(u=>'<tr><td><b>'+esc(u.id)+'</b></td><td>'+esc(u.status)+'</td><td>'+
-      (u.status!=='גרוט'?'<button class="btn danger sm" onclick="doScrapUnit(\''+u.id+'\',\''+iid+'\')">גרוט</button>':'')+'</td></tr>').join('')+'</table>':'<div class="muted">אין יחידות עדיין</div>'));
+  var it = DB.items.find(x=>x.id===iid); if(!it) return;
+  var all = (DB.units||[]).filter(u=>u.item_id===iid);
+  var units = UNITS_SHOW_DEL ? all : all.filter(u=>u.deleted!=='כן');
+  var delCount = all.filter(u=>u.deleted==='כן').length;
+  var liveCount = all.filter(u=>u.deleted!=='כן').length;
+  var isMgr = ROLE==='מנהל';
+  openModal('<h2>מספור יחידות — '+esc(it.name)+'</h2>'+
+    '<div class="card" style="background:var(--bg2,transparent)"><div class="muted" style="font-size:12.5px;line-height:1.7">'+
+      '<b>מה זה המסך הזה?</b><br>'+
+      'כאן נותנים <b>מספר סידורי נפרד לכל פריט פיזי</b> — למשל מדבקה על כל מפה בנפרד, למעקב אחרי מפה מסוימת.<br>'+
+      '<b>זה לא משנה את כמות המלאי.</b> כמות המלאי נכנסת רק דרך מסך "רכש וספקים" ← "קבל למלאי".<br>'+
+      'אם אינך מסמן כל מפה בנפרד — אין צורך במסך הזה בכלל.'+
+    '</div></div>'+
+    (it.prefix?'<div class="row" style="margin:12px 0"><input id="f_uqty" type="number" min="1" max="500" placeholder="כמה יחידות" style="width:130px"><button class="btn" onclick="doCreateUnits(\''+iid+'\')">+ צור מספרים סידוריים ('+esc(it.prefix)+'...)</button><span class="muted">ברקוד משותף לכל היחידות: '+esc(it.barcode||'אין — הגדר בעריכת הפריט')+'</span></div>'
+    :'<p class="muted" style="margin:10px 0">כדי ליצור מספרים סידוריים, הגדר לפריט קידומת באותיות אנגליות (למשל MAPA) בעריכת הפריט.</p>')+
+    (units.length?
+      '<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">'+
+        '<button class="btn ghost sm" onclick="unitsCheckAll(true)">בחר הכל</button>'+
+        '<button class="btn ghost sm" onclick="unitsCheckAll(false)">נקה בחירה</button>'+
+        (isMgr?'<button class="btn sm" onclick="doDeleteUnits(\''+iid+'\',\'soft\')" title="המזהה נשמר להיסטוריה ומוסתר מהתצוגה">מחק נבחרות (הסתרה)</button>'+
+               '<button class="btn danger sm" onclick="doDeleteUnits(\''+iid+'\',\'hard\')" title="מחיקה סופית מהטבלה — לטעויות ובדיקות בלבד">מחיקה מלאה (קוד מנהל)</button>':'')+
+      '</div>'+
+      '<div class="card"><table><tr><th></th><th>מזהה</th><th>סטטוס</th><th></th></tr>'+units.map(function(u){
+        var isDel = u.deleted==='כן';
+        return '<tr'+(isDel?' style="opacity:.5"':'')+'>'+
+          '<td>'+(isDel?'':'<input type="checkbox" class="uchk" value="'+esc(u.id)+'">')+'</td>'+
+          '<td><b>'+esc(u.id)+'</b>'+(isDel?' <span class="muted" style="font-size:11px">(נמחק '+esc(u.deleted_at||'')+')</span>':'')+'</td>'+
+          '<td>'+esc(u.status)+'</td>'+
+          '<td>'+(!isDel && u.status!=='גרוט'?'<button class="btn ghost sm" onclick="doScrapUnit(\''+u.id+'\',\''+iid+'\')">גרוט</button>':'')+'</td></tr>';
+      }).join('')+'</table></div>'
+      :'<div class="card empty">אין יחידות ממוספרות לפריט זה</div>')+
+    '<div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap">'+
+      (delCount?'<button class="btn ghost sm" onclick="UNITS_SHOW_DEL=!UNITS_SHOW_DEL;unitsModal(\''+iid+'\')">'+(UNITS_SHOW_DEL?'הסתר מחוקות':'הצג מחוקות ('+delCount+')')+'</button>':'')+
+      (isMgr && !liveCount && it.prefix?'<button class="btn ghost sm" onclick="doResetUnitCounter(\''+iid+'\')" title="המספור יתחיל מחדש מ-1">אפס את המונה הסידורי</button>':'')+
+    '</div>');
 }
+function unitsCheckAll(on){ Array.from(document.querySelectorAll('.uchk')).forEach(function(c){ c.checked=!!on; }); }
+function unitsChecked(){ return Array.from(document.querySelectorAll('.uchk')).filter(c=>c.checked).map(c=>c.value); }
 async function doCreateUnits(iid){
   var q = Number(el('f_uqty').value);
   if(!(q>0)) return toast('כמות חובה', true);
   var r = await act('createUnits',{item_id:iid,qty:q});
   if(r){ toast('נוצרו '+r.created.length+' יחידות: '+r.created[0]+' עד '+r.created[r.created.length-1]); unitsModal(iid); }
+}
+async function doDeleteUnits(iid, mode){
+  var ids = unitsChecked();
+  if(!ids.length) return toast('לא נבחרו יחידות', true);
+  var run = async function(){
+    var r = await act('deleteUnits',{item_id:iid, unit_ids:ids, mode:mode});
+    if(r){
+      toast('נמחקו '+r.deleted+' יחידות'+(r.blocked&&r.blocked.length?' · '+r.blocked.length+' בשימוש ולא נמחקו':''));
+      unitsModal(iid);
+    }
+  };
+  if(mode==='hard') confirmManagerPin('מחיקה מלאה של '+ids.length+' יחידות. המזהים יימחקו לגמרי ולא ניתן יהיה לשחזר.', 'אשר מחיקה מלאה', run);
+  else confirmModal('להסתיר '+ids.length+' יחידות? המזהים יישמרו להיסטוריה ולא יופיעו יותר בתצוגה.', 'הסתר', run);
+}
+async function doResetUnitCounter(iid){
+  confirmModal('לאפס את המונה הסידורי? היחידה הבאה שתיווצר תקבל את המספר 1.', 'אפס מונה', async function(){
+    var r = await act('resetUnitCounter',{item_id:iid},'המונה אופס');
+    if(r) unitsModal(iid);
+  });
 }
 async function doScrapUnit(uid,iid){
   if(!confirm('לגרוט את '+uid+'? היחידה תיגרע מהמלאי — פעולה סופית.')) return;
@@ -3616,8 +3838,12 @@ function payrollDetail(pid){
       '<button class="btn ghost sm" onclick="savePayrollAdj(\''+pid+'\')">הוסף</button></div>':'')+
     '<h3 style="margin:14px 0 6px;cursor:pointer;text-decoration:underline" onclick="payrollBreakdown(\''+pid+'\')" title="לחץ לפירוט רכיבי השכר">סה"כ ותשלומים <span class="muted" style="font-size:12px;font-weight:400">— לחץ לפירוט מלא</span></h3>'+
     '<div class="card"><table><tr><td>סה"כ לתשלום</td><td class="tot"><b>'+ils(p.total)+'</b></td><td>שולם</td><td>'+ils(paid)+'</td><td>יתרה</td><td'+(remaining>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(remaining)+'</td></tr></table></div>'+
-    (pays.length?'<div class="card"><table><tr><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>הערה</th></tr>'+
-      pays.slice().reverse().map(x=>'<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method)+'</td><td>'+esc(x.note||'')+'</td></tr>').join('')+'</table></div>':'')+
+    (pays.length?'<div class="card"><table><tr><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>הערה</th><th>אסמכתאות</th></tr>'+
+      pays.slice().reverse().map(function(x){
+        var d = payDocsOf('payroll',x.id);
+        return '<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method)+'</td><td>'+esc(x.note||'')+'</td>'+
+          '<td><button class="btn ghost sm" onclick="payDocsForm(\'payroll\',\''+x.id+'\',\'payroll\',\''+pid+'\')">'+(d.length?d.length+' מצורפות':'הוסף')+'</button></td></tr>';
+      }).join('')+'</table></div>':'')+
     (p.status==='טיוטה'?'<button class="btn" style="margin-top:10px" onclick="doApprovePayroll(\''+pid+'\')">אשר שכר</button>':
       (remaining>0.01?
         '<fieldset style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px">'+
@@ -3660,8 +3886,12 @@ function payrollBreakdown(pid){
       '<tr><td>שולם</td><td>'+ils(paid)+'</td></tr>'+
       '<tr><td><b>יתרה</b></td><td'+(remaining>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(remaining)+'</td></tr>'+
       '</table></div>'+
-    (pays.length?'<h3 style="margin:12px 0 6px">תשלומים שבוצעו</h3><div class="card"><table><tr><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>הערה</th></tr>'+
-      pays.slice().reverse().map(x=>'<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method)+'</td><td>'+esc(x.note||'')+'</td></tr>').join('')+'</table></div>':'')+
+    (pays.length?'<h3 style="margin:12px 0 6px">תשלומים שבוצעו</h3><div class="card"><table><tr><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>הערה</th><th>אסמכתאות</th></tr>'+
+      pays.slice().reverse().map(function(x){
+        var d = payDocsOf('payroll',x.id);
+        return '<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method)+'</td><td>'+esc(x.note||'')+'</td>'+
+          '<td><button class="btn ghost sm" onclick="payDocsForm(\'payroll\',\''+x.id+'\',\'payroll\',\''+pid+'\')">'+(d.length?d.length+' מצורפות':'הוסף')+'</button></td></tr>';
+      }).join('')+'</table></div>':'')+
     '<p class="muted" style="font-size:12px;margin-top:8px">לחיצה על שורת השכר פותחת את רישומי הנוכחות של החודש.</p>'+
     '<div class="row" style="margin-top:10px;gap:6px">'+
       '<button class="btn ghost sm" onclick="payrollDetail(\''+pid+'\')">חזרה</button>'+
@@ -3703,7 +3933,9 @@ async function savePayrollPayment(pid){
   var amt = Number(el('f_payamt').value)||0;
   if(amt<=0) return toast('סכום לא תקין', true);
   var r = await act('payPayroll',{payroll_id:pid,amount:amt,method:el('f_paymethod').value,note:el('f_paynote').value,paid_at:(el('f_paydate')?el('f_paydate').value:'')},'התשלום נרשם');
-  if(r) payrollDetail(pid);
+  // B27: מיד אחרי רישום התשלום — מסך צירוף אסמכתאות (אפשר כמה)
+  if(r && r.pay_id) payDocsForm('payroll', r.pay_id, 'payroll', pid);
+  else if(r) payrollDetail(pid);
 }
 async function doApprovePayroll(pid){
   if(!confirm('לאשר את השכר? הסכום ייכנס ל"הוצאות עתידיות" עד לתשלום בפועל.')) return;
