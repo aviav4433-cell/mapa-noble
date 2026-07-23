@@ -350,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.17-B33 · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.18-B34a · 23.07.2026</div>
   </div>
 </div>
 
@@ -2030,8 +2030,79 @@ function rDeliveries(){
       '<div class="section-title"><h3>⬅ איסופים פתוחים (החזרות)</h3><span class="muted">'+openPick.length+'</span></div>'+
       (openPick.length? openPick.map(delivCard).join(''):'<div class="card empty">אין איסופים פתוחים</div>')+
       (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
-  el('main').innerHTML = '<div class="section-title"><h2>משלוחים</h2><span class="muted">נוצרים אוטומטית באישור הזמנה</span></div>'+
+  var canPlan = ['מנהל','משרד'].includes(ROLE);
+  el('main').innerHTML = '<div class="section-title"><h2>משלוחים</h2>'+
+    (canPlan?'<button class="btn" onclick="b34TripForm()">+ תכנון נסיעה</button>':'<span class="muted">נוצרים אוטומטית באישור הזמנה</span>')+'</div>'+
+    (canPlan? b34TripsTodayHtml() : '')+
     '<div class="row" style="margin:8px 0;gap:6px">'+tb('today','היום — העמסה ואיסוף')+tb('all','כל המשלוחים')+'</div>'+body;
+}
+/* ===== B34: נסיעות חלוקה — תכנון בהנהלה ===== */
+function b34TripsTodayHtml(){
+  var t = todayYMD();
+  var trips = (DB.deliveryTrips||[]).filter(x=>String(x.date)>=t && x.status!=='בוטלה')
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.seq||0)-Number(b.seq||0)).slice(0,12);
+  if(!trips.length) return '';
+  return '<div class="card" style="margin:8px 0"><b>נסיעות מתוכננות</b><table style="margin-top:6px"><tr><th>תאריך</th><th>נסיעה</th><th>נהג</th><th>יציאה</th><th>משלוחים</th><th>סטטוס</th><th></th></tr>'+
+    trips.map(function(tr){
+      var drv = (DB.employees||[]).find(e=>e.id===tr.driver_id)||{};
+      var cnt = (DB.deliveries||[]).filter(d=>String(d.trip_id)===String(tr.id)).length;
+      return '<tr><td>'+esc(tr.date)+'</td><td>'+esc(tr.seq)+'</td><td>'+esc(drv.name||'')+'</td><td>'+esc(tr.planned_time||'—')+'</td><td>'+cnt+'</td>'+
+        '<td><span class="chip" style="background:'+(tr.status==='יצאה'?'var(--navy)':tr.status==='הסתיימה'?'var(--ok)':'var(--navy2)')+';color:#fff">'+esc(tr.status)+'</span></td>'+
+        '<td class="row" style="gap:4px"><button class="btn ghost sm" onclick="b34TripAssignForm(\''+tr.id+'\')">שיבוץ</button>'+
+        (tr.status==='מתוכננת'?'<button class="btn ghost sm" onclick="b34DoTripStatus(\''+tr.id+'\',\'יצאה\')">יצאה</button>':'')+
+        (tr.status==='יצאה'?'<button class="btn ghost sm" onclick="b34DoTripStatus(\''+tr.id+'\',\'הסתיימה\')">סיום</button>':'')+
+        (tr.status==='מתוכננת'?'<button class="btn ghost sm" style="color:var(--danger)" onclick="b34DoTripStatus(\''+tr.id+'\',\'בוטלה\')">בטל</button>':'')+
+        '</td></tr>';
+    }).join('')+'</table></div>';
+}
+function b34TripForm(){
+  var drivers = (DB.employees||[]).filter(e=>e.role==='נהג' && e.active!=='לא');
+  if(!drivers.length) return toast('אין נהגים פעילים במערכת', true);
+  var vehicles = (DB.vehicles||[]).filter(v=>v.active!=='לא' && (!v.status || v.status==='פעיל'));
+  openModal('<h2>תכנון נסיעה</h2>'+
+    '<div class="grid2">'+
+    '<div class="frow"><label>תאריך</label><input id="tp_date" type="date" value="'+todayYMD()+'"></div>'+
+    '<div class="frow"><label>שעת יציאה מתוכננת</label><input id="tp_time" type="time"></div>'+
+    '<div class="frow"><label>נהג</label><select id="tp_driver">'+drivers.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>רכב</label><select id="tp_vehicle"><option value="">— ללא —</option>'+vehicles.map(v=>'<option value="'+v.id+'">'+esc(v.plate||'')+' '+esc(v.model||'')+'</option>').join('')+'</select></div>'+
+    '</div>'+
+    '<div class="frow"><label>הערות</label><input id="tp_notes"></div>'+
+    '<button class="btn grow" style="width:100%" onclick="b34DoTripCreate()">צור נסיעה והמשך לשיבוץ</button>');
+}
+async function b34DoTripCreate(){
+  var r = await act('tripCreate',{date:el('tp_date').value, planned_time:el('tp_time').value, driver_id:el('tp_driver').value, vehicle_id:el('tp_vehicle').value, notes:el('tp_notes').value});
+  if(!r) return;
+  var g = await api('getAll'); if(g && g.ok) DB=g.db;
+  closeModal();
+  b34TripAssignForm(r.trip.id);
+}
+function b34TripAssignForm(tid){
+  var tr = (DB.deliveryTrips||[]).find(x=>x.id===tid); if(!tr) return;
+  var drv = (DB.employees||[]).find(e=>e.id===tr.driver_id)||{};
+  /* משלוחים פתוחים לתאריך הנסיעה (או בלי נסיעה, או כבר בנסיעה זו) */
+  var cands = (DB.deliveries||[]).filter(d=>['מתוכנן','בדרך'].includes(d.status) && String(d.date||'')<=String(tr.date) &&
+    (!d.trip_id || String(d.trip_id)===String(tid)));
+  var cur = cands.filter(d=>String(d.trip_id)===String(tid)).map(d=>String(d.id));
+  openModal('<h2>שיבוץ משלוחים — נסיעה '+esc(tr.seq)+' · '+esc(drv.name||'')+'</h2>'+
+    '<p class="muted" style="font-size:13px">סמן את המשלוחים לנסיעה זו. משלוח שישובץ יקבל את הנהג של הנסיעה.</p>'+
+    (cands.length? cands.map(function(d){
+      var o = d.order_id? (DB.orders||[]).find(x=>x.id===d.order_id) : null;
+      var c = o? (DB.customers||[]).find(x=>x.id===o.customer_id) : null;
+      return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--line);cursor:pointer">'+
+        '<input type="checkbox" class="tpa_cb" value="'+esc(d.id)+'" style="width:auto"'+(cur.includes(String(d.id))?' checked':'')+'>'+
+        '<span class="grow">'+esc(c?c.name:'—')+(o?' · #'+esc(o.order_number||o.id):'')+' · '+esc(isPickup(d)?'איסוף':'אספקה')+' · '+esc(d.date||'')+
+        (d.driver&&d.driver!==drv.name?' · <span style="color:var(--amber)">כרגע: '+esc(d.driver)+'</span>':'')+'</span></label>';
+    }).join('') : '<div class="empty">אין משלוחים פתוחים מתאימים</div>')+
+    '<button class="btn grow" style="width:100%;margin-top:10px" onclick="b34DoTripAssign(\''+tid+'\')">שמור שיבוץ</button>');
+}
+async function b34DoTripAssign(tid){
+  var ids = Array.from(document.querySelectorAll('.tpa_cb:checked')).map(x=>x.value);
+  var r = await act('tripAssign',{trip_id:tid, delivery_ids:ids},'הנסיעה שובצה — '+ids.length+' משלוחים');
+  if(r){ closeModal(); var g=await api('getAll'); if(g&&g.ok)DB=g.db; render(); }
+}
+async function b34DoTripStatus(tid, st){
+  var r = await act('tripSetStatus',{trip_id:tid, status:st},'הנסיעה עודכנה');
+  if(r){ var g=await api('getAll'); if(g&&g.ok)DB=g.db; render(); }
 }
 
 /* ===== B5: Driver-Lite — דשבורד נהג: מסלול, ניווט, תיעוד שיחות, סטטוס ללקוח (D12/D13/D14) ===== */
@@ -2073,7 +2144,9 @@ function rDriverRoute(){
   } else {
     var tot = mine.length + doneT.length;
     head = tot? '<div class="route-prog"><i style="width:'+Math.round(doneT.length/tot*100)+'%"></i></div>' : '';
-    body = (mine.length? mine.map((d,i)=>driverStopCard(d,i,mine.length,'open')).join('') : (doneT.length?'<div class="card empty">כל העצירות להיום הושלמו</div>':'<div class="card empty">אין משלוחים להיום במסלול שלך</div>'))+
+    /* B34: אם יש נסיעות מתוכננות להיום — המסלול מוצג מקובץ לפי נסיעות */
+    var grouped = mine.length? b34GroupByTrips(mine) : null;
+    body = (grouped!==null&&grouped!==''? grouped : (mine.length? mine.map((d,i)=>driverStopCard(d,i,mine.length,'open')).join('') : (doneT.length?'<div class="card empty">כל העצירות להיום הושלמו</div>':'<div class="card empty">אין משלוחים להיום במסלול שלך</div>')))+
       (doneT.length? '<div class="muted" style="margin:16px 0 8px;font-size:13px;font-weight:600">הושלמו היום</div>'+doneT.map(d=>driverStopCard(d,-1,0,'done')).join('') : '');
   }
   var cnt = DRV_TAB==='today'? (doneT.length+' מתוך '+(mine.length+doneT.length)+' הושלמו') : (mine.length+' עצירות להיום');
@@ -2118,11 +2191,13 @@ function driverStopCard(d,idx,total,mode){
     '<div class="bd">'+
       '<div class="lead" style="cursor:pointer" onclick="openDelivery(\''+d.id+'\')">'+esc(c?c.name:'—')+'</div>'+
       '<div class="sub">'+esc(addr||'אין כתובת רשומה בכרטיס הלקוח')+
-        (d.note?'<br>'+esc(d.note):'')+(d.eta_text?'<br>'+esc(d.eta_text):'')+'</div>'+
+        (d.note?'<br>'+esc(d.note):'')+(d.eta_text?'<br>'+esc(d.eta_text):'')+
+        (d.scan_status==='נסרק'?'<br><span style="color:var(--ok);font-weight:600">✓ העמסה נסרקה</span>':'')+'</div>'+
       '<div class="actrow">'+pri+
         (wazeUrl?'<a class="btn ghost sm ico" href="'+wazeUrl+'" target="_blank" rel="noopener" title="ניווט Waze" aria-label="ניווט Waze">➤</a>':'')+
         (c&&c.phone?'<a class="btn ghost sm ico" href="tel:'+encodeURIComponent(c.phone)+'" title="חייג ללקוח" aria-label="חייג ללקוח">✆</a>':'')+
         moreMenu([
+          d.scan_status!=='נסרק'?'<button class="btn" onclick="closeMore();b34DriverScanForm(\''+d.id+'\')">סריקת העמסה (חבילה/מארז/משלוח)</button>':'',
           gmapUrl?'<a class="btn" href="'+gmapUrl+'" target="_blank" rel="noopener">ניווט Google Maps</a>':'',
           d.status==='בדרך'?'<button class="btn" onclick="closeMore();driverMarkTransit(\''+d.id+'\')">עדכן סטטוס ללקוח</button>':'',
           '<button class="btn" onclick="closeMore();openDelivery(\''+d.id+'\')">פרטי המשלוח</button>',
@@ -2135,6 +2210,51 @@ function driverStopCard(d,idx,total,mode){
         ])+
       '</div>'+
     '</div></div>';
+}
+/* B34: סריקת העמסה של הנהג — מארז / חבילה / ברקוד הזמנה / מזהה משלוח.
+   לא חוסמת: אפשר לצאת לדרך גם בלי סריקה (נרשם "ללא סריקה" — אישור מנהל בדיעבד רק כשהאכיפה מופעלת). */
+function b34DriverScanForm(did){
+  openModal('<h2>סריקת העמסה</h2>'+
+    '<p class="muted" style="font-size:13px">סרוק את המארז, חבילה מתוכו, או את ברקוד ההזמנה/המשלוח — לאישור שהמשלוח הנכון עלה לרכב.</p>'+
+    '<div class="frow"><input id="ds_bc" class="scanbox" placeholder="סרוק או הקלד ברקוד" onkeydown="if(event.key===\'Enter\')b34DoDriverScan(\''+did+'\')"></div>'+
+    '<div class="row" style="gap:6px">'+
+    '<button class="btn grow" onclick="window.FLOOR_CAM=function(t){el(\'ds_bc\').value=t;b34DoDriverScan(\''+did+'\');};startCam()">סרוק במצלמה</button>'+
+    '<button class="btn ghost grow" onclick="b34DoDriverScan(\''+did+'\')">אשר</button></div>');
+  setTimeout(function(){ var i=el('ds_bc'); if(i) i.focus(); },100);
+}
+async function b34DoDriverScan(did){
+  var bc = el('ds_bc')? el('ds_bc').value.trim() : '';
+  if(!bc) return toast('סרוק או הקלד ברקוד', true);
+  var r = await act('b34LoadScan',{delivery_id:did, barcode:bc});
+  if(!r) return;
+  closeModal();
+  var d = (DB.deliveries||[]).find(x=>x.id===did); if(d){ d.scan_status='נסרק'; d.scan_ack=''; }
+  toast('✓ נסרק: '+(r.label||''));
+  render();
+}
+/* B34: קיבוץ מסלול הנהג לפי נסיעות מתוכננות (delivery_trips) */
+function b34TripHeader(tr){
+  var v = tr.vehicle_id? (DB.vehicles||[]).find(x=>x.id===tr.vehicle_id) : null;
+  return '<div class="muted" style="margin:14px 0 6px;font-size:13.5px;font-weight:700">🚚 נסיעה '+esc(tr.seq||'')+
+    (tr.planned_time?' · יציאה '+esc(tr.planned_time):'')+(v?' · '+esc(v.plate||''):'')+
+    (tr.status && tr.status!=='מתוכננת'?' · '+esc(tr.status):'')+'</div>';
+}
+function b34GroupByTrips(mine){
+  var t = todayYMD();
+  var myTrips = (DB.deliveryTrips||[]).filter(x=>String(x.date)===t && x.status!=='בוטלה')
+    .sort((a,b)=>Number(a.seq||0)-Number(b.seq||0));
+  if(!myTrips.length || !mine.some(d=>d.trip_id)) return null;
+  var html = '';
+  myTrips.forEach(function(tr){
+    var stops = mine.filter(d=>String(d.trip_id)===String(tr.id))
+      .sort((a,b)=>(Number(a.trip_order)||999)-(Number(b.trip_order)||999));
+    if(!stops.length) return;
+    html += b34TripHeader(tr) + stops.map((d,i)=>driverStopCard(d,mine.indexOf(d)===0?0:1,stops.length,'open')).join('');
+  });
+  var loose = mine.filter(d=>!d.trip_id || !myTrips.some(tr=>String(tr.id)===String(d.trip_id)));
+  if(loose.length) html += '<div class="muted" style="margin:14px 0 6px;font-size:13.5px;font-weight:700">ללא נסיעה</div>'+
+    loose.map((d,i)=>driverStopCard(d,mine.indexOf(d)===0?0:1,loose.length,'open')).join('');
+  return html;
 }
 async function driverMove(did,delta){
   var mine = b5MyRoute();
@@ -3499,6 +3619,7 @@ async function saveQuickShelf(){
   var code = el('qsh_code').value;
   if(!code) return toast('קוד מדף חובה', true);
   var r = await act('create',{table:'shelves',row:{code:code,location:el('qsh_loc').value||'',warehouse_id:el('f_iwh').value||'',active:'כן'}});
+  if(r && r.row && r.row.barcode) b34PrintShelfLabel(r.row.barcode, r.row.code+(r.row.location?' · '+r.row.location:''));
   if(r && r.row){
     refreshShelfOptions(); el('f_ishelf').value = r.row.code;
     el('quickShelfBox').style.display='none'; el('qsh_code').value=''; el('qsh_loc').value='';
@@ -3804,10 +3925,32 @@ async function doScan(){
       '<div class="muted" style="margin:6px 0">'+esc(r.item?r.item.name:'')+'</div>'+
       (r.entity.status!=='גרוט'?'<div class="row">'+['פנוי','אצל לקוח','בכביסה'].filter(s=>s!==r.entity.status).map(s=>'<button class="btn ghost sm" onclick="doUnitStatus(\''+r.entity.id+'\',\''+s+'\')">'+s+'</button>').join('')+
       '<button class="btn danger sm" onclick="if(confirm(\'לגרוט? נגרע מהמלאי — סופי\'))doUnitStatus(\''+r.entity.id+'\',\'גרוט\')">גרוט</button></div>':'')+'</div>';
-  } else {
+  } else if(r.kind==='cart'){
     el('scanRes').innerHTML = '<div class="card"><b>עגלה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
       (r.task?'<div class="muted" style="margin-top:6px">משימה עליה: '+esc(item(r.task.item_id))+' × '+r.task.qty+' · שלב: '+esc(r.task.stage)+'</div>'+
       '<button class="btn sm" style="margin-top:8px" onclick="doAdvance(\''+r.task.id+'\');setTimeout(doScan,600)">קדם שלב ←</button>':'')+'</div>';
+  } else if(r.kind==='package'){
+    el('scanRes').innerHTML = '<div class="card"><b>אריזת כביסה מוכנה</b>'+
+      '<div class="muted" style="margin:6px 0">'+esc(r.item?r.item.name:'')+' × '+esc(r.entity.qty)+' · '+esc(r.entity.package_barcode)+'</div></div>';
+  } else if(r.kind==='package_type'){
+    el('scanRes').innerHTML = '<div class="card"><b>חבילה: '+esc(r.entity.qty)+' × '+esc(r.item?r.item.name:'')+'</b>'+
+      '<div class="muted" style="margin:6px 0">ברקוד קבוע '+esc(r.entity.barcode)+'</div>'+
+      '<div class="grid2">'+kpi(r.balance,'חבילות במלאי')+kpi(Number(r.entity.qty)*Number(r.balance||0),'סה"כ יחידות ארוזות')+'</div></div>';
+  } else if(r.kind==='case'){
+    el('scanRes').innerHTML = '<div class="card"><b>מארז '+esc(r.entity.barcode)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(r.entity.status||'פנוי')+'</span>'+
+      (r.order?'<div class="muted" style="margin:6px 0">משויך להזמנה #'+esc(r.order.order_number||r.order.id)+'</div>':'')+
+      ((r.contents||[]).length?'<div class="muted" style="margin-top:6px">תכולה: '+r.contents.map(x=>x.count+' × ['+esc(x.per_pkg)+' '+esc(x.item_name)+']').join(' · ')+'</div>':'')+
+      (r.entity.status==='משויך'?'<button class="btn ghost sm" style="margin-top:8px" onclick="b34DoCaseRelease(\''+r.entity.id+'\');setTimeout(doScan,600)">שחרר מארז</button>':'')+'</div>';
+  } else if(r.kind==='shelf'){
+    el('scanRes').innerHTML = '<div class="card"><b>מדף '+esc(r.entity.code)+'</b>'+(r.entity.location?'<div class="muted">'+esc(r.entity.location)+'</div>':'')+'</div>';
+  } else if(r.kind==='order'){
+    el('scanRes').innerHTML = '<div class="card"><b>הזמנה #'+esc(r.entity.order_number||r.entity.id)+'</b> <span class="chip">'+esc(r.entity.status||'')+'</span>'+
+      '<button class="btn sm" style="margin-top:8px" onclick="openOrder(\''+r.entity.id+'\')">פתח הזמנה</button></div>';
+  } else if(r.kind==='delivery'){
+    el('scanRes').innerHTML = '<div class="card"><b>משלוח '+esc(r.entity.id)+'</b> <span class="chip">'+esc(r.entity.status||'')+'</span>'+
+      '<button class="btn sm" style="margin-top:8px" onclick="openDelivery(\''+r.entity.id+'\')">פתח משלוח</button></div>';
+  } else {
+    el('scanRes').innerHTML = '<div class="card"><b>'+esc(r.kind||'')+'</b><div class="muted">נמצא במערכת</div></div>';
   }
   el('scanIn').value=''; el('scanIn').focus();
 }
@@ -4167,6 +4310,14 @@ async function loadApprovals(){
         : '')+
       '</div>';
   });
+  /* B34: מוצג רק כשאכיפת סריקה מופעלת (settings: scan_enforce='כן') — בתקופת ההרצה הרשימה ריקה */
+  if((r.scan_pending||[]).length) html += apprSection('יציאות לדרך ללא סריקת העמסה (B34)', r.scan_pending, function(x){
+    return '<div class="attn-row"><span class="tag" style="background:var(--amber)">ללא סריקה</span>'+
+      '<div class="grow" style="cursor:pointer" onclick="openDelivery(\''+x.delivery_id+'\')">'+
+      (x.order_number?'הזמנה #'+esc(x.order_number)+' · ':'')+esc(x.customer||'')+(x.driver?' · נהג '+esc(x.driver):'')+(x.date?' · '+esc(x.date):'')+'</div>'+
+      (canAct?'<button class="btn ghost sm" onclick="event.stopPropagation();apprAckScan(\''+x.delivery_id+'\')">אשר בדיעבד</button>':'')+
+      '</div>';
+  });
   html += apprSection('הסרות כתובת ממסלול נהג (B5)', r.address_removals, function(x){
     return '<div class="attn-row"><span class="tag" style="background:#94A3B8">הוסר</span>'+
       '<div class="grow">'+(x.order_id?'הזמנה #'+esc(x.order_number)+' · ':'')+esc(x.customer||'')+(x.driver?' · נהג '+esc(x.driver):'')+
@@ -4203,6 +4354,11 @@ function apprRejectException(oid){
       if(VIEW==='approvals') loadApprovals();
     });
   });
+}
+/* B34: אישור בדיעבד ליציאה ללא סריקת העמסה — מנהל/משרד (נאכף גם בשרת) */
+async function apprAckScan(did){
+  var r = await act('b10AckScan',{delivery_id:did},'אושר בדיעבד');
+  if(r) loadApprovals();
 }
 /* סימון הסרת כתובת כטופלה — מנהל/משרד (נאכף גם בשרת) */
 async function apprAckRemoval(did){
@@ -4341,7 +4497,7 @@ function renderNobleReports(containerId){
 function rBarcodes(){
   el('main').innerHTML = '<div class="section-title"><h2>ברקודים</h2><button class="btn" onclick="printBarcodes()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> הדפס מדבקות</button></div>'+
     '<div class="card"><div class="grid3">'+
-    '<div class="frow"><label>סוג</label><select id="bc_kind" onchange="renderBarcodeList()"><option value="units">יחידות ממוספרות</option><option value="items">פריטים</option><option value="carts">עגלות</option><option value="packages">אריזות מוכנות</option></select></div>'+
+    '<div class="frow"><label>סוג</label><select id="bc_kind" onchange="renderBarcodeList()"><option value="units">יחידות ממוספרות</option><option value="items">פריטים</option><option value="carts">עגלות</option><option value="packages">אריזות מוכנות</option><option value="pkgtypes">סוגי חבילה (ברקוד קבוע)</option><option value="cases">מארזים</option><option value="shelves">מדפים</option></select></div>'+
     '<div class="frow"><label>פריט</label><select id="bc_item" onchange="renderBarcodeList()"><option value="">כל הפריטים</option>'+DB.items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>חיפוש מזהה</label><input id="bc_search" oninput="renderBarcodeList()" placeholder="MAPA00..."></div>'+
     '</div></div><div id="bcList" class="grid3"></div>';
@@ -4354,6 +4510,9 @@ function barcodeEntries(){
   if(kind==='items') list = DB.items.filter(i=>i.barcode).map(i=>({code:String(i.barcode), label:i.name, item_id:i.id}));
   if(kind==='carts') list = DB.carts.filter(c=>c.barcode).map(c=>({code:String(c.barcode), label:'עגלה '+c.id, item_id:''}));
   if(kind==='packages') list = DB.laundryTasks.filter(t=>t.package_barcode).map(t=>({code:String(t.package_barcode), label:'אריזה · '+item(t.item_id), item_id:t.item_id}));
+  if(kind==='pkgtypes') list = (DB.packageTypes||[]).filter(t=>t.active!=='לא').map(t=>({code:String(t.barcode), label:t.qty+' × '+item(t.item_id), item_id:t.item_id}));
+  if(kind==='cases') list = (DB.cases||[]).filter(c=>c.active!=='לא').map(c=>({code:String(c.barcode), label:'מארז', item_id:''}));
+  if(kind==='shelves') list = (DB.shelves||[]).filter(s=>s.active!=='לא'&&s.barcode).map(s=>({code:String(s.barcode), label:'מדף '+s.code+(s.location?' · '+s.location:''), item_id:''}));
   if(itemF) list = list.filter(x=>x.item_id===itemF);
   if(q) list = list.filter(x=>x.code.toUpperCase().includes(q));
   return list;
@@ -6027,11 +6186,12 @@ function rFloor(){
     '<div class="section-title"><h2>רצפת ייצור — מכבסה</h2>'+
     '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" '+(floorTablet()?'checked':'')+' onchange="floorTabletToggle()" style="width:auto"> טאבלט משותף (קוד עובד לכל פעולה)</label></div>'+
     (floorTablet()?'<div class="card" style="padding:10px"><div class="frow" style="margin:0"><label>קוד עובד אישי (חובה לפני כל פעולה)</label><input id="fl_pin" type="password" inputmode="numeric" placeholder="הקוד האישי שלך" style="font-size:18px"></div></div>':'')+
-    '<div class="row" style="margin:10px 0;flex-wrap:wrap">'+tabBtn('board','לוח חי')+tabBtn('work','עבודה וסריקה')+tabBtn('intake','קליטה חדשה')+tabBtn('dispatch','העמסה והחזרות')+'</div>'+
+    '<div class="row" style="margin:10px 0;flex-wrap:wrap">'+tabBtn('board','לוח חי')+tabBtn('work','עבודה וסריקה')+tabBtn('intake','קליטה חדשה')+tabBtn('pack','אריזה ומידוף')+tabBtn('dispatch','העמסה והחזרות')+'</div>'+
     '<div id="floorBody"></div>';
   /* B29: טאב "העמסה והחזרות" — האחראי במפעל רואה מה להעלות לרכב עכשיו ומה אמור לחזור היום */
   if(FLOOR_TAB==='dispatch') el('floorBody').innerHTML = dispatchTodayHtml();
-  else if(FLOOR_TAB==='work') floorWorkTab(); else if(FLOOR_TAB==='board') floorBoardTab(); else floorIntakeTab();
+  else if(FLOOR_TAB==='work') floorWorkTab(); else if(FLOOR_TAB==='board') floorBoardTab();
+  else if(FLOOR_TAB==='pack') floorPackTab(); else floorIntakeTab();
 }
 /* --- NC2: לוח חי — מתעדכן כל דקה, קריאה בלבד --- */
 var FLOOR_BOARD=null, FLOOR_BOARD_TIMER=null;
@@ -6251,6 +6411,186 @@ async function floorSaveIntake(){
   }
 }
 
+/* ===== B34: אריזה ומידוף — חבילות עם ברקוד קבוע (מוצר+כמות), מארזים וליקוט =====
+   גמישות הרצה: אפשר לארוז בלי מדף, לדלג על ברקוד חיצוני (יונפק אוטומטית), ולדלג על הכל. */
+function b34PkgTypeOf(tid){ return (DB.packageTypes||[]).find(t=>t.id===tid); }
+function b34NetOf(tid){
+  return (DB.packageMoves||[]).filter(m=>String(m.type_id)===String(tid)).reduce(function(s,m){
+    var c=Number(m.count)||0;
+    if(m.move_type==='אריזה') return s+c;
+    if(m.move_type==='ליקוט') return s-c;
+    if(m.move_type==='התאמה') return s+c;
+    return s;
+  },0);
+}
+/* התרעת מלאי אבוד: אם סך היחידות הארוזות של פריט עולה על המלאי שאינו בכביסה — יש תיעוד חסר */
+function b34ItemWarn(iid){
+  var packedUnits = (DB.packageTypes||[]).filter(t=>t.item_id===iid && t.active!=='לא')
+    .reduce((s,t)=>s + b34NetOf(t.id)*Number(t.qty||0), 0);
+  if(!packedUnits) return '';
+  var stock = (DB.stockMoves||[]).filter(m=>m.item_id===iid).reduce((s,m)=>s+Number(m.qty||0),0);
+  var wash = (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty||0),0);
+  var free = stock - wash;
+  if(packedUnits > free) return '⚠ רשומות '+packedUnits+' יח\' ארוזות אבל במלאי (מחוץ לכביסה) רק '+free+' — ייתכן מלאי אבוד או תיעוד חסר';
+  return '';
+}
+function floorPackTab(){
+  var items = (DB.items||[]).filter(i=>i.active!=='לא');
+  var shelves = (DB.shelves||[]).filter(s=>s.active!=='לא');
+  var types = (DB.packageTypes||[]).filter(t=>t.active!=='לא');
+  var cases = (DB.cases||[]).filter(c=>c.active!=='לא');
+  el('floorBody').innerHTML =
+    '<div class="card">'+
+    '<b style="font-size:16px">+ חבילות חדשות</b>'+
+    '<p class="muted" style="font-size:12.5px;margin:4px 0 10px">ברקוד קבוע לכל מוצר+כמות — 100 חבילות זהות מקבלות את אותו ברקוד. יש מדבקה מוכנה על החבילה? סרוק אותה. אין? המערכת תנפיק ברקוד להדפסה.</p>'+
+    '<div class="grid3">'+
+    '<div class="frow"><label>מוצר</label><select id="pk_item" style="font-size:15px"><option value="">— בחר —</option>'+items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+(i.size?' · '+esc(i.size):'')+(i.color?' · '+esc(i.color):'')+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>כמות בחבילה אחת</label><input id="pk_qty" type="number" min="1" placeholder="למשל 5"></div>'+
+    '<div class="frow"><label>מספר חבילות</label><input id="pk_count" type="number" min="1" placeholder="למשל 20"></div>'+
+    '</div>'+
+    '<div class="grid2">'+
+    '<div class="frow"><label>ברקוד קיים על החבילה (לא חובה)</label><div class="row" style="gap:6px"><input id="pk_bc" placeholder="ריק = הנפקה אוטומטית" style="flex:1"><button type="button" class="btn ghost sm" onclick="floorCam(\'pk_bc\',function(){})">📷</button></div></div>'+
+    '<div class="frow"><label>מדף (לא חובה — אפשר לדלג)</label><select id="pk_shelf"><option value="">— בלי מידוף כרגע —</option>'+shelves.map(s=>'<option value="'+esc(s.code)+'">'+esc(s.code)+(s.location?' · '+esc(s.location):'')+'</option>').join('')+'</select></div>'+
+    '</div>'+
+    '<button class="btn grow" style="width:100%;font-size:16px;padding:13px" onclick="b34DoPack()">רשום חבילות</button>'+
+    '</div>'+
+    '<div class="card">'+
+    '<div class="row" style="align-items:center"><b style="font-size:16px" class="grow">מארזים</b>'+
+    '<button class="btn ghost sm" onclick="b34CaseForm()">+ מארז</button>'+
+    '<button class="btn sm" onclick="b34PickForm()">ליקוט למארז</button></div>'+
+    (cases.length? '<table style="margin-top:8px"><tr><th>ברקוד</th><th>סטטוס</th><th>הזמנה</th><th></th></tr>'+cases.map(function(c){
+      var o = c.order_id? (DB.orders||[]).find(x=>x.id===c.order_id) : null;
+      return '<tr><td><b>'+esc(c.barcode)+'</b></td>'+
+        '<td><span class="chip" style="background:'+(c.status==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(c.status||'פנוי')+'</span></td>'+
+        '<td>'+(o?'#'+esc(o.order_number||o.id):'<span class="muted">—</span>')+'</td>'+
+        '<td>'+(c.status==='משויך'?'<button class="btn ghost sm" onclick="b34DoCaseRelease(\''+c.id+'\')">שחרר</button>':'')+'</td></tr>';
+    }).join('')+'</table>' : '<div class="empty">אין מארזים עדיין — צור מארז ראשון והדבק עליו את הברקוד</div>')+
+    '</div>'+
+    '<div class="card">'+
+    '<b style="font-size:16px">מלאי חבילות</b>'+
+    (types.length? '<table style="margin-top:8px"><tr><th>מוצר</th><th>בחבילה</th><th>ברקוד</th><th>במלאי</th><th></th></tr>'+
+      types.map(function(t){
+        var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
+        return '<tr><td>'+esc(it.name||'')+'</td><td>'+esc(t.qty)+'</td><td>'+esc(t.barcode)+'</td><td><b>'+b34NetOf(t.id)+'</b></td>'+
+          '<td class="row" style="gap:4px"><button class="btn ghost sm" onclick="b34PrintLabel(\''+t.id+'\')">🖨</button>'+
+          '<button class="btn ghost sm" title="מידוף" onclick="b34ShelveForm(\''+t.id+'\')">מדף</button>'+
+          (ROLE==='מנהל'||ROLE==='משרד'?'<button class="btn ghost sm" title="התאמת ספירה" onclick="b34AdjustForm(\''+t.id+'\')">±</button>':'')+'</td></tr>';
+      }).join('')+'</table>' : '<div class="empty">טרם נרשמו חבילות</div>')+
+    (function(){
+      var warns = items.map(i=>b34ItemWarn(i.id)).filter(Boolean);
+      return warns.length? '<div style="margin-top:10px">'+warns.map(w=>'<div class="chip" style="background:var(--danger);color:#fff;display:block;margin:4px 0;padding:8px">'+esc(w)+'</div>').join('')+'</div>' : '';
+    })()+
+    '</div>';
+}
+async function b34DoPack(){
+  var iid = el('pk_item').value, qty = Number(el('pk_qty').value), cnt = Number(el('pk_count').value);
+  if(!iid) return toast('בחר מוצר', true);
+  if(!(qty>0)) return toast('הזן כמות בחבילה', true);
+  if(!(cnt>0)) return toast('הזן מספר חבילות', true);
+  var r = await floorAct('pkgPack',{item_id:iid, qty:qty, count:cnt, barcode:el('pk_bc').value.trim(), shelf_code:el('pk_shelf').value});
+  if(!r) return;
+  var g = await api('getAll'); if(g && g.ok) DB=g.db;
+  floorPackTab();
+  if(r.generated){
+    toast('נרשמו '+cnt+' חבילות · הונפק ברקוד '+r.type.barcode+' — הדפס מדבקות');
+    b34PrintLabel(r.type.id, cnt);
+  } else toast('נרשמו '+cnt+' חבילות · ברקוד '+r.type.barcode);
+}
+function b34PrintLabel(tid, copies){
+  var t = b34PkgTypeOf(tid); if(!t) return;
+  var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
+  var lbl = esc(t.qty)+' × '+esc(it.name||'')+(it.color?' '+esc(it.color):'');
+  var n = Math.min(Number(copies)||1, 100);
+  var w = window.open('','_blank');
+  var one = '<div class="lbl">'+safeBarcode(String(t.barcode))+'<div>'+lbl+'</div></div>';
+  w.document.write('<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Arial;display:flex;flex-wrap:wrap;gap:6px;padding:8px}.lbl{border:1px dashed #999;padding:8px;text-align:center;font-size:11px;page-break-inside:avoid}</style></head><body>'+
+    Array(n).fill(one).join('')+'<script>window.onload=function(){window.print();}<\/script></body></html>');
+  w.document.close();
+}
+function b34ShelveForm(tid){
+  var t = b34PkgTypeOf(tid); if(!t) return;
+  var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
+  var shelves = (DB.shelves||[]).filter(s=>s.active!=='לא');
+  if(!shelves.length) return toast('אין מדפים במערכת — הוסף במסך "מדפים"', true);
+  openModal('<h2>מידוף — '+esc(t.qty)+' × '+esc(it.name||'')+'</h2>'+
+    '<div class="frow"><label>מדף</label><select id="sv_shelf">'+shelves.map(s=>'<option value="'+esc(s.code)+'">'+esc(s.code)+(s.location?' · '+esc(s.location):'')+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>מספר חבילות</label><input id="sv_count" type="number" min="1" value="1"></div>'+
+    '<button class="btn grow" style="width:100%" onclick="b34DoShelve(\''+tid+'\')">רשום מידוף</button>');
+}
+async function b34DoShelve(tid){
+  var r = await floorAct('pkgShelve',{type_id:tid, shelf_code:el('sv_shelf').value, count:Number(el('sv_count').value)||0},'המידוף נרשם');
+  if(r){ closeModal(); var g=await api('getAll'); if(g&&g.ok)DB=g.db; if(VIEW==='floor'&&FLOOR_TAB==='pack')floorPackTab(); }
+}
+function b34AdjustForm(tid){
+  var t = b34PkgTypeOf(tid); if(!t) return;
+  var it = (DB.items||[]).find(i=>i.id===t.item_id)||{};
+  openModal('<h2>התאמת ספירה — '+esc(t.qty)+' × '+esc(it.name||'')+'</h2>'+
+    '<p class="muted" style="font-size:13px">במלאי כרגע: <b>'+b34NetOf(tid)+'</b> חבילות. הזן מספר חיובי להוספה או שלילי לגריעה, עם סיבה — הכל נרשם ביומן.</p>'+
+    '<div class="frow"><label>שינוי (±)</label><input id="aj_count" type="number" placeholder="למשל -3"></div>'+
+    '<div class="frow"><label>סיבה (חובה)</label><input id="aj_note" placeholder="למשל: נמצאו קרועות / ספירה חוזרת"></div>'+
+    '<button class="btn grow" style="width:100%" onclick="b34DoAdjust(\''+tid+'\')">רשום התאמה</button>');
+}
+async function b34DoAdjust(tid){
+  var r = await floorAct('pkgAdjust',{type_id:tid, count:Number(el('aj_count').value), note:el('aj_note').value},'ההתאמה נרשמה');
+  if(r){ closeModal(); var g=await api('getAll'); if(g&&g.ok)DB=g.db; if(VIEW==='floor'&&FLOOR_TAB==='pack')floorPackTab(); }
+}
+function b34CaseForm(){
+  openModal('<h2>מארז חדש</h2>'+
+    '<p class="muted" style="font-size:13px">מארז הוא קופסה רב-פעמית. יש עליו ברקוד מודבק? סרוק אותו. אין? יונפק ברקוד להדפסה.</p>'+
+    '<div class="frow"><label>ברקוד קיים (לא חובה)</label><input id="cs_bc" placeholder="ריק = הנפקה אוטומטית"></div>'+
+    '<button class="btn grow" style="width:100%" onclick="b34DoCaseCreate()">צור מארז</button>');
+}
+async function b34DoCaseCreate(){
+  var r = await floorAct('caseCreate',{barcode:el('cs_bc').value.trim()});
+  if(r){ closeModal(); toast('נוצר מארז '+r.kase.barcode); var g=await api('getAll'); if(g&&g.ok)DB=g.db; if(VIEW==='floor'&&FLOOR_TAB==='pack')floorPackTab(); }
+}
+var B34_PICKS = [];
+function b34PickForm(){
+  var cases = (DB.cases||[]).filter(c=>c.active!=='לא');
+  if(!cases.length) return toast('אין מארזים — צור מארז קודם', true);
+  var orders = (DB.orders||[]).filter(o=>['מאושרת','סופקה'].includes(o.status)).slice(-60).reverse();
+  var types = (DB.packageTypes||[]).filter(t=>t.active!=='לא');
+  B34_PICKS = [];
+  openModal('<h2>ליקוט למארז</h2>'+
+    '<div class="frow"><label>מארז</label><select id="pi_case">'+cases.map(c=>'<option value="'+c.id+'">'+esc(c.barcode)+(c.status==='משויך'?' (משויך)':'')+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>הזמנה</label><select id="pi_order"><option value="">— בחר —</option>'+orders.map(function(o){
+      var c=(DB.customers||[]).find(x=>x.id===o.customer_id)||{};
+      return '<option value="'+o.id+'">#'+esc(o.order_number||o.id)+' · '+esc(c.name||'')+'</option>';
+    }).join('')+'</select></div>'+
+    '<div class="row" style="gap:6px;align-items:flex-end">'+
+    '<div class="frow grow" style="margin:0"><label>סוג חבילה</label><select id="pi_type">'+types.map(function(t){
+      var it=(DB.items||[]).find(i=>i.id===t.item_id)||{};
+      return '<option value="'+t.id+'">'+esc(t.qty)+' × '+esc(it.name||'')+' (במלאי '+b34NetOf(t.id)+')</option>';
+    }).join('')+'</select></div>'+
+    '<div class="frow" style="margin:0;width:90px"><label>כמות</label><input id="pi_count" type="number" min="1" value="1"></div>'+
+    '<button class="btn ghost" onclick="b34AddPick()">הוסף</button></div>'+
+    '<div id="pi_list" style="margin:8px 0"><span class="muted">אפשר גם רק לשייך מארז להזמנה בלי חבילות</span></div>'+
+    '<button class="btn grow" style="width:100%" onclick="b34DoPick()">בצע ליקוט ושיוך</button>');
+}
+function b34PickListRender(){
+  el('pi_list').innerHTML = B34_PICKS.length? B34_PICKS.map(function(x,i){
+    var t=b34PkgTypeOf(x.type_id)||{}; var it=(DB.items||[]).find(v=>v.id===t.item_id)||{};
+    return '<span class="chip" style="background:var(--teal);margin:2px">'+x.count+' × ['+esc(t.qty||'')+' '+esc(it.name||'')+'] <a style="cursor:pointer;color:#fff;font-weight:700" onclick="B34_PICKS.splice('+i+',1);b34PickListRender()">✕</a></span>';
+  }).join(' ') : '<span class="muted">אפשר גם רק לשייך מארז להזמנה בלי חבילות</span>';
+}
+function b34AddPick(){
+  var tid = el('pi_type').value, n = Number(el('pi_count').value);
+  if(!tid || !(n>0)) return toast('בחר סוג וכמות', true);
+  var ex = B34_PICKS.find(x=>x.type_id===tid);
+  if(ex) ex.count += n; else B34_PICKS.push({type_id:tid, count:n});
+  b34PickListRender();
+}
+async function b34DoPick(){
+  var oid = el('pi_order').value;
+  if(!oid) return toast('בחר הזמנה', true);
+  var r = await floorAct('casePick',{case_id:el('pi_case').value, order_id:oid, picks:B34_PICKS.slice()},'הליקוט נרשם');
+  if(r){ B34_PICKS=[]; closeModal(); var g=await api('getAll'); if(g&&g.ok)DB=g.db; if(VIEW==='floor'&&FLOOR_TAB==='pack')floorPackTab(); }
+}
+async function b34DoCaseRelease(cid){
+  var r = await act('caseRelease',{case_id:cid},'המארז שוחרר');
+  if(r && VIEW==='floor' && FLOOR_TAB==='pack') floorPackTab();
+}
+
 /* ================= מדפים ================= */
 function rShelves(){
   if(!DB.shelves) DB.shelves = [];
@@ -6260,15 +6600,20 @@ function rShelves(){
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(sh.code||sh.id)+'</b>'+(sh.location?' · '+esc(sh.location):'')+(sh.barcode?' <span class="muted">· ⎘'+esc(sh.barcode)+'</span>':'')+
         '<div class="muted">מחסן: '+esc(w?w.name:'ראשי')+(sh.notes?' · '+esc(sh.notes):'')+'</div></div>'+
         '<span class="chip" style="background:'+(sh.active!=='לא'?'var(--ok)':'var(--danger)')+'">'+(sh.active!=='לא'?'פעיל':'לא פעיל')+'</span>'+
-        '<span class="rowact"><button title="עריכת מדף" onclick=\'shelfForm('+JSON.stringify(sh).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>'+
+        '<span class="rowact"><button title="הדפסת ברקוד המדף" onclick="b34PrintShelfLabel(\''+esc(sh.barcode||sh.code||'')+'\',\''+esc(sh.code||'')+(sh.location?' · '+esc(sh.location):'')+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>'+
+        '<button title="עריכת מדף" onclick=\'shelfForm('+JSON.stringify(sh).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>'+
         (ROLE==='מנהל'?'<button class="del" title="מחיקת מדף (קוד מנהל)" onclick="delRecord(\'shelves\',\''+sh.id+'\',\'את המדף\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>':'')+'</span></div></div>';
     }).join(''):'<div class="card empty">אין מדפים עדיין</div>');
 }
 function shelfForm(sh){
   sh = sh||{};
-  openModal('<h2>'+(sh.id?'עריכת מדף':'מדף חדש')+'</h2><div class="grid2">'+
+  openModal('<h2>'+(sh.id?'עריכת מדף':'מדף חדש')+'</h2>'+
+    (sh.id?
+      (sh.barcode?'<div class="row" style="align-items:center;gap:8px;margin-bottom:8px"><span class="muted">ברקוד המדף: <b>'+esc(sh.barcode)+'</b></span><button type="button" class="btn ghost sm" onclick="b34PrintShelfLabel(\''+esc(sh.barcode)+'\',\''+esc(sh.code||'')+'\')">🖨 הדפס ברקוד</button></div>'
+        :'<p class="muted" style="font-size:12.5px">למדף זה אין עדיין ברקוד — יונפק אוטומטית בשמירה.</p>')
+      :'<p class="muted" style="font-size:12.5px">ברקוד קבוע יונפק למדף אוטומטית בשמירה — הדבק את המדבקה על המדף.</p>')+
+    '<div class="grid2">'+
     '<div class="frow"><label>קוד מדף</label><input id="fs_code" value="'+esc(sh.code||'')+'" placeholder="A-01"></div>'+
-    '<div class="frow"><label>ברקוד</label><input id="fs_bar" value="'+esc(sh.barcode||'')+'"></div>'+
     '<div class="frow"><label>מיקום</label><input id="fs_loc" value="'+esc(sh.location||'')+'" placeholder="אזור / שורה"></div>'+
     '<div class="frow"><label>מחסן</label><select id="fs_wh">'+whOptions(sh.warehouse_id)+'</select></div>'+
     '<div class="frow"><label>פעיל</label><select id="fs_active"><option value="כן"'+(sh.active!=='לא'?' selected':'')+'>כן</option><option value="לא"'+(sh.active==='לא'?' selected':'')+'>לא</option></select></div></div>'+
@@ -6277,10 +6622,24 @@ function shelfForm(sh){
 }
 async function saveShelf(id){
   if(!el('fs_code').value) return toast('קוד מדף חובה', true);
-  var row = {code:el('fs_code').value,barcode:el('fs_bar').value,location:el('fs_loc').value,
+  var row = {code:el('fs_code').value,location:el('fs_loc').value,
     warehouse_id:el('fs_wh').value,notes:el('fs_notes').value,active:el('fs_active').value};
   var r = id? await act('update',{table:'shelves',id:id,row:row},'עודכן') : await act('create',{table:'shelves',row:row},'המדף נוסף');
-  if(r) closeModal();
+  if(r){
+    closeModal();
+    /* B34a: מדף חדש (או ותיק שקיבל ברקוד עכשיו) — פותחים מיד את הדפסת המדבקה */
+    if(r.row && r.row.barcode && (!id || !(DB.shelves||[]).find(s=>s.id===id && s.barcode)))
+      b34PrintShelfLabel(r.row.barcode, r.row.code+(r.row.location?' · '+r.row.location:''));
+  }
+}
+/* B34a: הדפסת מדבקת ברקוד למדף */
+function b34PrintShelfLabel(code, label){
+  if(!code) return toast('למדף אין ברקוד — פתח עריכה ושמור כדי להנפיק', true);
+  var w = window.open('','_blank');
+  w.document.write('<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Arial;display:flex;flex-wrap:wrap;gap:6px;padding:8px}.lbl{border:1px dashed #999;padding:8px;text-align:center;font-size:12px;page-break-inside:avoid}</style></head><body>'+
+    '<div class="lbl">'+safeBarcode(String(code))+'<div><b>מדף '+esc(label||'')+'</b></div></div>'+
+    '<script>window.onload=function(){window.print();}<\/script></body></html>');
+  w.document.close();
 }
 
 /* ================= עובדים ================= */
