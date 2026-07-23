@@ -350,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.20-B36 · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.22-B36b · 23.07.2026</div>
   </div>
 </div>
 
@@ -629,7 +629,7 @@ async function idleLock(){
 }
 setInterval(function(){
   if(!TOKEN) return;
-  if(typeof floorTablet==='function' && floorTablet()) return; // טאבלט משותף לא ננעל — הזיהוי שם בקוד עובד לכל פעולה
+  if(typeof floorTablet==='function' && floorTablet()) return; // טאבלט משותף לא ננעל — הזיהוי שם במספר אישי לכל פעולה
   if(Date.now() - LAST_ACTIVITY > IDLE_LIMIT_MS) idleLock();
 }, 30000);
 // B7 (סעיף 4-א): בדיקה קלה כל 30 שניות אם יש נתונים חדשים — לא מושכת את כל ה-DB בכל בדיקה,
@@ -1016,8 +1016,8 @@ function confirmManagerPin(msg, btnLabel, cb){ // NC4: אישור בקוד מנ�
   if(!mgrs.length){ if(confirm(msg)) undoToast('מבצע — ניתן לבטל תוך 5 שניות', cb); return; }
   MGR_DEL_CB = cb;
   openModal('<h2>פעולה רגישה</h2>'+
-    '<p class="muted" style="margin-bottom:12px">'+msg+' הזן קוד מנהל לאישור.</p>'+
-    '<div class="frow"><label>קוד מנהל</label><input id="f_mgrpin" type="password" inputmode="numeric" placeholder="הקש קוד..." onkeydown="if(event.key===\'Enter\')mgrDelGo()"></div>'+
+    '<p class="muted" style="margin-bottom:12px">'+msg+' הזן את המספר האישי של המנהל לאישור.</p>'+
+    '<div class="frow"><label>מספר אישי — מנהל</label><input id="f_mgrpin" type="password" inputmode="numeric" placeholder="הקש מספר אישי..." onkeydown="if(event.key===\'Enter\')mgrDelGo()"></div>'+
     '<div class="row"><button class="btn danger" onclick="mgrDelGo()">'+btnLabel+'</button><button class="btn ghost" onclick="MGR_DEL_CB=null;closeModal()">ביטול</button></div>');
   setTimeout(function(){ var i=el('f_mgrpin'); if(i) i.focus(); }, 60);
 }
@@ -1085,11 +1085,14 @@ var VIEWS = [['dash','לוח בקרה'],['orders','הזמנות'],['notes','תר
   ['superadmin','מנהל ראשי']]; // B7: מוצג רק אם IS_SUPER_ADMIN — ראה allowedViews()
 /* קטגוריות התפריט — אותם מפתחות מסכים, רק קיבוץ ויזואלי */
 var NAV_GROUPS = [
-  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>','לוח בקרה',['dash']],
-  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>','מכירות',['orders','customers','deliveries','returns']],
-  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>','תפעול',['floor','laundry','items','scan','barcodes','shelves','warehouses','assets']],
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>','לוח בקרה',['dash','bi','approvals']],
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>','מכירות ומשלוחים',['orders','customers','deliveries','returns','fleet']],
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>','ייצור ומכבסה',['floor','laundry','assets']],
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v8a2 2 0 0 1-1 1.73l-7 4a2 2 0 0 1-2 0l-7-4A2 2 0 0 1 3 16V8a2 2 0 0 1 1-1.73l7-4a2 2 0 0 1 2 0l7 4A2 2 0 0 1 21 8z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>','מלאי ומחסן',['items','warehouses','shelves','scan','barcodes']],
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>','רכש וכספים',['purchasing','finance','reports']],
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>','כוח אדם',['staff','attendance','payroll']],
   ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>','ארגון',['tasks','meetings','calendar','notes']],
-  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>','הנהלה',['purchasing','finance','reports','bi','approvals','audit','staff','attendance','payroll','fleet','settings','superadmin']]
+  ['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>','מערכת',['settings','audit','superadmin']]
 ];
 var NAV_OPEN = ''; // הקטגוריה הפתוחה כרגע (נשמרת בין רינדורים)
 function allowedViews(){
@@ -4651,11 +4654,14 @@ var ATT_EMP = '';
 function rAttendance(){
   var isMgr = (ROLE==='מנהל');
   el('main').innerHTML = '<div class="section-title"><h2>נוכחות</h2>'+(isMgr?'<button class="btn ghost sm" onclick="attForm()">+ רישום ידני</button> <button class="btn ghost sm" onclick="doRepairTimeFields()" title="תיקון חד-פעמי לרישומים ישנים שהשתבשו">תיקון נתונים ישנים</button>':'')+'</div>'+
-    // B36: השעון מחתים את העובד המחובר. קוד עובד נשאר לעמדת שעון משותפת בלבד.
+    // B36a: עובד רגיל מחתים את עצמו בלבד — אין לו שדה מספר אישי.
+    // רק מנהל יכול להחתים עובד אחר, על ידי הזנת הקוד שלו.
     '<div class="card" style="text-align:center"><h3 style="margin-bottom:4px">שעון נוכחות</h3>'+
-    '<p class="muted" style="margin-bottom:10px;font-size:13px">מחתים את '+esc(USER||'')+'. לעמדת שעון משותפת — הזן קוד עובד.</p>'+
-    '<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="קוד עובד (לא חובה)" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
-    '<br><button class="btn" id="clockBtn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
+    '<p class="muted" style="margin-bottom:10px;font-size:13px">מחתים את '+esc(USER||'')+
+      (isMgr?'. להחתמת עובד אחר — הזן את המספר האישי שלו.':'')+'</p>'+
+    (isMgr?'<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="מספר אישי של עובד אחר" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
+      '<br>':'')+
+    '<button class="btn" id="clockBtn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
     '<div class="row" style="margin:14px 0 8px;gap:6px">'+
       '<button class="btn '+(ATT_TAB==='list'?'':'ghost ')+'sm" onclick="ATT_TAB=\'list\';rAttendance()">רשימה</button>'+
       '<button class="btn '+(ATT_TAB==='cal'?'':'ghost ')+'sm" onclick="ATT_TAB=\'cal\';rAttendance()">יומן</button>'+
@@ -4757,11 +4763,12 @@ async function doClock(){
   if(btn){ btn.disabled = true; btn.style.opacity = '.6'; btn.textContent = 'שומר...'; }
   el('clockMsg').innerHTML = '<span class="muted">שומר...</span>';
   try{
-    var r = await api('clock',{pin:el('clockPin').value});
+    var pinEl = el('clockPin');   // B36a: קיים רק אצל מנהל
+    var r = await api('clock', pinEl && pinEl.value.trim() ? {pin:pinEl.value.trim()} : {});
     if(!r.ok){ el('clockMsg').innerHTML='<span style="color:var(--danger)">'+esc(r.error)+'</span>'; return; }
     el('clockMsg').innerHTML = '<b style="color:var(--ok)">'+esc(r.name)+' — '+(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓ ('+r.hours+' שעות)')+'</b>';
     toast(r.mode==='in'?'כניסה נרשמה ✓':'יציאה נרשמה ✓');
-    el('clockPin').value='';
+    if(pinEl) pinEl.value='';
     var g = await api('getAll'); if(g.ok){ DB=g.db; }
     setTimeout(function(){ if(VIEW==='attendance') rAttendance(); }, 1600);
   }catch(e){ el('clockMsg').innerHTML='<span style="color:var(--danger)">שגיאת תקשורת — נסה שוב</span>';
@@ -6204,25 +6211,25 @@ async function saveMach(id){
 
 /* ================= NC1: רצפת ייצור NOBLE ================= */
 /* מסך עבודה לעובדי רצפה: קליטה, סריקת עגלה+מכונה (המכונה קובעת שלב), שקילה, משלוח.
-   מצב טאבלט משותף: זיהוי עובד בקוד אישי לפני כל פעולה — לשיוך נכון של מדדי מהירות. */
+   מצב טאבלט משותף: זיהוי עובד במספר אישי לפני כל פעולה — לשיוך נכון של מדדי מהירות. */
 var FLOOR_TAB = 'work', FLOOR_INFO = null, FLOOR_BC = '', FLOOR_INTAKE_CARTS = [];
 function floorTablet(){ return localStorage.getItem('mn_floor_tablet')==='1'; }
 function floorTabletToggle(){ // NC4 (משימה 8): כניסה ויציאה ממצב טאבלט משותף — בקוד מנהל בלבד
   var on = floorTablet();
   rFloor(); // מחזיר את הצ'קבוקס למצבו עד לאישור בקוד
-  confirmManagerPin(on?'יציאה ממצב טאבלט משותף.':'הפעלת מצב טאבלט משותף — כל פעולה תדרוש קוד עובד אישי.', on?'אשר יציאה':'אשר הפעלה', function(){
+  confirmManagerPin(on?'יציאה ממצב טאבלט משותף.':'הפעלת מצב טאבלט משותף — כל פעולה תדרוש מספר אישי.', on?'אשר יציאה':'אשר הפעלה', function(){
     localStorage.setItem('mn_floor_tablet', on?'0':'1');
     toast(on?'מצב טאבלט משותף כובה':'מצב טאבלט משותף הופעל');
     rFloor();
   });
 }
 function floorPin(){ var e=el('fl_pin'); return e? e.value.trim() : ''; }
-/* עטיפת פעולת רצפה: בדיקת הרשאה, קוד עובד במצב טאבלט, נעילת לחיצה כפולה */
+/* עטיפת פעולת רצפה: בדיקת הרשאה, מספר אישי במצב טאבלט, נעילת לחיצה כפולה */
 async function floorAct(action, payload, okMsg){
   if(!CAN_EDIT){ toast('למשתמש זה הרשאת צפייה בלבד', true); return null; }
   payload = payload||{};
   if(floorTablet()){
-    if(!floorPin()){ toast('מצב טאבלט: הזן קוד עובד אישי לפני כל פעולה', true); var pe=el('fl_pin'); if(pe) pe.focus(); return null; }
+    if(!floorPin()){ toast('מצב טאבלט: הזן מספר אישי לפני כל פעולה', true); var pe=el('fl_pin'); if(pe) pe.focus(); return null; }
     payload.worker_pin = floorPin();
   }
   var r = await apiBusy(action, payload);
@@ -6236,8 +6243,8 @@ function rFloor(){
   var tabBtn = function(key,lbl){ return '<button class="btn '+(FLOOR_TAB===key?'':'ghost')+' grow" style="font-size:16px;padding:12px" onclick="FLOOR_TAB=\''+key+'\';rFloor()">'+lbl+'</button>'; };
   el('main').innerHTML =
     '<div class="section-title"><h2>רצפת ייצור — מכבסה</h2>'+
-    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" '+(floorTablet()?'checked':'')+' onchange="floorTabletToggle()" style="width:auto"> טאבלט משותף (קוד עובד לכל פעולה)</label></div>'+
-    (floorTablet()?'<div class="card" style="padding:10px"><div class="frow" style="margin:0"><label>קוד עובד אישי (חובה לפני כל פעולה)</label><input id="fl_pin" type="password" inputmode="numeric" placeholder="הקוד האישי שלך" style="font-size:18px"></div></div>':'')+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" '+(floorTablet()?'checked':'')+' onchange="floorTabletToggle()" style="width:auto"> טאבלט משותף (מספר אישי לכל פעולה)</label></div>'+
+    (floorTablet()?'<div class="card" style="padding:10px"><div class="frow" style="margin:0"><label>מספר אישי (חובה לפני כל פעולה)</label><input id="fl_pin" type="password" inputmode="numeric" placeholder="המספר האישי שלך" style="font-size:18px"></div></div>':'')+
     '<div class="row" style="margin:10px 0;flex-wrap:wrap">'+tabBtn('board','לוח חי')+tabBtn('work','עבודה וסריקה')+tabBtn('intake','קליטה חדשה')+tabBtn('pack','אריזה ומידוף')+tabBtn('dispatch','העמסה והחזרות')+'</div>'+
     '<div id="floorBody"></div>';
   /* B29: טאב "העמסה והחזרות" — האחראי במפעל רואה מה להעלות לרכב עכשיו ומה אמור לחזור היום */
@@ -6493,7 +6500,7 @@ function floorPackTab(){
   var cases = (DB.cases||[]).filter(c=>c.active!=='לא');
   el('floorBody').innerHTML =
     '<div class="card">'+
-    '<b style="font-size:16px">+ חבילות חדשות</b>'+
+    '<b style="font-size:16px">רישום חבילות חדשות</b>'+
     '<p class="muted" style="font-size:12.5px;margin:4px 0 10px">ברקוד קבוע לכל מוצר+כמות — 100 חבילות זהות מקבלות את אותו ברקוד. יש מדבקה מוכנה על החבילה? סרוק אותה. אין? המערכת תנפיק ברקוד להדפסה.</p>'+
     '<div class="grid3">'+
     '<div class="frow"><label>מוצר</label><select id="pk_item" style="font-size:15px"><option value="">— בחר —</option>'+items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+(i.size?' · '+esc(i.size):'')+(i.color?' · '+esc(i.color):'')+'</option>').join('')+'</select></div>'+
@@ -7080,11 +7087,11 @@ function b34PrintShelfLabel(code, label){
 /* ================= עובדים ================= */
 function rStaff(){
   el('main').innerHTML = '<div class="section-title"><h2>עובדים</h2><button class="btn" onclick="empForm()">+ עובד</button></div>'+
-    '<p class="muted" style="margin-bottom:10px">ברגע שקיים עובד אחד, הכניסה למערכת דורשת קוד עובד. תפקיד קובע אילו מסכים רואים: מכבסה — רק לוח כביסה וסריקה; נהג — רק משלוחים. לחיצה על שם עובד פותחת כרטיס מלא: נוכחות, שכר, משימות ותרשומות.</p>'+
+    '<p class="muted" style="margin-bottom:10px">ברגע שקיים עובד אחד, הכניסה למערכת דורשת שם משתמש וסיסמה. תפקיד קובע אילו מסכים רואים: מכבסה — רק לוח כביסה וסריקה; נהג — רק משלוחים. לחיצה על שם עובד פותחת כרטיס מלא: נוכחות, שכר, משימות ותרשומות.</p>'+
     (DB.employees.length? DB.employees.map(e=>'<div class="card"><div class="row"><div class="grow" style="cursor:pointer" onclick="openEmp(\''+e.id+'\')"><b style="color:var(--navy2);text-decoration:underline">'+esc(e.name)+'</b> · '+esc(e.role)+(e.can_edit==='לא'?' · <span class="chip" style="background:var(--amber)">צפייה בלבד</span>':'')+'<div class="muted">'+esc(e.phone||'')+(e.username?' · משתמש: '+esc(e.username):'')+(e.views?' · מסכים: '+e.views.split(',').length:'')+'</div></div>'+
     contactBtns(e.phone, e.email)+
     '<span class="rowact">'+(ROLE==='מנהל'?'<button title="איפוס סיסמה (מנהל)" onclick="resetEmpPassword(\''+e.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></button>':'')+'<button title="עריכת עובד והרשאות" onclick=\'empForm('+JSON.stringify(e).replace(/'/g,'&#39;')+')\'><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button></span>'+'</div></div>').join(''):'<div class="card empty">אין עובדים — לכולם גישת מנהל</div>')+
-    '<p class="muted" style="margin-top:10px">כניסות ייעודיות: נהג/עובד מכבסה נכנסים באותו קישור עם הקוד האישי — ורואים רק את המסכים שלהם. קישור פורטל ללקוח קיים: כפתור ההעתקה בכרטיס הלקוח. קישור חנות ציבורית לאתר/דף נחיתה: הוסף ?shop=1 לכתובת — מבקר בוחר מוצרים, רואה מחיר, ממלא פרטים ונרשם אוטומטית כלקוח.</p>';
+    '<p class="muted" style="margin-top:10px">כניסות ייעודיות: נהג/עובד מכבסה נכנסים באותו קישור עם שם המשתמש והסיסמה שלהם — ורואים רק את המסכים שלהם. קישור פורטל ללקוח קיים: כפתור ההעתקה בכרטיס הלקוח. קישור חנות ציבורית לאתר/דף נחיתה: הוסף ?shop=1 לכתובת — מבקר בוחר מוצרים, רואה מחיר, ממלא פרטים ונרשם אוטומטית כלקוח.</p>';
 }
 /* B20: כרטיס עובד מרוכז — נוכחות, שכר, משימות ותרשומות במקום אחד (קריאה בלבד מנתונים קיימים) */
 var EMP_TAB = 'details';
@@ -7164,7 +7171,7 @@ function empForm(emp){
   emp = emp||{};
   openModal('<h2>'+(emp.id?'עריכת עובד':'עובד חדש')+'</h2><div class="frow"><label>שם</label><input id="f_ename" value="'+esc(emp.name||'')+'"></div>'+
     '<div class="grid2"><div class="frow"><label>תפקיד</label><select id="f_erole">'+['מנהל','משרד','מכבסה','עובד רצפה','נהג'].map(t=>'<option'+(emp.role===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>קוד נוכחות (4 ספרות) — אינו הסיסמה למערכת</label><input id="f_epin" inputmode="numeric" placeholder="4 ספרות" value="'+esc(emp.pin||'')+'"><div class="muted" style="font-size:11.5px">משמש להחתמת נוכחות, לזיהוי עובד ברצפת הייצור ולאישורי מנהל.</div></div>'+
+    '<div class="frow"><label>מספר אישי (4 ספרות) — אינו הסיסמה למערכת</label><input id="f_epin" inputmode="numeric" placeholder="4 ספרות" value="'+esc(emp.pin||'')+'"><div class="muted" style="font-size:11.5px">משמש להחתמת נוכחות, לזיהוי העובד ברצפת הייצור ולאישורי מנהל.</div></div>'+
     '<div class="frow"><label>שם משתמש (לכניסה)</label><input id="f_euser" value="'+esc(emp.username||'')+'" placeholder="באנגלית, ללא רווחים" style="direction:ltr;text-align:left"></div>'+
     '<div class="frow"><label>טלפון</label><input id="f_ephone" value="'+esc(emp.phone||'')+'"></div>'+
     '<div class="frow"><label>סוג שכר</label><select id="f_eptype" onchange="empPayTypeToggle()"><option value="שעתי"'+(emp.pay_type!=='גלובלי'?' selected':'')+'>שכר שעתי</option><option value="גלובלי"'+(emp.pay_type==='גלובלי'?' selected':'')+'>שכר גלובלי (סכום חודשי קבוע)</option></select></div>'+
