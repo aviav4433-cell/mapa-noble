@@ -319,7 +319,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.12-B27 · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.13-B28 · 23.07.2026</div>
   </div>
 </div>
 
@@ -1170,11 +1170,55 @@ function rDash(){
     '<div class="card"><h3 style="margin-bottom:10px">הזמנות לפי סטטוס</h3>'+ordersDonutSvg()+'</div>'+
     '</div>'+
     nobleDashCard(today)+
+    dashMoneyCards(today)+   /* B28 */
     attnListHtml(delDue, lateWash, lateTasks, today)+
     b2PendingOrdersWidget()+
     b3ApprovalsWidget()+
     '<div class="section-title"><h2>אספקות קרובות (7 ימים)</h2></div>'+
     (upcoming.length? upcoming.sort((a,b)=>a.start_date>b.start_date?1:-1).map(orderCard).join('') : '<div class="card empty">אין אספקות מתוכננות השבוע</div>');
+}
+/* B28: שני חלונות כספיים בלוח הבקרה — הוצאות 30 הימים האחרונים והוצאות צפויות.
+   קריאה בלבד מ-DB, שניהם לחיצים למסך כספים. מוצגים רק למי שמורשה לראות כספים. */
+function dashMoneyCards(today){
+  if(!allowedViews().some(v=>v[0]==='finance')) return '';
+  var from = new Date(Date.now()-29*864e5).toISOString().slice(0,10);
+  var last = (DB.expenses||[]).filter(x=>String(x.date||'')>=from && String(x.date||'')<=today);
+  var lastTot = last.reduce((s,x)=>s+Number(x.amount||0)+Number(x.vat||0),0);
+  var byCat = {};
+  last.forEach(function(x){ var k=x.category||'אחר'; byCat[k]=(byCat[k]||0)+Number(x.amount||0)+Number(x.vat||0); });
+  var cats = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]).slice(0,5);
+
+  var open = fexpOpen();
+  var openTot = open.reduce((s,x)=>s+fexpRemain(x),0);
+  function inDays(n){
+    var lim = new Date(Date.now()+n*864e5).toISOString().slice(0,10);
+    return open.filter(x=>x.due_date && x.due_date<=lim).reduce((s,x)=>s+fexpRemain(x),0);
+  }
+  var overdue = open.filter(x=>x.due_date && x.due_date<today).reduce((s,x)=>s+fexpRemain(x),0);
+  var noDate = open.filter(x=>!x.due_date).reduce((s,x)=>s+fexpRemain(x),0);
+  var line = function(l,v,color){
+    return '<div class="row" style="padding:6px 2px;border-bottom:1px solid #EEF1F5"><span class="grow">'+l+'</span>'+
+      '<b'+(color?' style="color:'+color+'"':'')+'>'+ils(v)+'</b></div>';
+  };
+  return '<div class="chartgrid" style="margin-top:14px">'+
+    '<div class="card" style="cursor:pointer" onclick="goFin(\'expenses\')" title="לחץ למסך כספים">'+
+      '<div class="row" style="align-items:center;margin-bottom:6px"><h3 class="grow">הוצאות — 30 הימים האחרונים</h3>'+
+      '<span class="tot" style="font-size:20px">'+ils(lastTot)+'</span></div>'+
+      (cats.length? cats.map(c=>line(esc(c),byCat[c],'')).join('')
+        : '<div class="empty">לא נרשמו הוצאות ב-30 הימים האחרונים</div>')+
+      '<div class="muted" style="font-size:12px;margin-top:6px">'+last.length+' רשומות · כולל מע"מ · לחץ למסך כספים</div></div>'+
+    '<div class="card" style="cursor:pointer" onclick="goFin(\'future\')" title="לחץ למסך הוצאות עתידיות">'+
+      '<div class="row" style="align-items:center;margin-bottom:6px"><h3 class="grow">הוצאות צפויות</h3>'+
+      '<span class="tot" style="font-size:20px'+(openTot>0?';color:var(--danger)':'')+'">'+ils(openTot)+'</span></div>'+
+      (open.length?
+        (overdue>0? line('באיחור',overdue,'var(--danger)'):'')+
+        line('עד 30 יום',inDays(30),'')+
+        line('עד 60 יום',inDays(60),'')+
+        line('עד 90 יום',inDays(90),'')+
+        (noDate>0? line('ללא תאריך יעד',noDate,'var(--amber)'):'')
+        : '<div class="empty">אין הוצאות עתידיות פתוחות</div>')+
+      '<div class="muted" style="font-size:12px;margin-top:6px">'+open.length+' רשומות פתוחות · לחץ לפירוט</div></div>'+
+    '</div>';
 }
 /* NC2: תמונת מצב מכבסה בלוח הבקרה — מחושב מקומית מ-DB, ללא קריאת שרת */
 function nobleDashCard(today){
@@ -1927,6 +1971,7 @@ function sigFallbackPhoto(did){
 function rFinance(){
   var tabs = [['invoices','חשבוניות'],['laundry','חיובי מכבסה'],['receipts','קבלות'],['expenses','הוצאות'],['future','הוצאות עתידיות']];
   var html = '<div class="section-title"><h2>כספים</h2>'+(FIN_TAB==='expenses'?'<button class="btn" onclick="expForm()">+ הוצאה</button>':'')+(FIN_TAB==='future'?'<button class="btn" onclick="futureExpForm()">+ הוצאה עתידית</button>':'')+'</div>'+
+    finSummaryHtml()+   /* B28: ראש המסך הוא דשבורד — כרטיסי סיכום לחיצים */
     '<div class="tabs">'+tabs.map(t=>'<button class="'+(FIN_TAB===t[0]?'on':'')+'" onclick="FIN_TAB=\''+t[0]+'\';render()">'+t[1]+'</button>').join('')+'</div>';
   if(FIN_TAB==='invoices'){
     // B1: טבלת חשבוניות מורחבת — סוג, הקצאה, קישור Drive
@@ -1966,13 +2011,76 @@ function rFinance(){
   }
   el('main').innerHTML = html;
 }
-// B20: הוצאות עתידיות — שכר שאושר וטרם שולם + הוצאות מתוכננות אחרות. ממוין לפי דחיפות ואז תאריך יעד.
+/* ================= B28: דשבורד כספים =================
+   כל המספרים מחושבים בקריאה בלבד מנתונים שכבר קיימים ב-DB. אין שכפול נתונים. */
+function finMonthKey(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
+// הכנסות החודש — לפי חשבוניות שהופקו החודש, לפני מע"מ (זהה לגרף ההכנסות בלוח הבקרה)
+function finIncomeMonth(){
+  var mk = finMonthKey();
+  return (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+    .reduce((s,v)=>s+Number(v.subtotal||0),0);
+}
+// הוצאות שנרשמו בפועל בחודש הנוכחי — כולל מע"מ
+function finExpensesMonth(){
+  var mk = finMonthKey();
+  return (DB.expenses||[]).filter(x=>String(x.date||'').slice(0,7)===mk)
+    .reduce((s,x)=>s+Number(x.amount||0)+Number(x.vat||0),0);
+}
+function finCustomerDebt(){ return (DB.customers||[]).reduce(function(s,c){ var b=custBalance(c.id); return s+(b>0?b:0); },0); }
+function finFutureTotal(){ return fexpOpen().reduce((s,x)=>s+fexpRemain(x),0); }
+function finSupplierTotal(){ return fexpOpen().filter(x=>x.supplier_id).reduce((s,x)=>s+fexpRemain(x),0); }
+function finPayrollTotal(){ return fexpOpen().filter(x=>x.source==='payroll').reduce((s,x)=>s+fexpRemain(x),0); }
+// מעבר לטאב בתוך מסך כספים
+function goFin(tab){ FIN_TAB = tab; VIEW = 'finance'; render(); window.scrollTo(0,0); }
+function finCard(val,label,onclick,alert){
+  return '<div class="kpi click'+(alert?' alert':'')+'" onclick="'+onclick+'" title="לחץ לפירוט">'+
+    '<div class="v">'+val+'</div><div class="l">'+label+'</div></div>';
+}
+function finSummaryHtml(){
+  var futTot = finFutureTotal(), debt = finCustomerDebt();
+  return '<div class="gridkpi" style="margin-bottom:14px">'+
+    finCard(ils(finIncomeMonth()),'הכנסות החודש',"goFin('invoices')",false)+
+    finCard(ils(debt),'חובות לקוחות',"goFin('receipts')",debt>0)+
+    finCard(ils(finExpensesMonth()),'הוצאות החודש',"goFin('expenses')",false)+
+    finCard(ils(futTot),'הוצאות צפויות',"goFin('future')",futTot>0)+
+    finCard(ils(finSupplierTotal()),'יתרות לספקים',"goFin('future')",false)+
+    finCard(ils(finPayrollTotal()),'יתרות שכר',"go('payroll')",false)+
+    '</div>';
+}
+
+/* B20: הוצאות עתידיות — שכר שאושר וטרם שולם + הוצאות מתוכננות אחרות.
+   B28: תאריך יעד חובה, פילטרים לפי טווח זמן, פירוט הסכום הכולל, ומחיקה רכה עם סיבה. */
+var FEXP_RANGE = 'all', FEXP_UNTIL = '', FEXP_SHOWDEL = false;
+
+// כל ההוצאות העתידיות שאינן מחוקות (מחיקה רכה מסתירה מכל תצוגה וחישוב)
+function fexpAll(){ return (DB.futureExpenses||[]).filter(x=>String(x.deleted||'')!=='כן'); }
+function fexpDeleted(){ return (DB.futureExpenses||[]).filter(x=>String(x.deleted||'')==='כן'); }
+function fexpOpen(){ return fexpAll().filter(x=>x.status!=='שולם'); }
+// האם רשומה נכנסת לטווח הזמן שנבחר. רשומה בלי תאריך יעד לא נכנסת לאף טווח.
+function fexpInRange(x){
+  if(FEXP_RANGE==='all') return true;
+  if(!x.due_date) return false;
+  var lim;
+  if(FEXP_RANGE==='until'){ if(!FEXP_UNTIL) return true; lim = FEXP_UNTIL; }
+  else lim = new Date(Date.now()+Number(FEXP_RANGE)*864e5).toISOString().slice(0,10);
+  return x.due_date <= lim;
+}
+function fexpRangeLabel(){
+  if(FEXP_RANGE==='all') return 'הכל';
+  if(FEXP_RANGE==='until') return FEXP_UNTIL? 'עד '+FEXP_UNTIL : 'עד תאריך';
+  return 'עד '+FEXP_RANGE+' יום';
+}
+function setFexpRange(r){ FEXP_RANGE=r; if(r!=='until') FEXP_UNTIL=''; render(); }
+function setFexpUntil(v){ FEXP_UNTIL=v; FEXP_RANGE='until'; render(); }
+
 function futureExpensesHtml(){
   var URG_ORDER = {'קריטי':0,'דחוף':1,'רגיל':2};
   var URG_COLOR = {'קריטי':'var(--danger)','דחוף':'var(--amber)','רגיל':'var(--muted)'};
-  var open = (DB.futureExpenses||[]).filter(x=>x.status!=='שולם');
-  var paid = (DB.futureExpenses||[]).filter(x=>x.status==='שולם');
-  open.sort(function(a,b){
+  var openAll = fexpOpen();
+  var noDate  = openAll.filter(x=>!x.due_date);
+  var withDate= openAll.filter(x=>x.due_date && fexpInRange(x));
+  var paid = fexpAll().filter(x=>x.status==='שולם');
+  withDate.sort(function(a,b){
     var u = (URG_ORDER[a.urgency]||9)-(URG_ORDER[b.urgency]||9);
     if(u) return u;
     return (a.due_date||'9999').localeCompare(b.due_date||'9999');
@@ -1981,40 +2089,139 @@ function futureExpensesHtml(){
   function row(x){
     var overdue = x.due_date && x.due_date < today;
     var emp = x.employee_id? DB.employees.find(e=>e.id===x.employee_id):null;
-    var paid = fexpPaid(x.id), rem = fexpRemain(x);
+    var pd = fexpPaid(x.id), rem = fexpRemain(x);
     return '<tr>'+
       '<td><span style="color:'+(URG_COLOR[x.urgency]||'inherit')+';font-weight:600">'+esc(x.urgency||'רגיל')+'</span></td>'+
       '<td>'+esc(x.category)+(emp?' · '+esc(emp.name):'')+(x.supplier_id?' · '+esc(supp(x.supplier_id)):'')+'</td>'+
       '<td>'+esc(x.description||(x.source==='payroll'?'יתרת שכר לתשלום':''))+'</td>'+
-      '<td'+(overdue?' style="color:var(--danger);font-weight:700"':'')+'>'+(x.due_date?esc(x.due_date):'—')+(overdue?' ⚠':'')+'</td>'+
+      '<td'+(overdue?' style="color:var(--danger);font-weight:700"':'')+'>'+
+        (x.due_date?esc(x.due_date):'<button class="btn ghost sm" onclick="fexpDueForm(\''+x.id+'\')">השלם תאריך</button>')+
+        (overdue?' ⚠':'')+'</td>'+
       '<td class="tot">'+ils(x.amount)+'</td>'+
-      '<td>'+(paid>0?ils(paid):'—')+'</td>'+
+      '<td>'+(pd>0?ils(pd):'—')+'</td>'+
       '<td'+(rem>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(rem)+'</td>'+
-      '<td>'+(x.source==='payroll'?
+      '<td><div class="row" style="gap:4px;flex-wrap:nowrap">'+(x.source==='payroll'?
         '<button class="btn ghost sm" onclick="go(\'payroll\')">למסך שכר</button>':
-        '<button class="btn sm" onclick="payFexpForm(\''+x.id+'\')">תשלום</button> '+
-        '<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>')+'</td>'+
+        '<button class="btn sm" onclick="payFexpForm(\''+x.id+'\')">תשלום</button>'+
+        '<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>'+
+        (ROLE==='מנהל' && fexpPaid(x.id)<=0 ?'<button class="btn danger sm" onclick="fexpDeleteForm(\''+x.id+'\')">מחק</button>':''))+
+      '</div></td>'+
     '</tr>';
   }
-  var totalOpen = open.reduce((s,x)=>s+fexpRemain(x),0);
-  return '<div class="card"><div class="row"><b>סה"כ צפוי לתשלום:</b> <span class="tot">'+ils(totalOpen)+'</span></div></div>'+
-    (open.length? '<div class="card"><table><tr><th>דחיפות</th><th>קטגוריה</th><th>תיאור</th><th>תאריך יעד</th><th>סכום</th><th>שולם</th><th>יתרה</th><th></th></tr>'+
-      open.map(row).join('')+'</table></div>' : '<div class="card empty">אין הוצאות עתידיות פתוחות</div>')+
+  var HEAD = '<tr><th>דחיפות</th><th>קטגוריה</th><th>תיאור</th><th>תאריך יעד</th><th>סכום</th><th>שולם</th><th>יתרה</th><th></th></tr>';
+  var totalRange = withDate.reduce((s,x)=>s+fexpRemain(x),0);
+  var totalNoDate = noDate.reduce((s,x)=>s+fexpRemain(x),0);
+
+  var ranges = [['all','הכל'],['30','עד 30 יום'],['60','עד 60 יום'],['90','עד 90 יום']];
+  var filterBar = '<div class="card"><div class="row" style="flex-wrap:wrap;gap:6px;align-items:center">'+
+    '<b style="margin-left:4px">טווח זמן:</b>'+
+    ranges.map(r=>'<button class="btn '+(FEXP_RANGE===r[0]?'':'ghost ')+'sm" onclick="setFexpRange(\''+r[0]+'\')">'+r[1]+'</button>').join('')+
+    '<span style="margin-right:6px">עד תאריך:</span>'+
+    '<input type="date" value="'+esc(FEXP_UNTIL)+'" onchange="setFexpUntil(this.value)" style="max-width:165px">'+
+    '</div></div>';
+
+  var totalCard = '<div class="card" style="cursor:pointer" onclick="fexpTotalBreakdown()" title="לחץ לפירוט">'+
+    '<div class="row" style="align-items:center;flex-wrap:wrap">'+
+    '<b class="grow">סה"כ צפוי לתשלום · '+esc(fexpRangeLabel())+'</b>'+
+    '<span class="tot" style="font-size:20px;text-decoration:underline">'+ils(totalRange)+'</span></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:4px">'+withDate.length+' רשומות · לחץ לפירוט מלא</div></div>';
+
+  var noDateCard = noDate.length?
+    '<h3 style="margin:14px 0 8px;color:var(--amber)">ללא תאריך יעד — '+noDate.length+' רשומות · '+ils(totalNoDate)+'</h3>'+
+    '<div class="card"><div class="muted" style="font-size:12px;margin-bottom:6px">רשומות שנוצרו לפני שהתאריך הפך לשדה חובה. הן אינן נכנסות לאף טווח זמן עד שיושלם התאריך.</div>'+
+    '<table>'+HEAD+noDate.map(row).join('')+'</table></div>' : '';
+
+  var delCard = '';
+  if(FEXP_SHOWDEL){
+    var dl = fexpDeleted().slice().reverse();
+    delCard = '<h3 style="margin:14px 0 8px">הוצאות שנמחקו</h3>'+
+      (dl.length? '<div class="card"><table><tr><th>קטגוריה</th><th>תיאור</th><th>סכום</th><th>סיבת המחיקה</th><th>נמחק על ידי</th><th>מתי</th></tr>'+
+        dl.map(x=>'<tr style="opacity:.6"><td>'+esc(x.category)+'</td><td>'+esc(x.description||'')+'</td><td>'+ils(x.amount)+'</td>'+
+          '<td>'+esc(x.delete_reason||'')+'</td><td>'+esc(x.deleted_by||'')+'</td><td class="muted">'+esc(fmtTs(x.deleted_at))+'</td></tr>').join('')+
+        '</table></div>' : '<div class="card empty">אין הוצאות שנמחקו</div>');
+  }
+
+  return filterBar + totalCard +
+    (withDate.length? '<div class="card"><table>'+HEAD+withDate.map(row).join('')+'</table></div>'
+      : '<div class="card empty">אין הוצאות עתידיות פתוחות בטווח שנבחר</div>')+
+    noDateCard +
     (paid.length? '<h3 style="margin:14px 0 8px">שולמו</h3><div class="card"><table><tr><th>קטגוריה</th><th>תיאור</th><th>סכום</th><th></th></tr>'+
       paid.slice().reverse().slice(0,20).map(x=>'<tr><td>'+esc(x.category)+'</td><td>'+esc(x.description||'')+'</td><td>'+ils(x.amount)+'</td>'+
-        '<td>'+(x.source==='payroll'?'':'<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>')+'</td></tr>').join('')+'</table></div>':'');
+        '<td>'+(x.source==='payroll'?'':'<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>')+'</td></tr>').join('')+'</table></div>':'')+
+    '<div class="row" style="margin-top:12px">'+
+      '<button class="btn ghost sm" onclick="FEXP_SHOWDEL='+(FEXP_SHOWDEL?'false':'true')+';render()">'+(FEXP_SHOWDEL?'הסתר מחוקות':'הצג מחוקות')+'</button></div>'+
+    delCard;
 }
+
+// B28: פירוט מלא של הסכום "סה"כ צפוי לתשלום" — שורה לכל רשומה שמרכיבה אותו
+function fexpTotalBreakdown(){
+  var list = fexpOpen().filter(x=>x.due_date && fexpInRange(x))
+    .sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
+  var tot = list.reduce((s,x)=>s+fexpRemain(x),0);
+  var today = new Date().toISOString().slice(0,10);
+  openModal('<h2>פירוט הסכום הצפוי</h2>'+
+    '<div class="muted" style="margin-bottom:8px">טווח: '+esc(fexpRangeLabel())+' · '+list.length+' רשומות</div>'+
+    (list.length? '<div class="card"><table><tr><th>תאריך יעד</th><th>קטגוריה</th><th>תיאור</th><th>יתרה</th><th></th></tr>'+
+      list.map(function(x){
+        var overdue = x.due_date < today;
+        return '<tr><td'+(overdue?' style="color:var(--danger);font-weight:700"':'')+'>'+esc(x.due_date)+(overdue?' ⚠':'')+'</td>'+
+          '<td>'+esc(x.category)+(x.supplier_id?'<div class="muted" style="font-size:11.5px">'+esc(supp(x.supplier_id))+'</div>':'')+'</td>'+
+          '<td>'+esc(x.description||'')+'</td>'+
+          '<td class="tot">'+ils(fexpRemain(x))+'</td>'+
+          '<td>'+(x.source==='payroll'?'<button class="btn ghost sm" onclick="closeModal();go(\'payroll\')">שכר</button>'
+            :'<button class="btn ghost sm" onclick="fexpBreakdown(\''+x.id+'\')">פירוט</button>')+'</td></tr>';
+      }).join('')+
+      '<tr><td colspan="3"><b>סה"כ</b></td><td class="tot"><b>'+ils(tot)+'</b></td><td></td></tr>'+
+      '</table></div>' : '<div class="card empty">אין רשומות בטווח שנבחר</div>')+
+    '<div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+
+// B28: השלמת תאריך יעד לרשומה ישנה
+function fexpDueForm(id){
+  var fe = fexpAll().find(x=>x.id===id); if(!fe) return;
+  openModal('<h2>השלמת תאריך תשלום משוער</h2>'+
+    '<div class="muted" style="margin-bottom:8px">'+esc(fe.category||'')+' · '+esc(fe.description||'')+' · '+ils(fe.amount)+'</div>'+
+    '<div class="frow"><label>תאריך תשלום משוער</label><input id="f_fedue2" type="date"></div>'+
+    '<button class="btn" onclick="saveFexpDue(\''+id+'\')">שמור</button>');
+}
+async function saveFexpDue(id){
+  var d = el('f_fedue2').value;
+  if(!d) return toast('חובה לבחור תאריך', true);
+  var r = await act('setFutureExpenseDue',{id:id, due_date:d},'התאריך נשמר');
+  if(r) closeModal();
+}
+
+// B28: מחיקה רכה עם סיבה חובה — אותו דפוס כמו מחיקת היחידות ב-B27
+function fexpDeleteForm(id){
+  var fe = fexpAll().find(x=>x.id===id); if(!fe) return;
+  if(fexpPaid(id)>0) return toast('כבר בוצע תשלום כנגד ההוצאה — אי אפשר למחוק', true);
+  openModal('<h2>מחיקת הוצאה עתידית</h2>'+
+    '<div class="card"><table><tr><td>קטגוריה</td><td><b>'+esc(fe.category||'')+'</b></td>'+
+      '<td>סכום</td><td class="tot">'+ils(fe.amount)+'</td></tr>'+
+      '<tr><td>תיאור</td><td colspan="3">'+esc(fe.description||'')+'</td></tr></table></div>'+
+    '<div class="muted" style="font-size:12px;margin:8px 0">ההוצאה תוסתר מכל התצוגות והחישובים, ותישאר שמורה בהיסטוריה עם הסיבה. אפשר לראות אותה בכפתור "הצג מחוקות".</div>'+
+    '<div class="frow"><label>סיבת המחיקה (חובה)</label><input id="f_fedelr" placeholder="למשל: נרשם פעמיים בטעות"></div>'+
+    '<button class="btn danger" onclick="saveFexpDelete(\''+id+'\')">מחק</button>');
+}
+async function saveFexpDelete(id){
+  var reason = el('f_fedelr').value.trim();
+  if(!reason) return toast('סיבת המחיקה היא שדה חובה', true);
+  var r = await act('deleteFutureExpense',{id:id, reason:reason},'ההוצאה נמחקה');
+  if(r) closeModal();
+}
+
 function futureExpForm(){
   openModal('<h2>הוצאה עתידית</h2>'+
     '<div class="frow"><label>קטגוריה</label><input id="f_fecat" placeholder="למשל: ביטוח, שכירות, ציוד"></div>'+
     '<div class="frow"><label>תיאור</label><input id="f_fedesc"></div>'+
     '<div class="grid2"><div class="frow"><label>סכום (₪)</label><input id="f_feamt" type="number" min="0"></div>'+
-    '<div class="frow"><label>תאריך יעד</label><input id="f_fedate" type="date"></div></div>'+
+    '<div class="frow"><label>תאריך תשלום משוער (חובה)</label><input id="f_fedate" type="date"></div></div>'+
     '<div class="frow"><label>דחיפות</label><select id="f_feurg">'+['רגיל','דחוף','קריטי'].map(u=>'<option>'+u+'</option>').join('')+'</select></div>'+
     '<button class="btn" onclick="saveFutureExp()">שמור</button>');
 }
 async function saveFutureExp(){
   if(!el('f_fecat').value||!el('f_feamt').value) return toast('קטגוריה וסכום חובה', true);
+  if(!el('f_fedate').value) return toast('תאריך תשלום משוער הוא שדה חובה', true);
   var r = await act('addFutureExpense',{category:el('f_fecat').value,description:el('f_fedesc').value,amount:Number(el('f_feamt').value),due_date:el('f_fedate').value,urgency:el('f_feurg').value},'ההוצאה העתידית נשמרה');
   if(r) closeModal();
 }
@@ -2029,7 +2236,7 @@ async function doMarkFutureExpensePaid(id){
 
 // פירוט הוצאה עתידית — מה מרכיב את הסכום, מה שולם, ומה נשאר
 function fexpBreakdown(id){
-  var fe = (DB.futureExpenses||[]).find(x=>x.id===id); if(!fe) return;
+  var fe = fexpAll().find(x=>x.id===id); if(!fe) return;
   var paid = fexpPaid(id), rem = fexpRemain(fe);
   var pays = (DB.expensePayments||[]).filter(x=>x.fexp_id===id).slice().reverse();
   var net = Math.round((Number(fe.amount||0)-Number(fe.vat_amount||0))*100)/100;
@@ -2069,7 +2276,7 @@ function fexpBreakdown(id){
 
 // טופס תשלום כנגד הוצאה עתידית — מלא או חלקי
 function payFexpForm(id){
-  var fe = (DB.futureExpenses||[]).find(x=>x.id===id); if(!fe) return toast('ההוצאה לא נמצאה', true);
+  var fe = fexpAll().find(x=>x.id===id); if(!fe) return toast('ההוצאה לא נמצאה', true);
   var rem = fexpRemain(fe);
   if(rem<=0.01) return toast('אין יתרה לתשלום', true);
   openModal('<h2>תשלום — '+esc(fe.category||'')+'</h2>'+
@@ -2874,11 +3081,12 @@ function doReceivePur(pid){
     '<div class="frow"><label>מצב תשלום לספק</label><select id="f_rpaymode">'+
       '<option value="לתשלום בהמשך">לתשלום בהמשך — ייכנס להוצאות עתידיות</option>'+
       '<option value="שולם">שולם — פתח עכשיו את חלון התשלום</option></select></div>'+
-    '<div class="frow"><label>תאריך יעד לתשלום (לא חובה)</label><input id="f_rdue" type="date"></div>'+
+    '<div class="frow"><label>תאריך תשלום משוער לספק (חובה)</label><input id="f_rdue" type="date"></div>'+
     '<button class="btn" onclick="doReceivePur2(\''+pid+'\')">קבל למלאי</button>');
 }
 async function doReceivePur2(pid){
   var mode = el('f_rpaymode')?el('f_rpaymode').value:'לתשלום בהמשך';
+  if(!el('f_rdue')||!el('f_rdue').value) return toast('תאריך תשלום משוער לספק הוא שדה חובה', true);  // B28
   var r = await act('receivePurchase',{purchase_id:pid,
     warehouse_id:(el('f_rwh')?el('f_rwh').value:''),
     payment_mode:mode, due_date:(el('f_rdue')?el('f_rdue').value:'')},'הרכש נקלט למלאי');
@@ -3538,7 +3746,7 @@ function printBarcodes(){
 function liveUnits(iid){ return (DB.units||[]).filter(u=>u.item_id===iid && u.deleted!=='כן'); }
 function fexpPaid(id){ return Math.round(((DB.expensePayments||[]).filter(x=>x.fexp_id===id).reduce((s,x)=>s+Number(x.amount||0),0))*100)/100; }
 function fexpRemain(fe){ return Math.round((Number(fe.amount||0)-fexpPaid(fe.id))*100)/100; }
-function supOpenFexp(sid){ return (DB.futureExpenses||[]).filter(x=>String(x.supplier_id||'')===String(sid) && x.status!=='שולם'); }
+function supOpenFexp(sid){ return fexpAll().filter(x=>String(x.supplier_id||'')===String(sid) && x.status!=='שולם'); }
 function supBalance(sid){ return Math.round(supOpenFexp(sid).reduce((s,x)=>s+fexpRemain(x),0)*100)/100; }
 function payDocsOf(kind,pid){ return (DB.paymentDocs||[]).filter(d=>d.pay_kind===kind && String(d.pay_id)===String(pid)); }
 var UNITS_SHOW_DEL = false;
