@@ -350,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.24-B38 · 24.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.25-B38b · 24.07.2026</div>
   </div>
 </div>
 
@@ -750,7 +750,34 @@ function fmtTs(ts){
   return s; // רק תאריך / פורמט אחר — כפי שהוא
 }
 // חותמת זמן מלאה מקומית לשמירה (כולל שעה)
-function nowTs(){ var d=new Date(); return d.toISOString().slice(0,10)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+/* B38b: "היום" לפי השעון המקומי, לא לפי גריניץ'.
+   toISOString מחזיר תאריך UTC. בישראל השעון מקדים ב-2 או 3 שעות,
+   ולכן בין חצות לשלוש לפנות בוקר הממשק חישב את התאריך של אתמול —
+   בעוד השרת (Utilities.formatDate לפי אזור הזמן של הסקריפט) כתב את של היום.
+   התוצאה: משלוחי היום נעלמו מהמסך, ואפילו בלוקי האזהרה לא הופיעו,
+   כי גם הם השוו מול אותו תאריך שגוי. */
+function ymdLocal(d){
+  d = d || new Date();
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+}
+function ymLocal(d){ return ymdLocal(d).slice(0,7); }
+/* B38b: נרמול ערך תאריך לפני השוואה.
+   שדה תאריך בגיליון עלול לחזור כמחרוזת 'yyyy-mm-dd', כאובייקט תאריך,
+   כמחרוזת ISO מלאה עם שעה, או בפורמט dd/mm/yyyy. השוואת מחרוזות ישירה
+   בין פורמטים שונים נכשלת בשקט — והמשלוח פשוט לא מופיע. */
+function dYmd(v){
+  if(v===null || v===undefined || v==='') return '';
+  if(v instanceof Date) return isNaN(v.getTime())? '' : ymdLocal(v);
+  var t = String(v).trim();
+  if(/[TZ]/.test(t)){ var dt=new Date(t); if(!isNaN(dt.getTime())) return ymdLocal(dt); }
+  var m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  m = t.match(/^(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);
+  if(m) return m[3]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[1]).slice(-2);
+  var d2 = new Date(t);
+  return isNaN(d2.getTime())? t : ymdLocal(d2);
+}
+function nowTs(){ var d=new Date(); return ymdLocal(d)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function cust(id){ var c=DB.customers.find(x=>x.id===id); return c?c.name:(id||''); }
 function item(id){ var i=DB.items.find(x=>x.id===id); return i?i.name:id; }
 function supp(id){ var s=DB.suppliers.find(x=>x.id===id); return s?s.name:(id||''); }
@@ -868,7 +895,7 @@ function docHeader(title, num, date){
     (logo?'<img src="'+esc(logo)+'" style="max-height:60px;max-width:180px">':'')+
     '<div class="bname">'+esc(setting('business_name'))+'</div>'+
     '<div class="bsub">'+esc(setting('business_address'))+(setting('business_phone')?' · טל׳ '+esc(setting('business_phone')):'')+(setting('business_vat')?' · ע.מ/ח.פ '+esc(setting('business_vat')):'')+'</div>'+
-    '</div><div style="text-align:left"><div class="dtitle">'+esc(title)+(num?' מס׳ '+num:'')+'</div><div class="bsub">תאריך: '+esc(date||new Date().toISOString().slice(0,10))+'</div></div></div>';
+    '</div><div style="text-align:left"><div class="dtitle">'+esc(title)+(num?' מס׳ '+num:'')+'</div><div class="bsub">תאריך: '+esc(date||ymdLocal())+'</div></div></div>';
 }
 function printDoc(title, num, bodyHtml, opts){
   opts = opts||{};
@@ -1200,8 +1227,8 @@ function go(v){ VIEW=v; closeNavPanel(); try{ sessionStorage.setItem('mn_view', 
 
 /* ================= לוח בקרה ================= */
 function rDash(){
-  var today = new Date().toISOString().slice(0,10);
-  var week = new Date(Date.now()+6*864e5).toISOString().slice(0,10);
+  var today = ymdLocal();
+  var week = ymdLocal(new Date(Date.now()+6*864e5));
   var openOrd = DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status));
   var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date===today);
   var delDue = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today).sort((a,b)=>a.date>b.date?1:-1);
@@ -1242,7 +1269,7 @@ function rDash(){
    קריאה בלבד מ-DB, שניהם לחיצים למסך כספים. מוצגים רק למי שמורשה לראות כספים. */
 function dashMoneyCards(today){
   if(!allowedViews().some(v=>v[0]==='finance')) return '';
-  var from = new Date(Date.now()-29*864e5).toISOString().slice(0,10);
+  var from = ymdLocal(new Date(Date.now()-29*864e5));
   var last = (DB.expenses||[]).filter(x=>String(x.date||'')>=from && String(x.date||'')<=today);
   var lastTot = last.reduce((s,x)=>s+Number(x.amount||0)+Number(x.vat||0),0);
   var byCat = {};
@@ -1252,7 +1279,7 @@ function dashMoneyCards(today){
   var open = fexpOpen();
   var openTot = open.reduce((s,x)=>s+fexpRemain(x),0);
   function inDays(n){
-    var lim = new Date(Date.now()+n*864e5).toISOString().slice(0,10);
+    var lim = ymdLocal(new Date(Date.now()+n*864e5));
     return open.filter(x=>x.due_date && x.due_date<=lim).reduce((s,x)=>s+fexpRemain(x),0);
   }
   var overdue = open.filter(x=>x.due_date && x.due_date<today).reduce((s,x)=>s+fexpRemain(x),0);
@@ -1556,7 +1583,7 @@ function collectPayForm(cid, docKind, docId){
   openModal('<h2>גביית תשלום — '+esc(c.name||'')+'</h2>'+ alloc + docSel +
     '<div class="grid2">'+
       '<div class="frow"><label>סכום לגביה (₪)</label><input id="cp_amt" type="number" min="0" step="0.01" max="'+max+'" value="'+max+'"></div>'+
-      '<div class="frow"><label>תאריך</label><input id="cp_date" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+      '<div class="frow"><label>תאריך</label><input id="cp_date" type="date" value="'+ymdLocal()+'"></div>'+
       '<div class="frow"><label>אמצעי גביה</label><select id="cp_method" onchange="cpMethodChg()"><option>אשראי</option><option>העברה</option><option>מזומן</option></select></div>'+
     '</div>'+
     '<div class="frow"><label id="cp_reflbl">אסמכתא / הערה</label><input id="cp_ref" placeholder="מספר אסמכתא, בנק, פרטי התשלום"></div>'+
@@ -1961,13 +1988,13 @@ async function markPayLater(oid){
 /* ================= כביסה ================= */
 function rLaundry(){
   var cols = STAGES.map(function(st){
-    var tasks = DB.laundryTasks.filter(t=>t.stage===st && (st!=='מוכן' || t.done_date>=new Date(Date.now()-3*864e5).toISOString().slice(0,10)));
+    var tasks = DB.laundryTasks.filter(t=>t.stage===st && (st!=='מוכן' || t.done_date>=ymdLocal(new Date(Date.now()-3*864e5))));
     return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tasks.length+'</span></h3>'+
       tasks.map(function(t){
         var freeCarts = DB.carts.filter(c=>c.status==='פנויה');
         return '<div class="ktask"><div class="t">'+esc(item(t.item_id))+' × '+t.qty+'</div>'+
         '<div class="muted">'+esc(cust((DB.orders.find(o=>o.id===t.order_id)||{}).customer_id))+(t.cart_id?' · עגלה '+esc(t.cart_id):'')+
-        (t.target_date?'<br>יעד שחרור: <b style="color:'+(t.target_date<new Date().toISOString().slice(0,10)?'var(--danger)':'var(--ink)')+'">'+esc(t.target_date)+'</b> (ימי עסקים, בלי שבת/חג)':'')+(st==='מוכן'&&t.package_barcode?'<br>אריזה: <b>'+esc(t.package_barcode)+'</b>':'')+'</div>'+
+        (t.target_date?'<br>יעד שחרור: <b style="color:'+(t.target_date<ymdLocal()?'var(--danger)':'var(--ink)')+'">'+esc(t.target_date)+'</b> (ימי עסקים, בלי שבת/חג)':'')+(st==='מוכן'&&t.package_barcode?'<br>אריזה: <b>'+esc(t.package_barcode)+'</b>':'')+'</div>'+
         (st!=='מוכן'?'<div class="row" style="margin-top:8px">'+
           '<button class="btn sm" onclick="doAdvance(\''+t.id+'\')">קדם ←</button>'+
           (!t.cart_id&&freeCarts.length?'<select id="cart_'+t.id+'" style="width:auto;font-size:12px;padding:5px">'+freeCarts.map(c=>'<option>'+c.id+'</option>').join('')+'</select><button class="btn ghost sm" onclick="doAssignCart(\''+t.id+'\')">שייך עגלה</button>':'')+
@@ -1980,7 +2007,7 @@ async function doAdvance(tid){ await act('advanceLaundry',{task_id:tid},'קוד�
 async function doAssignCart(tid){ await act('assignCart',{task_id:tid,cart_id:el('cart_'+tid).value},'העגלה שויכה'); }
 
 /* ================= משלוחים ================= */
-function todayYMD(){ return new Date().toISOString().slice(0,10); }
+function todayYMD(){ return ymdLocal(); }
 /* B29: כל הזמנת השכרה מייצרת בכוונה שתי רשומות — אספקה (בתאריך ההתחלה) ואיסוף (בתאריך הסיום).
    זו אינה כפילות. התצוגה מפרידה ביניהן ויזואלית כדי שלא ייראו כאותו משלוח פעמיים. */
 function isPickup(d){ return d.kind==='איסוף'; }
@@ -1998,14 +2025,14 @@ function dispatchLinesHtml(oid){
 function dispatchTodayHtml(){
   var t = todayYMD();
   var byDrv = function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')) || String(a.driver||'').localeCompare(String(b.driver||'')); };
-  var load = DB.deliveries.filter(d=>!isPickup(d) && B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')<=t).sort(byDrv);
-  var back = DB.deliveries.filter(d=>isPickup(d) && String(d.date||'')<=t &&
-      (B5_OPEN_STATUSES.includes(d.status) || (d.status==='בוצע' && String(d.date||'')===t))).sort(byDrv);
+  var load = DB.deliveries.filter(d=>!isPickup(d) && B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)<=t && dYmd(d.date)!=='').sort(byDrv);
+  var back = DB.deliveries.filter(d=>isPickup(d) && dYmd(d.date)<=t && dYmd(d.date)!=='' &&
+      (B5_OPEN_STATUSES.includes(d.status) || (d.status==='בוצע' && dYmd(d.date)===t))).sort(byDrv);
   var collectedOf = function(d){ return d.status==='בוצע' || !!d.photo_url; }; /* B30: נאסף = צולם ע"י הנהג או נקלט */
   var collected = back.filter(collectedOf).length;
   var card = function(d, mode){
     var o = DB.orders.find(x=>x.id===d.order_id)||{};
-    var late = String(d.date||'')<t;
+    var late = dYmd(d.date)!=='' && dYmd(d.date)<t;
     var doneP = d.status==='בוצע';
     var colP = collectedOf(d);
     var backChip = doneP? '<span class="chip" style="background:var(--ok,#3a9d5c);color:#fff">✔ נקלט בשקילה</span>'
@@ -2057,7 +2084,8 @@ function b38ReturnsNeedingAttention(){
   (DB.orders||[]).forEach(function(o){
     if(['מאושרת','סופקה'].indexOf(String(o.status))===-1) return;
     b38PlannedForOrder(o).forEach(function(pl){
-      if(!pl.date || String(pl.date) > t) return;         // עדיין לא הגיע המועד
+      var plD = dYmd(pl.date);
+      if(!plD || plD > t) return;                          // עדיין לא הגיע המועד
       var recs = (DB.deliveries||[]).filter(function(d){ return d.order_id===o.id && String(d.kind)===pl.kind; });
       if(!recs.length){
         out.push({order:o, date:pl.date, kind:pl.kind, reason:'אין רשומת '+pl.kind+' להזמנה'});
@@ -2065,7 +2093,7 @@ function b38ReturnsNeedingAttention(){
       }
       var open = recs.filter(function(d){ return OPEN.indexOf(String(d.status))>-1; });
       if(!open.length) return;                            // כבר בוצע — תקין
-      if(open.some(function(d){ return String(d.date||'') <= t; })) return;  // כבר מופיע ברשימה
+      if(open.some(function(d){ return dYmd(d.date)!=='' && dYmd(d.date) <= t; })) return;  // כבר מופיע ברשימה
       out.push({order:o, date:pl.date, kind:pl.kind,
                 reason:'רשומת ה'+pl.kind+' בתאריך '+esc(open[0].date||'—')+' ולא בתאריך המתוכנן'});
     });
@@ -2078,7 +2106,7 @@ function b38ReturnsNeedingAttention(){
 function b38UnassignedToday(){
   var t = todayYMD();
   return (DB.deliveries||[]).filter(function(d){
-    return B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')<=t && !String(d.driver||'').trim();
+    return B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)!=='' && dYmd(d.date)<=t && !String(d.driver||'').trim();
   }).sort(function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')); });
 }
 function b38UnassignedHtml(){
@@ -2216,12 +2244,12 @@ var B5_OPEN_STATUSES = ['מתוכנן','בדרך'];
    של אותה הזמנה — כך הנהג לא רואה את אותו לקוח פעמיים באותו יום. */
 function b5MyRoute(){
   var t = todayYMD();
-  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')<=t)
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)!=='' && dYmd(d.date)<=t)
     .sort((a,b)=>{ var ra=Number(a.route_order)||999999, rb=Number(b.route_order)||999999; return ra!==rb?ra-rb:(a.id<b.id?-1:1); });
 }
 function b5MyFuture(){
   var t = todayYMD();
-  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')>t)
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)>t)
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
 }
 var DRV_TAB = 'today';
@@ -2229,7 +2257,7 @@ var DRV_TAB = 'today';
    יראה מה נסגר ומה עוד נותר. סינון תצוגה בלבד; אין שינוי בנתונים או בסטטוסים. */
 function b5DoneToday(){
   var t = todayYMD();
-  return DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')===t)
+  return DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)===t)
     .sort((a,b)=>(String(a.id)<String(b.id)?-1:1));
 }
 function rDriverRoute(){
@@ -2824,7 +2852,7 @@ function cashBalanceFE(){
   return Math.round((inn-outE-outP-outC)*100)/100;
 }
 var COL_MONTH = '';
-function colMonthKey(){ return COL_MONTH || new Date().toISOString().slice(0,7); }
+function colMonthKey(){ return COL_MONTH || ymLocal(); }
 function colPays(){ return (DB.payments||[]).filter(p=>String(p.date||'').slice(0,7)===colMonthKey()); }
 function finCollectionHtml(){
   var mk = colMonthKey();
@@ -2899,7 +2927,7 @@ function cashMoveForm(type){
   openModal('<h2>'+esc(type)+'</h2>'+
     '<div class="muted" style="margin-bottom:8px">יתרת הקופה כרגע: <b>'+ils(bal)+'</b></div>'+
     '<div class="grid2"><div class="frow"><label>סכום</label><input id="f_cmamt" type="number" min="0" step="0.01" max="'+bal+'" value="'+bal+'"></div>'+
-    '<div class="frow"><label>תאריך</label><input id="f_cmdate" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div></div>'+
+    '<div class="frow"><label>תאריך</label><input id="f_cmdate" type="date" value="'+ymdLocal()+'"></div></div>'+
     (type==='תשלום מהקופה'?'<div class="frow"><label>למי שולם (חובה)</label><input id="f_cmrcp" placeholder="שם המקבל"></div>':'')+
     '<div class="frow"><label>פירוט / אסמכתא</label><input id="f_cmnote" placeholder="מספר הפקדה, סיבת התשלום"></div>'+
     '<button class="btn" onclick="saveCashMove(\''+type+'\')">שמור</button>');
@@ -2925,7 +2953,7 @@ function fexpInRange(x){
   if(!x.due_date) return false;
   var lim;
   if(FEXP_RANGE==='until'){ if(!FEXP_UNTIL) return true; lim = FEXP_UNTIL; }
-  else lim = new Date(Date.now()+Number(FEXP_RANGE)*864e5).toISOString().slice(0,10);
+  else lim = ymdLocal(new Date(Date.now()+Number(FEXP_RANGE)*864e5));
   return x.due_date <= lim;
 }
 function fexpRangeLabel(){
@@ -2950,7 +2978,7 @@ function futureExpensesHtml(){
     if(u) return u;
     return (a.due_date||'9999').localeCompare(b.due_date||'9999');
   });
-  var today = new Date().toISOString().slice(0,10);
+  var today = ymdLocal();
   function row(x){
     var overdue = x.due_date && x.due_date < today;
     var emp = x.employee_id? DB.employees.find(e=>e.id===x.employee_id):null;
@@ -3023,7 +3051,7 @@ function fexpTotalBreakdown(){
   var list = (FEXP_RANGE==='all'? fexpOpen().slice() : fexpOpen().filter(x=>x.due_date && fexpInRange(x)))
     .sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
   var tot = list.reduce((s,x)=>s+fexpRemain(x),0);
-  var today = new Date().toISOString().slice(0,10);
+  var today = ymdLocal();
   openModal('<h2>פירוט הסכום הצפוי</h2>'+
     '<div class="muted" style="margin-bottom:8px">טווח: '+esc(fexpRangeLabel())+' · '+list.length+' רשומות</div>'+
     (list.length? '<div class="card"><table><tr><th>תאריך יעד</th><th>קטגוריה</th><th>תיאור</th><th>יתרה</th><th></th></tr>'+
@@ -3152,7 +3180,7 @@ function payFexpForm(id){
     '<legend style="font-weight:700;font-size:13px;padding:0 6px">רישום תשלום</legend>'+
     '<div class="grid2">'+
       '<div class="frow"><label>סכום לתשלום</label><input id="f_fpamt" type="number" min="0" step="0.01" max="'+rem+'" value="'+rem+'"></div>'+
-      '<div class="frow"><label>תאריך התשלום</label><input id="f_fpdate" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+      '<div class="frow"><label>תאריך התשלום</label><input id="f_fpdate" type="date" value="'+ymdLocal()+'"></div>'+
       '<div class="frow"><label>אמצעי תשלום</label><select id="f_fpmethod">'+
         ['העברה בנקאית','שיק','מזומן','כרטיס אשראי','הוראת קבע','אחר'].map(m=>'<option>'+m+'</option>').join('')+'</select></div>'+
       '<div class="frow"><label>פירוט / אסמכתא</label><input id="f_fpnote" placeholder="מספר אסמכתא, מספר שיק, פירוט"></div>'+
@@ -3301,7 +3329,7 @@ function expForm(){
 async function saveExp(){
   var amt = Number(el('f_eamt').value);
   if(!(amt>0)) return toast('סכום חובה', true);
-  var r = await act('create',{table:'expenses',row:{date:new Date().toISOString().slice(0,10),category:el('f_ecat').value,supplier_id:el('f_esup').value,amount:amt,vat:Math.round(amt*0.18*100)/100,note:el('f_enote').value}},'ההוצאה נרשמה');
+  var r = await act('create',{table:'expenses',row:{date:ymdLocal(),category:el('f_ecat').value,supplier_id:el('f_esup').value,amount:amt,vat:Math.round(amt*0.18*100)/100,note:el('f_enote').value}},'ההוצאה נרשמה');
   if(!r) return;
   var f = el('f_efile').files[0];
   if(f){
@@ -3830,7 +3858,7 @@ async function saveMove(){
   if(!q) return toast('כמות חובה', true);
   var type = el('f_mtype').value;
   if(type==='גריעה') q = -Math.abs(q);
-  var r = await act('create',{table:'stock_moves',row:{date:new Date().toISOString().slice(0,10),item_id:el('f_mitem').value,type:type,qty:q,note:el('f_mnote').value}},'התנועה נרשמה');
+  var r = await act('create',{table:'stock_moves',row:{date:ymdLocal(),item_id:el('f_mitem').value,type:type,qty:q,note:el('f_mnote').value}},'התנועה נרשמה');
   if(r) closeModal();
 }
 function availForm(iid){
@@ -3890,7 +3918,7 @@ function purForm(){
     '<button class="btn" onclick="savePur()">להוספת פריטי הזמנה</button>');
 }
 async function savePur(){
-  var r = await act('create',{table:'purchases',row:{supplier_id:el('f_psup').value,date:new Date().toISOString().slice(0,10),
+  var r = await act('create',{table:'purchases',row:{supplier_id:el('f_psup').value,date:ymdLocal(),
     invoice_number:el('f_pinv').value,receipt_number:el('f_precpt').value,details:el('f_pdetails').value}},'נוצר — הוסף שורות');
   if(r){ closeModal(); purLineForm(r.row.id); }
 }
@@ -4834,7 +4862,7 @@ function attListHtml(){
 }
 function attCalendarHtml(){
   var first = new Date(ATT_Y, ATT_M, 1);
-  var todayIso = new Date().toISOString().slice(0,10);
+  var todayIso = ymdLocal();
   var byDate = {};
   (DB.attendance||[]).forEach(function(a){
     if(ATT_EMP && a.employee_id!==ATT_EMP) return;
@@ -4962,7 +4990,7 @@ function isGlobalPayroll(p,e){
 function payrollPaid(pid){ return (DB.payrollPayments||[]).filter(x=>x.payroll_id===pid).reduce((s,x)=>s+Number(x.amount||0),0); }
 function payrollAdjustments(pid){ return (DB.payrollAdjustments||[]).filter(x=>x.payroll_id===pid); }
 function rPayroll(){
-  var month = el('pr_month') ? el('pr_month').value : new Date().toISOString().slice(0,7);
+  var month = el('pr_month') ? el('pr_month').value : ymLocal();
   // B17: לנהג — צפייה בלבד בשכר שלו, בלי כפתור חישוב שכר (הנתונים כבר מגיעים מסוננים מהשרת)
   el('main').innerHTML = '<div class="section-title"><h2>שכר</h2></div>'+
     '<div class="card"><div class="row"><input id="pr_month" type="month" value="'+month+'" style="width:auto" onchange="rPayroll()">'+
@@ -5059,7 +5087,7 @@ async function doPayrollPreview(){
 async function doGeneratePayroll(){
   var m = el('pr_month').value;
   if(!m) return toast('בחר חודש', true);
-  var cur = new Date().toISOString().substring(0,7);
+  var cur = ymLocal();
   var warn = (m===cur) ? '\n\nשים לב: זהו החודש הנוכחי — החישוב מבוסס על הנוכחות שנרשמה עד היום בלבד. אפשר להפיק שוב בסוף החודש והטיוטה תתעדכן.' : '';
   if(!confirm('להפיק שכר לחודש '+monthLabel(m)+'?\n\nייווצרו רשומות שכר בסטטוס טיוטה. שכר שכבר אושר או שולם לא ישתנה.'+warn)) return;
   var r = await apiBusy('generatePayroll',{month:m});
@@ -5103,7 +5131,7 @@ function payrollDetail(pid){
         '<div class="muted" style="font-size:12px;margin-bottom:8px">יתרה לתשלום: <b>'+ils(remaining)+'</b></div>'+
         '<div class="row" style="gap:6px">'+
         '<input id="f_payamt" type="number" min="0" max="'+remaining+'" placeholder="סכום לתשלום" style="width:120px" value="'+remaining+'">'+
-        '<input id="f_paydate" type="date" style="width:auto" value="'+new Date().toISOString().slice(0,10)+'" title="תאריך התשלום — ניתן לעריכה">'+
+        '<input id="f_paydate" type="date" style="width:auto" value="'+ymdLocal()+'" title="תאריך התשלום — ניתן לעריכה">'+
         '<select id="f_paymethod" style="width:auto">'+PAYROLL_METHODS.map(m=>'<option>'+m+'</option>').join('')+'</select>'+
         '<input id="f_paynote" placeholder="הערה" class="grow">'+
         '<button class="btn" onclick="savePayrollPayment(\''+pid+'\')">רשום תשלום</button></div></fieldset>':
@@ -5256,7 +5284,7 @@ function rTasks(){
     return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tks.length+'</span></h3>'+
       tks.map(function(t){
         var a = DB.employees.find(e=>e.id===t.assignee_id)||{};
-        var overdue = t.due_date && t.due_date < new Date().toISOString().slice(0,10) && st!=='הושלמה';
+        var overdue = t.due_date && t.due_date < ymdLocal() && st!=='הושלמה';
         return '<div class="ktask" style="cursor:pointer;border-right:4px solid '+(PRIO_COLOR[t.priority]||'var(--navy2)')+'" onclick="openTask(\''+t.id+'\')">'+
           '<div class="t">'+esc(t.title)+'</div>'+
           '<div class="muted">'+(a.name?esc(a.name):'ללא אחראי')+(t.due_date?' · יעד '+esc(t.due_date):'')+(overdue?' · <b style="color:var(--danger)">באיחור!</b>':'')+
@@ -5403,13 +5431,13 @@ function calEvents(){
 function rCalendar(){ rCalendarDraw([]); fetchHebcal(CAL_Y, CAL_M).then(function(items){ rCalendarDraw(items); }); }
 function rCalendarDraw(hebItems){
   var first = new Date(CAL_Y, CAL_M, 1);
-  var today = new Date().toISOString().slice(0,10);
+  var today = ymdLocal();
   var byDate = {};
   calEvents().forEach(e=>{ if(e.date) (byDate[e.date]=byDate[e.date]||[]).push(e); });
   var holyDays = {};
   (hebItems||[]).forEach(function(it){
     var d = String(it.date).substring(0,10);
-    if(it.category==='candles'){ (byDate[d]=byDate[d]||[]).push({date:d,label:it.title,color:'#B7791F',plain:true}); holyDays[d==d?String(new Date(new Date(d).getTime()+864e5).toISOString().slice(0,10)):d]=1; }
+    if(it.category==='candles'){ (byDate[d]=byDate[d]||[]).push({date:d,label:it.title,color:'#B7791F',plain:true}); holyDays[d==d?ymdLocal(new Date(new Date(d).getTime()+864e5)):d]=1; }
     if(it.category==='havdalah') (byDate[d]=byDate[d]||[]).push({date:d,label:it.title,color:'#B7791F',plain:true});
     if(it.category==='holiday'){ (byDate[d]=byDate[d]||[]).push({date:d,label:it.title,color:'var(--danger)',plain:true}); if(it.yomtov) holyDays[d]=1; }
   });
@@ -6300,8 +6328,8 @@ async function doTransfer(){
 function vehName(id){ var v=DB.vehicles.find(x=>x.id===id); return v?(v.plate||v.id):(id||''); }
 function empName(id){ var e=DB.employees.find(x=>x.id===id); return e?e.name:(id||''); }
 function rFleet(){
-  var today = new Date().toISOString().slice(0,10);
-  var soon = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
+  var today = ymdLocal();
+  var soon = ymdLocal(new Date(Date.now()+30*864e5));
   el('main').innerHTML = '<div class="section-title"><h2>צי רכב</h2><button class="btn" onclick="vehForm()">+ רכב</button></div>'+
     (DB.vehicles.length? DB.vehicles.map(function(v){
       var warns = [];
