@@ -319,7 +319,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.13-B28 · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.15-B30 · 23.07.2026</div>
   </div>
 </div>
 
@@ -1158,7 +1158,7 @@ function rDash(){
   var upcoming = DB.orders.filter(o=>o.type==='השכרה' && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);
   el('main').innerHTML =
     '<div class="gridkpi">'+
-    kpi(ils(debt),'חוב לגבייה', debt>0, 'reports')+
+    '<div class="kpi'+(debt>0?' alert':'')+' click" onclick="collectListModal()" title="לחץ לפירוט הסכומים לגבייה"><div class="v">'+ils(debt)+'</div><div class="l">חוב לגבייה</div></div>'+
     kpi(delToday.length,'משלוחים להיום', delToday.length>0, 'deliveries')+
     kpi(inWash.reduce((s,t)=>s+Number(t.qty),0),'כביסה בתהליך', lateWash.length>0, 'laundry')+
     kpi(openOrd.length,'הזמנות פתוחות', false, 'orders')+
@@ -1383,6 +1383,39 @@ function custBalance(cid){
   });
   return b;
 }
+/* B30: פירוט הסכומים לגבייה — נפתח מלוח הבקרה. רשימת לקוחות חייבים ← פירוט פר-לקוח ← הרשומה עצמה. */
+function collectListModal(){
+  var rows = DB.customers.map(c=>({c:c, b:custBalance(c.id)})).filter(x=>x.b>0.01).sort((a,b)=>b.b-a.b);
+  var tot = rows.reduce((s,x)=>s+x.b,0);
+  openModal('<h2>סכומים לגבייה</h2>'+
+    (rows.length? '<div class="card"><table><tr><th>לקוח</th><th>חוב</th></tr>'+
+      rows.map(x=>'<tr style="cursor:pointer" onclick="collectCustModal(\''+x.c.id+'\')"><td><span style="color:var(--navy2);text-decoration:underline">'+esc(x.c.name)+'</span>'+(x.c.phone?' <span class="muted" style="font-size:11px">'+esc(x.c.phone)+'</span>':'')+'</td><td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td></tr>').join('')+
+      '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td></tr></table></div>'
+      +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על לקוח פותחת את פירוט החוב שלו.</div>'
+    : '<div class="card empty">אין חובות פתוחים — הכל נגבה 🎉</div>')+
+    '<div style="margin-top:12px"><button class="btn ghost" onclick="closeModal()">סגור</button></div>');
+}
+function collectCustModal(cid){
+  var c = DB.customers.find(x=>x.id===cid)||{};
+  var rows = [];
+  DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).forEach(function(o){
+    var b = orderBalance(o.id);
+    if(b>0.01) rows.push({label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, click:"openOrder('"+o.id+"')"});
+  });
+  DB.invoices.filter(v=>v.customer_id===cid && !v.order_id && v.status!=='בוטלה').forEach(function(v){
+    var paid = DB.payments.filter(p=>p.invoice_id===v.id).reduce((s,p)=>s+Number(p.amount||0),0);
+    var b = Math.max(0, Number(v.total)-paid);
+    if(b>0.01) rows.push({label:'חשבונית מכבסה '+v.number+' · '+(v.date||''), b:b, click:"openInvoice('"+v.id+"')"});
+  });
+  var tot = rows.reduce((s,x)=>s+x.b,0);
+  openModal('<h2>חוב לגבייה — '+esc(c.name||'')+'</h2>'+
+    (rows.length? '<div class="card"><table><tr><th>מסמך</th><th>יתרה</th></tr>'+
+      rows.map(x=>'<tr style="cursor:pointer" onclick="closeModal();'+x.click+'"><td><span style="color:var(--navy2);text-decoration:underline">'+esc(x.label)+'</span></td><td style="color:var(--danger);font-weight:700">'+ils(x.b)+'</td></tr>').join('')+
+      '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td></tr></table></div>'
+      +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על מסמך פותחת אותו — ומשם אפשר לגבות תשלום.</div>'
+    : '<div class="card empty">אין יתרות פתוחות ללקוח זה</div>')+
+    '<div style="margin-top:12px" class="row"><button class="btn ghost" onclick="collectListModal()">חזרה לרשימה</button> <button class="btn ghost" onclick="closeModal();openCust(\''+cid+'\')">כרטיס הלקוח</button></div>');
+}
 /* ===== B2: אשראי ותשלומים (D9/D7/D15) — חישובים באגורות ===== */
 function toAg(n){ return Math.round(Number(n||0)*100); }
 function fromAg(ag){ return Math.round(Number(ag||0))/100; }
@@ -1523,7 +1556,11 @@ function openOrder(oid){
   var actions = '';
   if(o.status==='הצעת מחיר') actions = '<button class="btn" onclick="doAct(\'convertQuote\',\''+oid+'\',\'הומרה להזמנה\')">המר להזמנה</button> <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
   if(o.status==='טיוטה') actions = '<button class="btn" onclick="doAct(\'approveOrder\',\''+oid+'\',\'אושרה — המלאי שוריין ונוצרו משלוחים\')">אשר (בדיקת מלאי)</button> <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
-  if(o.status==='מאושרת') actions = '<button class="btn warn" onclick="doAct(\'deliverOrder\',\''+oid+'\',\'סומנה כסופקה\')">סמן כסופקה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>')+' <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
+  /* B29: משלוח שכבר "בדרך" אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד (אכיפה גם בשרת) */
+  var inTransit = delivs.some(d=>d.kind!=='איסוף' && d.status==='בדרך');
+  if(o.status==='מאושרת') actions = (inTransit && ROLE!=='מנהל'
+      ? '<span class="muted" style="font-size:12.5px">המשלוח בדרך אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד</span> '
+      : '<button class="btn warn" onclick="doAct(\'deliverOrder\',\''+oid+'\',\'סומנה כסופקה\')">סמן כסופקה'+(inTransit?' (מנהל)':'')+'</button>')+(inv?'':' <button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>')+' <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
   if(o.status==='סופקה') actions = '<button class="btn" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>');
   if((o.status==='הוחזרה'||o.status==='הושלמה')&&!inv) actions = '<button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
@@ -1691,29 +1728,99 @@ async function doAdvance(tid){ await act('advanceLaundry',{task_id:tid},'קוד�
 async function doAssignCart(tid){ await act('assignCart',{task_id:tid,cart_id:el('cart_'+tid).value},'העגלה שויכה'); }
 
 /* ================= משלוחים ================= */
+function todayYMD(){ return new Date().toISOString().slice(0,10); }
+/* B29: כל הזמנת השכרה מייצרת בכוונה שתי רשומות — אספקה (בתאריך ההתחלה) ואיסוף (בתאריך הסיום).
+   זו אינה כפילות. התצוגה מפרידה ביניהן ויזואלית כדי שלא ייראו כאותו משלוח פעמיים. */
+function isPickup(d){ return d.kind==='איסוף'; }
+function kindChip(d){
+  return '<span class="chip" style="background:'+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+';color:#fff">'+(isPickup(d)?'⬅ איסוף':'➡ אספקה')+'</span>';
+}
+/* B29: שורות הפריטים של הזמנה — לתצוגת "מה להעלות לרכב" */
+function dispatchLinesHtml(oid){
+  var ls = DB.orderLines.filter(l=>l.order_id===oid);
+  if(!ls.length) return '<div class="muted">אין שורות פריטים</div>';
+  return '<table style="margin-top:6px"><tr><th>פריט</th><th>כמות</th></tr>'+
+    ls.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td><b>'+esc(l.qty)+'</b></td></tr>').join('')+'</table>';
+}
+/* B29: לוח העמסה ואיסוף להיום — לאחראי במפעל ולמשרד. קריאה בלבד, אפס פעולת שרת חדשה. */
+function dispatchTodayHtml(){
+  var t = todayYMD();
+  var byDrv = function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')) || String(a.driver||'').localeCompare(String(b.driver||'')); };
+  var load = DB.deliveries.filter(d=>!isPickup(d) && B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')<=t).sort(byDrv);
+  var back = DB.deliveries.filter(d=>isPickup(d) && String(d.date||'')<=t &&
+      (B5_OPEN_STATUSES.includes(d.status) || (d.status==='בוצע' && String(d.date||'')===t))).sort(byDrv);
+  var collectedOf = function(d){ return d.status==='בוצע' || !!d.photo_url; }; /* B30: נאסף = צולם ע"י הנהג או נקלט */
+  var collected = back.filter(collectedOf).length;
+  var card = function(d, mode){
+    var o = DB.orders.find(x=>x.id===d.order_id)||{};
+    var late = String(d.date||'')<t;
+    var doneP = d.status==='בוצע';
+    var colP = collectedOf(d);
+    var backChip = doneP? '<span class="chip" style="background:var(--ok,#3a9d5c);color:#fff">✔ נקלט בשקילה</span>'
+      : colP? '<span class="chip" style="background:#8a5a1f;color:#fff">🚚 נאסף — בדרך חזרה</span>'
+      : '<span class="chip" style="background:var(--danger);color:#fff">✖ טרם נאסף</span>';
+    return '<div class="card" style="cursor:pointer;border-right:5px solid '+(mode==='load'?'var(--teal,#1f7a6b)':(doneP?'var(--ok,#3a9d5c)':(colP?'#8a5a1f':'var(--danger)')))+'" onclick="openDelivery(\''+d.id+'\')">'+
+      '<div class="row"><div class="grow"><b>'+esc(cust(o.customer_id))+'</b>'+(o.order_number?' · הזמנה #'+esc(o.order_number):'')+
+      '<div class="muted">'+esc(d.date||'')+(late?' <span style="color:var(--danger)">· באיחור</span>':'')+(d.driver?' · נהג: '+esc(d.driver):' · <span style="color:var(--danger)">טרם שובץ נהג</span>')+'</div></div>'+
+      (mode==='back'? backChip
+                    : '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>')+
+      '</div>'+(mode==='load'? dispatchLinesHtml(d.order_id):'')+'</div>';
+  };
+  return '<div class="section-title"><h3>➡ להעלות לרכב עכשיו</h3><span class="muted">'+load.length+' משלוחים</span></div>'+
+    (load.length? load.map(d=>card(d,'load')).join('') : '<div class="card empty">אין משלוחים להעמסה היום</div>')+
+    '<div class="section-title"><h3>⬅ אמור לחזור היום</h3><span class="muted">נאספו '+collected+' מתוך '+back.length+'</span></div>'+
+    (back.length? back.map(d=>card(d,'back')).join('') : '<div class="card empty">אין איסופים להיום</div>');
+}
+var DELIV_TAB = 'today';
 function rDeliveries(){
   if(ROLE==='נהג') return rDriverRoute(); // B5: Driver-Lite — הנהג רואה רק את המסלול שלו
   /* B19d (L5): הרשימה הפתוחה כוללת גם משלוחים "בדרך" — לא רק "מתוכנן" */
   var OPEN_ST = ['מתוכנן','בדרך'];
-  var open = DB.deliveries.filter(d=>OPEN_ST.includes(d.status)).sort((a,b)=>a.date>b.date?1:-1);
+  var openSup = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && !isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
+  var openPick = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
   var done = DB.deliveries.filter(d=>!OPEN_ST.includes(d.status)).slice(-15).reverse();
+  var tb = function(k,l){ return '<button class="btn '+(DELIV_TAB===k?'':'ghost')+' grow" onclick="DELIV_TAB=\''+k+'\';rDeliveries()">'+l+'</button>'; };
+  var body;
+  if(DELIV_TAB==='today') body = dispatchTodayHtml();
+  else body = '<div class="section-title"><h3>➡ אספקות פתוחות</h3><span class="muted">'+openSup.length+'</span></div>'+
+      (openSup.length? openSup.map(delivCard).join(''):'<div class="card empty">אין אספקות פתוחות</div>')+
+      '<div class="section-title"><h3>⬅ איסופים פתוחים (החזרות)</h3><span class="muted">'+openPick.length+'</span></div>'+
+      (openPick.length? openPick.map(delivCard).join(''):'<div class="card empty">אין איסופים פתוחים</div>')+
+      (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
   el('main').innerHTML = '<div class="section-title"><h2>משלוחים</h2><span class="muted">נוצרים אוטומטית באישור הזמנה</span></div>'+
-    (open.length? open.map(delivCard).join(''):'<div class="card empty">אין משלוחים פתוחים</div>')+
-    (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
+    '<div class="row" style="margin:8px 0;gap:6px">'+tb('today','היום — העמסה ואיסוף')+tb('all','כל המשלוחים')+'</div>'+body;
 }
 
 /* ===== B5: Driver-Lite — דשבורד נהג: מסלול, ניווט, תיעוד שיחות, סטטוס ללקוח (D12/D13/D14) ===== */
 var B5_OPEN_STATUSES = ['מתוכנן','בדרך'];
+/* B29: המסלול מציג רק את מה שרלוונטי להיום. איסוף שתאריכו בעתיד לא יופיע יחד עם האספקה
+   של אותה הזמנה — כך הנהג לא רואה את אותו לקוח פעמיים באותו יום. */
 function b5MyRoute(){
-  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status))
+  var t = todayYMD();
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')<=t)
     .sort((a,b)=>{ var ra=Number(a.route_order)||999999, rb=Number(b.route_order)||999999; return ra!==rb?ra-rb:(a.id<b.id?-1:1); });
 }
+function b5MyFuture(){
+  var t = todayYMD();
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && String(d.date||'')>t)
+    .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+}
+var DRV_TAB = 'today';
 function rDriverRoute(){
   var mine = b5MyRoute();
-  var history = DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status)).slice(-10).reverse();
-  el('main').innerHTML = '<div class="section-title"><h2>המסלול שלי</h2><span class="muted">'+mine.length+' עצירות פתוחות</span></div>'+
-    (mine.length? mine.map((d,i)=>driverStopCard(d,i,mine.length,false)).join('') : '<div class="card empty">אין משלוחים פתוחים במסלול שלך</div>')+
-    (history.length? '<div class="section-title"><h3>אחרונים</h3></div>'+history.map(d=>driverStopCard(d,-1,0,true)).join(''):'');
+  var future = b5MyFuture();
+  var history = DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status))
+    .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,40);
+  var tb = function(k,l,n){ return '<button class="btn '+(DRV_TAB===k?'':'ghost')+' grow" onclick="DRV_TAB=\''+k+'\';rDriverRoute()">'+l+(n?' ('+n+')':'')+'</button>'; };
+  var body;
+  if(DRV_TAB==='future')
+    body = future.length? future.map(d=>driverStopCard(d,-1,0,true)).join('') : '<div class="card empty">אין נסיעות עתידיות משובצות לך</div>';
+  else if(DRV_TAB==='history')
+    body = history.length? history.map(d=>driverStopCard(d,-1,0,true)).join('') : '<div class="card empty">אין היסטוריית נסיעות</div>';
+  else
+    body = mine.length? mine.map((d,i)=>driverStopCard(d,i,mine.length,false)).join('') : '<div class="card empty">אין משלוחים להיום במסלול שלך</div>';
+  el('main').innerHTML = '<div class="section-title"><h2>המסלול שלי</h2><span class="muted">'+mine.length+' עצירות להיום</span></div>'+
+    '<div class="row" style="margin:8px 0;gap:6px">'+tb('today','היום',mine.length)+tb('future','עתידי',future.length)+tb('history','היסטוריה','')+'</div>'+body;
 }
 function driverStopCard(d,idx,total,isHistory){
   var o = DB.orders.find(x=>x.id===d.order_id)||{};
@@ -1721,8 +1828,8 @@ function driverStopCard(d,idx,total,isHistory){
   var addr = c? (c.address||'') : '';
   var wazeUrl = addr? 'https://waze.com/ul?q='+encodeURIComponent(addr)+'&navigate=yes' : '';
   var gmapUrl = addr? 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr) : '';
-  return '<div class="card"><div class="row"><div class="grow"><b>'+esc(c?c.name:'—')+'</b>'+(d.kind?' · '+esc(d.kind):'')+
-    '<div class="muted">'+esc(addr||'אין כתובת רשומה בכרטיס הלקוח')+'</div>'+
+  return '<div class="card" style="border-right:5px solid '+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+'"><div class="row"><div class="grow">'+kindChip(d)+' <b>'+esc(c?c.name:'—')+'</b>'+
+    '<div class="muted">'+esc(d.date||'')+' · '+esc(addr||'אין כתובת רשומה בכרטיס הלקוח')+'</div>'+
     (d.note?'<div class="muted" style="font-size:12px">'+esc(d.note)+'</div>':'')+
     (d.eta_text?'<div style="margin-top:4px"><span class="chip" style="background:var(--navy2)">'+esc(d.eta_text)+'</span></div>':'')+
     '</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>'+
@@ -1736,7 +1843,10 @@ function driverStopCard(d,idx,total,isHistory){
       '<button class="btn sm" onclick="driverMarkTransit(\''+d.id+'\')">'+(d.status==='בדרך'?'עדכן סטטוס':'יצאתי לדרך')+'</button>'+
       (d.photo_url?'<a class="btn ghost sm" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום</a>':'<button class="btn ghost sm" onclick="deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>')+
       (d.signature_url?'<a class="btn ghost sm" href="'+esc(d.signature_url)+'" target="_blank">צפה בחתימה</a>':'')+
-      (d.kind!=='איסוף'?'<button class="btn sm" style="background:var(--ok,#3a9d5c)" onclick="driverMarkDelivered(\''+d.id+'\')">נמסר</button>':'<span class="muted" style="font-size:11px">איסוף נסגר במשרד עם שקילה</span>')+
+      (d.kind!=='איסוף'?'<button class="btn sm" style="background:var(--ok,#3a9d5c)" onclick="driverMarkDelivered(\''+d.id+'\')">נמסר</button>'
+        :(d.photo_url||d.status==='בוצע'
+          ?'<span class="chip" style="background:var(--ok,#3a9d5c);color:#fff">✔ נאסף — נקלט בשקילה במשרד</span>'
+          :'<button class="btn sm" style="background:#8a5a1f;color:#fff" onclick="driverCollectPickup(\''+d.id+'\')">איסוף (צילום חובה)</button>'))+
       '<button class="btn ghost sm" style="color:var(--danger)" onclick="driverRemoveForm(\''+d.id+'\')">הסר מהמסלול</button>'+
     '</div>':'')+
   '</div>';
@@ -1750,6 +1860,27 @@ async function driverMove(did,delta){
 }
 async function driverMarkTransit(did){
   var r = await act('b5MarkInTransit',{delivery_id:did},'הסטטוס עודכן — הלקוח קיבל התראה');
+}
+/* B30: איסוף מפות אצל הלקוח — צילום חובה לפני העמסה, ואז המשלוח מסומן "נאסף — בדרך חזרה".
+   הקליטה הסופית נשארת במשרד עם שקילה (receiveReturn) — כאן רק תיעוד האיסוף בשטח. */
+function driverCollectPickup(did){
+  var d = DB.deliveries.find(x=>x.id===did); if(!d) return;
+  var inp = document.createElement('input');
+  inp.type='file'; inp.accept='image/*'; inp.setAttribute('capture','environment');
+  inp.onchange = async function(){
+    var f = inp.files[0]; if(!f) return;
+    if(f.size > 4*1024*1024) return toast('הקובץ גדול מ-4MB — צלם באיכות נמוכה יותר', true);
+    toast('מעלה צילום איסוף...');
+    var b64 = await new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(rd.result.split(',')[1]);}; rd.readAsDataURL(f); });
+    var u = await api('deliverPhoto',{delivery_id:did,base64:b64,mime:f.type});
+    if(!u.ok) return toast(u.error, true);
+    var dP=(DB.deliveries||[]).find(x=>x.id===did); if(dP) dP.photo_url=u.url;
+    var r = await api('b5MarkInTransit',{delivery_id:did});
+    if(r && r.ok && r.delivery){ var dL=(DB.deliveries||[]).find(x=>x.id===did); if(dL){ dL.status=r.delivery.status; dL.eta_text=r.delivery.eta_text; } }
+    toast('האיסוף תועד — המפות בדרך חזרה למפעל');
+    render();
+  };
+  inp.click();
 }
 // באג 2 (B13): נהג סוגר מסירה בעצמו בשטח - במקום שהסגירה תתאפשר רק דרך משרד/רצפה
 // B16: לפני סגירת מסירה - אם עוד אין חתימת לקוח למשלוח זה, פותחים את מסך החתימה קודם
@@ -1857,7 +1988,7 @@ function delivCard(d){
   var o = DB.orders.find(x=>x.id===d.order_id)||{};
   var drv = d.driver? DB.employees.find(e=>e.name===d.driver) : null;
   // Task 4: לחיצה על הכרטיס פותחת מודאל פרטים; לחיצה על כפתור/קישור פנימי לא מפעילה את הפתיחה
-  return '<div class="card" style="cursor:pointer" title="לחץ לפרטי המשלוח" onclick="if(!event.target.closest(\'button,a\'))openDelivery(\''+d.id+'\')"><div class="row"><div class="grow"><b>'+esc(d.kind)+'</b> · '+esc(cust(o.customer_id))+
+  return '<div class="card" style="cursor:pointer;border-right:5px solid '+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+'" title="לחץ לפרטי המשלוח" onclick="if(!event.target.closest(\'button,a\'))openDelivery(\''+d.id+'\')"><div class="row"><div class="grow">'+kindChip(d)+' '+esc(cust(o.customer_id))+
     '<div class="muted">'+esc(d.date)+(d.driver?' · נהג: '+esc(d.driver):'')+'</div></div>'+
     (drv?contactBtns(drv.phone,''):'')+
     '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
@@ -1969,11 +2100,13 @@ function sigFallbackPhoto(did){
 
 /* ================= כספים ================= */
 function rFinance(){
-  var tabs = [['invoices','חשבוניות'],['laundry','חיובי מכבסה'],['receipts','קבלות'],['expenses','הוצאות'],['future','הוצאות עתידיות']];
+  var tabs = [['collection','גביה וקופה'],['invoices','חשבוניות'],['laundry','חיובי מכבסה'],['receipts','קבלות'],['expenses','הוצאות'],['future','הוצאות עתידיות']];
   var html = '<div class="section-title"><h2>כספים</h2>'+(FIN_TAB==='expenses'?'<button class="btn" onclick="expForm()">+ הוצאה</button>':'')+(FIN_TAB==='future'?'<button class="btn" onclick="futureExpForm()">+ הוצאה עתידית</button>':'')+'</div>'+
     finSummaryHtml()+   /* B28: ראש המסך הוא דשבורד — כרטיסי סיכום לחיצים */
     '<div class="tabs">'+tabs.map(t=>'<button class="'+(FIN_TAB===t[0]?'on':'')+'" onclick="FIN_TAB=\''+t[0]+'\';render()">'+t[1]+'</button>').join('')+'</div>';
-  if(FIN_TAB==='invoices'){
+  if(FIN_TAB==='collection'){
+    html += finCollectionHtml(); /* B30: גביה בפועל + קופת מזומן */
+  } else if(FIN_TAB==='invoices'){
     // B1: טבלת חשבוניות מורחבת — סוג, הקצאה, קישור Drive
     html += DB.invoices.length? '<div class="card"><table><tr><th>מס\'</th><th>סוג</th><th>תאריך</th><th>לקוח</th><th>לפני מע"מ</th><th>סה"כ</th><th>סטטוס</th><th></th></tr>'+
       DB.invoices.slice().reverse().map(function(v){
@@ -2039,7 +2172,7 @@ function finCard(val,label,onclick,alert){
 function finSummaryHtml(){
   var futTot = finFutureTotal(), debt = finCustomerDebt();
   return '<div class="gridkpi" style="margin-bottom:14px">'+
-    finCard(ils(finIncomeMonth()),'הכנסות החודש',"goFin('invoices')",false)+
+    finCard(ils(finIncomeMonth()),'הכנסות החודש',"goFin('collection')",false)+
     finCard(ils(debt),'חובות לקוחות',"goFin('receipts')",debt>0)+
     finCard(ils(finExpensesMonth()),'הוצאות החודש',"goFin('expenses')",false)+
     finCard(ils(futTot),'הוצאות צפויות',"goFin('future')",futTot>0)+
@@ -2048,6 +2181,84 @@ function finSummaryHtml(){
     '</div>';
 }
 
+/* ===== B30: גביה בפועל + קופת מזומן ===== */
+function isCashMethod(m){ return String(m||'').indexOf('מזומן')>-1; }
+function cashBalanceFE(){
+  var inn = (DB.payments||[]).reduce((s,x)=>s+(isCashMethod(x.method)?Number(x.amount||0):0),0);
+  var outE = (DB.expensePayments||[]).reduce((s,x)=>s+(isCashMethod(x.method)?Number(x.amount||0):0),0);
+  var outP = (DB.payrollPayments||[]).reduce((s,x)=>s+(isCashMethod(x.method)?Number(x.amount||0):0),0);
+  var outC = (DB.cashMoves||[]).reduce((s,x)=>s+Number(x.amount||0),0);
+  return Math.round((inn-outE-outP-outC)*100)/100;
+}
+var COL_MONTH = '';
+function colMonthKey(){ return COL_MONTH || new Date().toISOString().slice(0,7); }
+function colPays(){ return (DB.payments||[]).filter(p=>String(p.date||'').slice(0,7)===colMonthKey()); }
+function finCollectionHtml(){
+  var mk = colMonthKey();
+  var pays = colPays();
+  var cash = pays.filter(p=>isCashMethod(p.method)), bank = pays.filter(p=>!isCashMethod(p.method));
+  var sum = a=>Math.round(a.reduce((s,p)=>s+Number(p.amount||0),0)*100)/100;
+  var bal = cashBalanceFE();
+  var moves = (DB.cashMoves||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,25);
+  var box = function(v,l,onclick,color){
+    return '<div class="kpi click" onclick="'+onclick+'" style="border-right:4px solid '+color+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>';
+  };
+  return '<div class="row" style="margin-bottom:8px;align-items:center;gap:8px"><b>חודש:</b>'+
+    '<input type="month" value="'+esc(mk)+'" onchange="COL_MONTH=this.value;render()" style="width:auto">'+
+    '<span class="muted" style="font-size:12px">גביה בפועל — כל קבלה שנרשמה במערכת (אשראי, העברה, שיק, מזומן)</span></div>'+
+    '<div class="gridkpi" style="margin-bottom:12px">'+
+      box(ils(sum(pays)),'סה"כ נגבה החודש',"colPayList('all')",'var(--navy2)')+
+      box(ils(sum(bank)),'בנק / אשראי / העברות',"colPayList('bank')",'var(--teal,#1f7a6b)')+
+      box(ils(sum(cash)),'מזומן שנגבה החודש',"colPayList('cash')",'#8a5a1f')+
+    '</div>'+
+    '<div class="card" style="border-right:5px solid #8a5a1f"><div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">'+
+      '<div class="grow"><h3 style="margin:0">קופת מזומן</h3><div class="muted" style="font-size:12px">כל גביית מזומן נכנסת לקופה; תשלום במזומן (ספק/שכר), הפקדה לבנק או תשלום מהקופה — יוצאים ממנה.</div></div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+(bal>0?'var(--ink)':'var(--muted)')+'">'+ils(bal)+'</div>'+
+      (ROLE==='מנהל'?'<button class="btn sm" onclick="cashMoveForm(\'הפקדה לבנק\')">הפקדת מזומן לבנק</button>'+
+        '<button class="btn ghost sm" onclick="cashMoveForm(\'תשלום מהקופה\')">תשלום מהקופה ל...</button>':'')+
+    '</div>'+
+    (moves.length?'<table style="margin-top:8px"><tr><th>תאריך</th><th>סוג</th><th>למי</th><th>סכום</th><th>פירוט</th><th>מי</th></tr>'+
+      moves.map(m=>'<tr><td>'+esc(m.date)+'</td><td>'+esc(m.type)+'</td><td>'+esc(m.recipient||'')+'</td><td>'+ils(m.amount)+'</td><td>'+esc(m.note||'')+'</td><td class="muted" style="font-size:11px">'+esc(m.created_by||'')+'</td></tr>').join('')+'</table>'
+      :'<div class="muted" style="margin-top:8px;font-size:12px">אין עדיין תנועות קופה (הפקדות/תשלומים מהקופה)</div>')+
+    '</div>'+
+    '<div class="muted" style="font-size:12px;margin-top:8px">גביית תשלום מלקוח נעשית מתוך ההזמנה (כפתור "+ תשלום") או מחשבונית מכבסה. תשלום לספק במזומן — במסך "הוצאות עתידיות" ← "תשלום" ← אמצעי "מזומן", והוא מקוזז מהקופה אוטומטית.</div>';
+}
+/* B30: פירוט הגביה — רשימת הקבלות שמרכיבות את הסכום. לחיצה על שורה פותחת את הקבלה. */
+function colPayList(which){
+  var pays = colPays().filter(p=> which==='all' || (which==='cash'?isCashMethod(p.method):!isCashMethod(p.method)));
+  var tot = Math.round(pays.reduce((s,p)=>s+Number(p.amount||0),0)*100)/100;
+  var title = which==='cash'?'מזומן — '+colMonthKey() : which==='bank'?'בנק / אשראי — '+colMonthKey() : 'כל הגביה — '+colMonthKey();
+  openModal('<h2>פירוט גביה: '+esc(title)+'</h2>'+
+    (pays.length?'<div class="card"><table><tr><th>קבלה</th><th>תאריך</th><th>לקוח</th><th>סכום</th><th>אמצעי</th></tr>'+
+      pays.slice().reverse().map(function(p){
+        var o=DB.orders.find(x=>x.id===p.order_id); var vI=!o&&p.invoice_id?DB.invoices.find(x=>x.id===p.invoice_id):null;
+        var pcid=p.customer_id||(o?o.customer_id:(vI?vI.customer_id:''));
+        return '<tr style="cursor:pointer" onclick="closeModal();openReceipt(\''+p.id+'\')"><td><b style="color:var(--navy2);text-decoration:underline">'+esc(p.receipt_number)+'</b></td><td>'+esc(p.date)+'</td><td>'+esc(cust(pcid))+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+'</td></tr>';
+      }).join('')+
+      '<tr><td colspan="3"><b>סה"כ</b></td><td colspan="2"><b>'+ils(tot)+'</b></td></tr></table></div>'
+      +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על שורה פותחת את הקבלה.</div>'
+    :'<div class="card empty">אין קבלות בקטגוריה זו החודש</div>')+
+    '<div style="margin-top:12px"><button class="btn ghost" onclick="closeModal()">סגור</button></div>');
+}
+/* B30: תנועת קופה — הפקדה לבנק / תשלום מהקופה (מנהל בלבד, אכיפה גם בשרת) */
+function cashMoveForm(type){
+  var bal = cashBalanceFE();
+  if(bal<=0) return toast('אין יתרת מזומן בקופה', true);
+  openModal('<h2>'+esc(type)+'</h2>'+
+    '<div class="muted" style="margin-bottom:8px">יתרת הקופה כרגע: <b>'+ils(bal)+'</b></div>'+
+    '<div class="grid2"><div class="frow"><label>סכום</label><input id="f_cmamt" type="number" min="0" step="0.01" max="'+bal+'" value="'+bal+'"></div>'+
+    '<div class="frow"><label>תאריך</label><input id="f_cmdate" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div></div>'+
+    (type==='תשלום מהקופה'?'<div class="frow"><label>למי שולם (חובה)</label><input id="f_cmrcp" placeholder="שם המקבל"></div>':'')+
+    '<div class="frow"><label>פירוט / אסמכתא</label><input id="f_cmnote" placeholder="מספר הפקדה, סיבת התשלום"></div>'+
+    '<button class="btn" onclick="saveCashMove(\''+type+'\')">שמור</button>');
+}
+async function saveCashMove(type){
+  var amt = Number(el('f_cmamt').value)||0;
+  if(amt<=0) return toast('סכום לא תקין', true);
+  var r = await act('addCashMove',{type:type, amount:amt, date:el('f_cmdate').value,
+    recipient: el('f_cmrcp')?el('f_cmrcp').value:'', note:el('f_cmnote').value}, 'התנועה נרשמה');
+  if(r){ if(r.row) (DB.cashMoves=DB.cashMoves||[]).push(r.row); closeModal(); render(); }
+}
 /* B20: הוצאות עתידיות — שכר שאושר וטרם שולם + הוצאות מתוכננות אחרות.
    B28: תאריך יעד חובה, פילטרים לפי טווח זמן, פירוט הסכום הכולל, ומחיקה רכה עם סיבה. */
 var FEXP_RANGE = 'all', FEXP_UNTIL = '', FEXP_SHOWDEL = false;
@@ -2292,7 +2503,7 @@ function payFexpForm(id){
         ['העברה בנקאית','שיק','מזומן','כרטיס אשראי','הוראת קבע','אחר'].map(m=>'<option>'+m+'</option>').join('')+'</select></div>'+
       '<div class="frow"><label>פירוט / אסמכתא</label><input id="f_fpnote" placeholder="מספר אסמכתא, מספר שיק, פירוט"></div>'+
     '</div>'+
-    '<div class="muted" style="font-size:12px;margin:6px 0 8px">לתשלום חלקי — שנה את הסכום. היתרה תישאר פתוחה כחוב.</div>'+
+    '<div class="muted" style="font-size:12px;margin:6px 0 8px">לתשלום חלקי — שנה את הסכום. היתרה תישאר פתוחה כחוב. תשלום ב"מזומן" מקוזז אוטומטית מקופת המזומן (יתרה נוכחית: '+ils(cashBalanceFE())+').</div>'+
     '<button class="btn" onclick="savePayFexp(\''+id+'\')">רשום תשלום והמשך לאסמכתאות</button></fieldset>');
 }
 async function savePayFexp(id){
@@ -5381,9 +5592,11 @@ function rFloor(){
     '<div class="section-title"><h2>רצפת ייצור — מכבסה</h2>'+
     '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" '+(floorTablet()?'checked':'')+' onchange="floorTabletToggle()" style="width:auto"> טאבלט משותף (קוד עובד לכל פעולה)</label></div>'+
     (floorTablet()?'<div class="card" style="padding:10px"><div class="frow" style="margin:0"><label>קוד עובד אישי (חובה לפני כל פעולה)</label><input id="fl_pin" type="password" inputmode="numeric" placeholder="הקוד האישי שלך" style="font-size:18px"></div></div>':'')+
-    '<div class="row" style="margin:10px 0">'+tabBtn('board','לוח חי')+tabBtn('work','עבודה וסריקה')+tabBtn('intake','קליטה חדשה')+'</div>'+
+    '<div class="row" style="margin:10px 0;flex-wrap:wrap">'+tabBtn('board','לוח חי')+tabBtn('work','עבודה וסריקה')+tabBtn('intake','קליטה חדשה')+tabBtn('dispatch','העמסה והחזרות')+'</div>'+
     '<div id="floorBody"></div>';
-  if(FLOOR_TAB==='work') floorWorkTab(); else if(FLOOR_TAB==='board') floorBoardTab(); else floorIntakeTab();
+  /* B29: טאב "העמסה והחזרות" — האחראי במפעל רואה מה להעלות לרכב עכשיו ומה אמור לחזור היום */
+  if(FLOOR_TAB==='dispatch') el('floorBody').innerHTML = dispatchTodayHtml();
+  else if(FLOOR_TAB==='work') floorWorkTab(); else if(FLOOR_TAB==='board') floorBoardTab(); else floorIntakeTab();
 }
 /* --- NC2: לוח חי — מתעדכן כל דקה, קריאה בלבד --- */
 var FLOOR_BOARD=null, FLOOR_BOARD_TIMER=null;
@@ -5722,7 +5935,7 @@ function empForm(emp){
   emp = emp||{};
   openModal('<h2>'+(emp.id?'עריכת עובד':'עובד חדש')+'</h2><div class="frow"><label>שם</label><input id="f_ename" value="'+esc(emp.name||'')+'"></div>'+
     '<div class="grid2"><div class="frow"><label>תפקיד</label><select id="f_erole">'+['מנהל','משרד','מכבסה','עובד רצפה','נהג'].map(t=>'<option'+(emp.role===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>קוד כניסה</label><input id="f_epin" inputmode="numeric" placeholder="4 ספרות" value="'+esc(emp.pin||'')+'"></div>'+
+    '<div class="frow"><label>קוד נוכחות (4 ספרות) — אינו הסיסמה למערכת</label><input id="f_epin" inputmode="numeric" placeholder="4 ספרות" value="'+esc(emp.pin||'')+'"><div class="muted" style="font-size:11.5px">משמש להחתמת נוכחות, לזיהוי עובד ברצפת הייצור ולאישורי מנהל.</div></div>'+
     '<div class="frow"><label>שם משתמש (לכניסה)</label><input id="f_euser" value="'+esc(emp.username||'')+'" placeholder="באנגלית, ללא רווחים" style="direction:ltr;text-align:left"></div>'+
     '<div class="frow"><label>טלפון</label><input id="f_ephone" value="'+esc(emp.phone||'')+'"></div>'+
     '<div class="frow"><label>סוג שכר</label><select id="f_eptype" onchange="empPayTypeToggle()"><option value="שעתי"'+(emp.pay_type!=='גלובלי'?' selected':'')+'>שכר שעתי</option><option value="גלובלי"'+(emp.pay_type==='גלובלי'?' selected':'')+'>שכר גלובלי (סכום חודשי קבוע)</option></select></div>'+
@@ -5740,6 +5953,12 @@ function empForm(emp){
     '<div class="frow"><label>תוקף רישיון</label><input id="f_elicexp" type="date" value="'+esc(emp.license_expiry||'')+'"></div>'+
     '<div class="frow"><label>הערות</label><input id="f_enotes" value="'+esc(emp.notes||'')+'"></div></div>'+
     '<div class="frow"><label>מסכים מותרים (ריק = לפי תפקיד)</label><div class="row" style="gap:6px">'+VIEWS.map(v=>'<label style="font-size:12px;font-weight:400;border:1px solid var(--line);border-radius:14px;padding:3px 9px"><input type="checkbox" class="evw" value="'+v[0]+'"'+((emp.views||'').split(',').includes(v[0])?' checked':'')+' style="width:auto"> '+v[1]+'</label>').join('')+'</div></div>'+
+    /* B29: קביעת הסיסמה האמיתית כבר בהקמת העובד — לא חובה */
+    (emp.id?'':'<h3 style="margin-top:14px">פרטי כניסה למערכת (לא חובה)</h3>'+
+      '<div class="frow"><label>סיסמה — לפחות 6 תווים. השאר ריק אם העובד אינו נכנס למערכת</label>'+
+      '<div class="row" style="gap:6px"><input id="f_epw" value="" placeholder="ריק = בלי סיסמה" style="direction:ltr;text-align:left;font-family:monospace;flex:1">'+
+      '<button type="button" class="btn ghost sm" title="הגרל סיסמה" onclick="el(\'f_epw\').value=genPassword()">הגרלה</button></div></div>'+
+      '<p class="muted" style="margin-bottom:10px">הסיסמה תוצג פעם אחת בלבד אחרי השמירה — העבר אותה לעובד. היא נשמרת בשרת בגיבוב בלבד. לשינוי בהמשך — כפתור "פרטי כניסה" בכרטיס העובד.</p>')+
     (emp.id?'':'<p class="muted" style="margin-bottom:10px">שים לב: העובד הראשון חייב להיות מנהל — אחרת תינעל בחוץ.</p>')+
     '<button class="btn" onclick="saveEmp(\''+(emp.id||'')+'\')">שמור</button>');
   empPayTypeToggle();
@@ -5754,8 +5973,23 @@ async function saveEmp(id){
     pay_type:el('f_eptype').value,monthly_salary:Number(el('f_esal').value)||0,
     national_id:el('f_enid').value,address:el('f_eaddr').value,email:el('f_eemail').value,start_date:el('f_estart').value,
     emergency_name:el('f_eemname').value,emergency_phone:el('f_eemphone').value,bank_details:el('f_ebank').value,notes:el('f_enotes').value,license_number:el('f_elic').value,license_expiry:el('f_elicexp').value};
+  /* B29: סיסמה אופציונלית בהקמת עובד חדש — נקבעת מיד אחרי היצירה דרך setPassword הקיים */
+  var newPw = (!id && el('f_epw'))? String(el('f_epw').value||'').trim() : '';
+  if(newPw && newPw.length < 6) return toast('הסיסמה חייבת להכיל לפחות 6 תווים', true);
+  if(newPw && !row.username) return toast('כדי לקבוע סיסמה יש להזין גם שם משתמש', true);
   var r = id? await act('update',{table:'employees',id:id,row:row},'עודכן') : await act('create',{table:'employees',row:row},'העובד נוסף');
-  if(r) closeModal();
+  if(!r) return;
+  if(!id && newPw && r.row && r.row.id){
+    var rp = await apiBusy('setPassword',{employee_id:r.row.id, new_password:newPw, username:row.username});
+    if(!rp || !rp.ok){ closeModal(); return toast((rp&&rp.error)||'העובד נוצר אך הסיסמה לא נקבעה — קבע אותה בכפתור "פרטי כניסה"', true); }
+    var eNew=(DB.employees||[]).find(x=>x.id===r.row.id); if(eNew) eNew.username=row.username;
+    return openModal('<h2>העובד נוסף — פרטי כניסה</h2><p>שם משתמש:</p>'+
+      '<div class="card" style="font-family:monospace;font-size:17px;direction:ltr;text-align:center;user-select:all">'+esc(row.username)+'</div>'+
+      '<p>סיסמה:</p><div class="card" style="font-family:monospace;font-size:18px;direction:ltr;text-align:center;user-select:all">'+esc(newPw)+'</div>'+
+      '<p class="muted" style="margin-bottom:10px">רשום או העבר אותה כעת — היא לא תוצג שוב.</p>'+
+      '<button class="btn" onclick="closeModal()">סגור</button>');
+  }
+  closeModal();
 }
 // F2: סיסמה אקראית בת 8 תווים — ללא תווים דו-משמעיים (0/O, 1/l/I)
 function genPassword(){
