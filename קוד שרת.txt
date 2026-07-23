@@ -1439,13 +1439,16 @@ function handle(action, p, db, user) {
     case 'clock': {
       // B36 (ליקוי 4): קודם השעון זיהה עובד לפי עמודת pin בלבד — ועובד בלי pin
       // (כלומר כמעט כולם) פשוט לא יכול היה להחתים כרטיס.
-      // עכשיו: עובד מחובר מזוהה מהסשן. שדה pin נשמר לתאימות, עבור עמדת שעון
-      // משותפת שאין בה משתמש מחובר.
+      // סדר הזיהוי: קוד עובד שהוקלד במפורש קודם, ורק אחריו העובד המחובר.
+      // הסדר הזה חשוב: בעמדת שעון משותפת שמחוברת לחשבון כלשהו, הקלדת קוד עובד
+      // חייבת לגבור על הסשן — אחרת כל העובדים היו מוחתמים על שם בעל העמדה.
       var ce = null;
-      if (p._verified_employee_id)
-        ce = db.employees.find(function (x) { return x.id === p._verified_employee_id && x.active !== 'לא'; });
-      if (!ce && String(p.pin || '').trim())
+      if (String(p.pin || '').trim())
         ce = db.employees.find(function (x) { return String(x.pin || '') !== '' && String(x.pin) === String(p.pin) && x.active !== 'לא'; });
+      if (!ce && String(p.pin || '').trim())
+        return { ok: false, error: 'קוד עובד שגוי' };
+      if (!ce && p._verified_employee_id)
+        ce = db.employees.find(function (x) { return x.id === p._verified_employee_id && x.active !== 'לא'; });
       if (!ce) return { ok: false, error: 'לא זוהה עובד — יש להתחבר למערכת או להזין קוד עובד' };
       var t = today();
       var open = db.attendance.find(function (a) { return a.employee_id === ce.id && a.date === t && !a.out_time; });
@@ -1454,11 +1457,11 @@ function handle(action, p, db, user) {
         open.out_time = hhmm;
         open.hours = calcHours(open.in_time, open.out_time);
         writeTable('attendance', db.attendance);
-        return { ok: true, mode: 'out', name: ce.name, hours: open.hours };
+        return { ok: true, mode: 'out', name: ce.name, hours: open.hours, auditNote: 'החתמת יציאה — ' + ce.name + ' ' + hhmm + ' · ' + open.hours + ' שעות' };
       }
       db.attendance.push({ id: genId('ATT'), employee_id: ce.id, date: t, in_time: hhmm, out_time: '', hours: '' });
       writeTable('attendance', db.attendance);
-      return { ok: true, mode: 'in', name: ce.name };
+      return { ok: true, mode: 'in', name: ce.name, auditNote: 'החתמת כניסה — ' + ce.name + ' ' + hhmm };
     }
     case 'addAttendance': {
       if (!p.employee_id || !p.in_date || !p.in_time || !p.out_time)
