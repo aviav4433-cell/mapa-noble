@@ -1442,10 +1442,18 @@ function handle(action, p, db, user) {
       // B36a: עובד רגיל מחתים את עצמו בלבד — הוא מזוהה מהסשן ואינו יכול להזין קוד.
       // הזנת מספר אישי (= החתמה על שם מישהו אחר) מותרת למנהל / מנהל ראשי בלבד,
       // והיא גוברת על הסשן, כדי שמנהל יוכל להחתים עובד שאין לו גישה למערכת.
+      // B37: מנהל יכול גם לבחור עובד מרשימה נפתחת, בלי להקליד מספר אישי.
+      // הבחירה ברשימה שקולה להזנת מספר אישי — ולכן מותרת למנהל בלבד, בדיוק כמוה.
       var clockIsMgr = p._verified_role === 'מנהל' || isSuperAdmin(p._verified_employee_id);
       var typedPin = String(p.pin || '').trim();
+      var pickedEmpId = String(p.employee_id || '').trim();
       var ce = null;
-      if (typedPin) {
+      if (pickedEmpId) {
+        if (!clockIsMgr) return { ok: false, error: 'בחירת עובד להחתמה מותרת למנהל בלבד' };
+        ce = db.employees.find(function (x) { return x.id === pickedEmpId && x.active !== 'לא'; });
+        if (!ce) return { ok: false, error: 'העובד לא נמצא או אינו פעיל' };
+      }
+      if (!ce && typedPin) {
         if (!clockIsMgr) return { ok: false, error: 'הזנת מספר אישי מותרת למנהל בלבד' };
         ce = db.employees.find(function (x) { return String(x.pin || '') !== '' && String(x.pin) === typedPin && x.active !== 'לא'; });
         if (!ce) return { ok: false, error: 'מספר אישי שגוי' };
@@ -1460,6 +1468,7 @@ function handle(action, p, db, user) {
         open.out_time = hhmm;
         open.hours = calcHours(open.in_time, open.out_time);
         writeTable('attendance', db.attendance);
+        syncDraftPayroll(db, ce.id, String(open.date || '').substring(0, 7)); // B37
         return { ok: true, mode: 'out', name: ce.name, hours: open.hours, auditNote: 'החתמת יציאה — ' + ce.name + ' ' + hhmm + ' · ' + open.hours + ' שעות' };
       }
       db.attendance.push({ id: genId('ATT'), employee_id: ce.id, date: t, in_time: hhmm, out_time: '', hours: '' });
@@ -1477,6 +1486,7 @@ function handle(action, p, db, user) {
         in_date: inDate, out_date: outDate, in_time: p.in_time, out_time: p.out_time, hours: h
       });
       writeTable('attendance', db.attendance);
+      syncDraftPayroll(db, p.employee_id, String(inDate).substring(0, 7)); // B37
       return { ok: true, hours: h };
     }
 
@@ -2480,7 +2490,8 @@ function buildPayrollForMonth(db, month) {
       recomputePayrollTotal(ex, db);
       updated++;
     } else {
-      if (c.base <= 0) return; // אין מה ליצור — עובד שעתי בלי נוכחות, או גלובלי בלי סכום מוגדר
+      // B37: עד כה עובד שעתי בלי נוכחות (וכל עובד חדש) דולג — ולכן לא הופיע לעולם ברשימת השכר.
+      // עכשיו נוצרת רשומת טיוטה לכל עובד פעיל, גם בסכום 0. היא תתעדכן לבד כשתירשם נוכחות.
       db.payroll.push({
         id: genId('PAYR'), employee_id: e.id, month: month, pay_type: c.pay_type,
         hours: c.hours, hourly_rate: c.rate, base_pay: c.base,
@@ -2530,6 +2541,16 @@ function rebuildPayrollFromAttendance(db, pr) {
   pr.hourly_rate = rate;
   pr.base_pay = Math.round(hrs * rate * 100) / 100;
   recomputePayrollTotal(pr, db);
+}
+// B37: אחרי כל שינוי נוכחות — טיוטת השכר של אותו חודש מתעדכנת מיד.
+// רשומה שאושרה או שולמה לעולם אינה נדרסת. אם אין רשומה לחודש — לא נוצרת כאן אחת
+// (יצירה נעשית רק ב"הפק שכר" ובטריגר החודשי), כדי שלא ייווצרו טיוטות מחודשים ישנים.
+function syncDraftPayroll(db, employeeId, month) {
+  if (!employeeId || !month) return;
+  var pr = db.payroll.find(function (x) { return x.employee_id === employeeId && x.month === month; });
+  if (!pr || pr.status !== 'טיוטה') return;
+  rebuildPayrollFromAttendance(db, pr);
+  writeTable('payroll', db.payroll);
 }
 // B20: חישוב total מחדש = בסיס + בונוס ישן (תאימות) + תוספות/ניכויים מפורטים
 function recomputePayrollTotal(pr, db) {
