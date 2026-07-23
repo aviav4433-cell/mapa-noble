@@ -120,7 +120,8 @@ var TABLES = {
   // B5: נוספו route_order (סדר מסלול נהג) ו-eta_text (תיאור מצב — "עצירה X מתוך Y") — בסוף בלבד (מיגרציה בטוחה)
   // B10: נוסף removal_ack (סימון "טופל" להסרת כתובת בדשבורד ההנהלה) — בסוף בלבד (מיגרציה בטוחה)
   // B16: נוסף signature_url (חתימת לקוח למסירה) — בסוף בלבד (מיגרציה בטוחה)
-  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url'],
+  // B34: נוספו trip_id, trip_order (שיוך לנסיעה), scan_status ('נסרק'/'ללא סריקה'), scan_ack (אישור מנהל בדיעבד) — בסוף בלבד (מיגרציה בטוחה)
+  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url', 'trip_id', 'trip_order', 'scan_status', 'scan_ack'],
   // B1: נוספו type, allocation_number, pdf_url, draft_note לחשבוניות
   invoices: ['id', 'number', 'order_id', 'customer_id', 'date', 'subtotal', 'vat_rate', 'vat', 'total', 'status', 'type', 'allocation_number', 'pdf_url', 'draft_note'],
   // B2: עמודות חדשות בסוף בלבד (מיגרציה בטוחה). amount נשאר בש"ח לתאימות; חישובים באגורות בשרת בלבד.
@@ -168,7 +169,15 @@ var TABLES = {
   // call_logs — תיעוד שיחות נהגים (B5)
   call_logs: ['id', 'delivery_id', 'driver_id', 'outcome', 'note', 'called_at'],
   // notifications — התראות (B4)
-  notifications: ['id', 'type', 'recipient', 'channel', 'payload', 'status', 'scheduled_for', 'sent_at']
+  notifications: ['id', 'type', 'recipient', 'channel', 'payload', 'status', 'scheduled_for', 'sent_at'],
+  // B34: אריזות עם ברקוד קבוע לפי מוצר+כמות (אין מזהה לחבילה בודדת — 100 חבילות זהות = אותו ברקוד)
+  package_types: ['id', 'item_id', 'qty', 'barcode', 'active', 'notes', 'created_at'],
+  // B34: יומן תנועות אריזה — append-only. move_type: 'אריזה'(+) / 'ליקוט'(-) / 'התאמה'(±) / 'מידוף'(מיקום בלבד, לא משנה כמות)
+  package_moves: ['id', 'ts', 'type_id', 'count', 'move_type', 'shelf_code', 'case_id', 'order_id', 'delivery_id', 'user', 'note'],
+  // B34: מארזים רב-פעמיים (כמו עגלות) — ברקוד קבוע, שיוך זמני להזמנה/משלוח ושחרור בחזרה
+  cases: ['id', 'barcode', 'status', 'order_id', 'delivery_id', 'active', 'notes'],
+  // B34: נסיעות חלוקה (תכנון הנהלה) — נפרד מטבלת trips הקיימת (יומן ק"מ של צי הרכב)
+  delivery_trips: ['id', 'date', 'driver_id', 'vehicle_id', 'seq', 'planned_time', 'status', 'notes', 'created_at']
 };
 
 var UNIT_STATUSES = ['פנוי', 'אצל לקוח', 'בכביסה', 'גרוט'];
@@ -253,7 +262,9 @@ function setupDatabase() {
     // B1: טבלאות חדשות
     ['credit_profiles', 'פרופילי אשראי ופקדונות (B3)'], ['call_logs', 'יומן שיחות נהגים (B5)'], ['notifications', 'התראות ואימיילים (B4)'],
     // B20: שכר מתקדם + הוצאות עתידיות
-    ['payroll_adjustments', 'תוספות/ניכויים לשכר עם קטגוריה (B20)'], ['payroll_payments', 'תשלומי שכר בפועל, מלא/חלקי (B20)'], ['future_expenses', 'הוצאות עתידיות — שכר שאושר וטרם שולם + הוצאות מתוכננות (B20)']];
+    ['payroll_adjustments', 'תוספות/ניכויים לשכר עם קטגוריה (B20)'], ['payroll_payments', 'תשלומי שכר בפועל, מלא/חלקי (B20)'], ['future_expenses', 'הוצאות עתידיות — שכר שאושר וטרם שולם + הוצאות מתוכננות (B20)'],
+    // B34
+    ['package_types', 'סוגי אריזה — ברקוד קבוע למוצר+כמות (B34)'], ['package_moves', 'יומן תנועות אריזה (B34)'], ['cases', 'מארזים רב-פעמיים (B34)'], ['delivery_trips', 'נסיעות חלוקה (B34)']];
   var dic = ss.getSheetByName('מילון');
   if (!dic) dic = ss.insertSheet('מילון', 0);
   dic.clearContents();
@@ -326,7 +337,9 @@ var TMAP = {
   expense_payments: 'expensePayments', payment_docs: 'paymentDocs', cash_moves: 'cashMoves',
   laundry_intakes: 'laundryIntakes', intake_carts: 'intakeCarts', laundry_events: 'laundryEvents',
   // B1: טבלאות חדשות
-  credit_profiles: 'creditProfiles', call_logs: 'callLogs', notifications: 'notifications'
+  credit_profiles: 'creditProfiles', call_logs: 'callLogs', notifications: 'notifications',
+  // B34
+  package_types: 'packageTypes', package_moves: 'packageMoves', cases: 'cases', delivery_trips: 'deliveryTrips'
 };
 
 // F1: טעינה עצלה — כל טבלה נקראת מהגליון רק בגישה הראשונה אליה (getter + מטמון)
@@ -587,6 +600,8 @@ function getDriverFilteredPayload(db, employeeId) {
     return { id: c.id, name: c.name, address: c.address, phone: c.phone };
   });
   out.employees = emp ? [{ id: emp.id, name: emp.name, role: emp.role }] : [];
+  // B34: הנסיעות של הנהג בלבד — לצורך קיבוץ המסלול לפי נסיעות
+  out.deliveryTrips = (full.deliveryTrips || []).filter(function (t) { return String(t.driver_id) === String(employeeId); });
   return out;
 }
 
@@ -643,6 +658,8 @@ function handle(action, p, db, user) {
       var row = p.row || {};
       if (['carts', 'machines', 'vehicles'].indexOf(p.table) === -1)
         row.id = row.id || genId(p.table.substring(0, 4).toUpperCase());
+      // B34a: לכל מדף חדש מונפק ברקוד קבוע אוטומטית — אין הזנה ידנית
+      if (p.table === 'shelves' && !row.barcode) row.barcode = 'SH-' + nextNumber(db, 'shelf', 201);
       var NAME_UNIQUE = { customers: 'לקוח', suppliers: 'ספק' };
       if (NAME_UNIQUE[p.table] && row.name) {
         var nm = String(row.name).trim();
@@ -771,6 +788,8 @@ function handle(action, p, db, user) {
       if (p.table === 'notes') return { ok: false, error: 'תרשומת אינה ניתנת לעריכה — הוסף תרשומת חדשה עם קישור אליה' };
       if (p.table === 'items' && p.row.barcode && db.items.some(function (i) { return i.id !== p.id && i.barcode && String(i.barcode) === String(p.row.barcode); }))
         return { ok: false, error: 'ברקוד זה כבר קיים על פריט אחר' };
+      // B34a: מדף ותיק בלי ברקוד — מקבל ברקוד אוטומטית בעריכה הראשונה
+      if (p.table === 'shelves' && !rec.barcode && !p.row.barcode) p.row.barcode = 'SH-' + nextNumber(db, 'shelf', 201);
       Object.keys(p.row).forEach(function (k) { if (k !== 'id') rec[k] = p.row[k]; });
       writeTable(p.table, arr);
       return { ok: true, row: rec };
@@ -1168,6 +1187,26 @@ function handle(action, p, db, user) {
         var pkIt = db.items.find(function (i) { return i.id === pk.item_id; });
         return { ok: true, kind: 'package', entity: pk, item: pkIt || null };
       }
+      // B34: סוג אריזה (ברקוד קבוע למוצר+כמות)
+      var pt = db.packageTypes.find(function (t) { return String(t.barcode) === bc && t.active !== 'לא'; });
+      if (pt) {
+        var ptIt = db.items.find(function (i) { return i.id === pt.item_id; });
+        return { ok: true, kind: 'package_type', entity: pt, item: ptIt || null, balance: b34PkgNet(db, pt.id) };
+      }
+      // B34: מארז
+      var cs = db.cases.find(function (c) { return (String(c.barcode) === bc || String(c.id) === bc) && c.active !== 'לא'; });
+      if (cs) {
+        var csOrd = cs.order_id ? db.orders.find(function (o) { return o.id === cs.order_id; }) : null;
+        return { ok: true, kind: 'case', entity: cs, order: csOrd || null, contents: b34CaseContents(db, cs.id) };
+      }
+      // B34: מדף
+      var shf = db.shelves.find(function (s) { return String(s.barcode) === bc || String(s.code) === bc; });
+      if (shf) return { ok: true, kind: 'shelf', entity: shf };
+      // B34: הזמנה (לפי מזהה או מספר הזמנה) ומשלוח (לפי מזהה)
+      var ordSc = db.orders.find(function (o) { return String(o.id) === bc || String(o.order_number || '') === bc; });
+      if (ordSc) return { ok: true, kind: 'order', entity: { id: ordSc.id, order_number: ordSc.order_number, status: ordSc.status, customer_id: ordSc.customer_id } };
+      var dlvSc = db.deliveries.find(function (d) { return String(d.id) === bc; });
+      if (dlvSc) return { ok: true, kind: 'delivery', entity: dlvSc };
       return { ok: false, error: 'ברקוד לא נמצא במערכת' };
     }
 
@@ -2185,6 +2224,19 @@ function handle(action, p, db, user) {
 
     // ---- B14: לוח בקרה עסקי (BI Dashboard, Phase 2 סעיף 2.1) — קריאה בלבד ----
     case 'b14BiDashboard': return b14BiDashboard(db);
+
+    // ---- B34: אריזות (ברקוד קבוע), מארזים, סריקת העמסה, נסיעות חלוקה ----
+    case 'pkgPack': return b34PkgPack(db, p, user);
+    case 'pkgAdjust': return b34PkgAdjust(db, p, user);
+    case 'pkgShelve': return b34PkgShelve(db, p, user);
+    case 'caseCreate': return b34CaseCreate(db, p, user);
+    case 'casePick': return b34CasePick(db, p, user);
+    case 'caseRelease': return b34CaseRelease(db, p, user);
+    case 'b34LoadScan': return b34LoadScan(db, p, user);
+    case 'b10AckScan': return b10AckScan(db, p, user);
+    case 'tripCreate': return b34TripCreate(db, p, user);
+    case 'tripAssign': return b34TripAssign(db, p, user);
+    case 'tripSetStatus': return b34TripSetStatus(db, p, user);
 
     default: return { ok: false, error: 'פעולה לא מוכרת: ' + action };
   }
@@ -4136,6 +4188,8 @@ function b5MarkInTransit(db, p, user) {
   if (!dlv) return { ok: false, error: 'משלוח לא נמצא' };
   if (!b5CanTouch(db, dlv, user)) return { ok: false, error: 'אין הרשאה למשלוח זה' };
   if (B5_OPEN_STATUSES.indexOf(dlv.status) === -1) return { ok: false, error: 'ניתן לסמן "בדרך" רק משלוח פתוח (מתוכנן/בדרך)' };
+  // B34: יציאה לדרך בלי סריקת העמסה — נרשמת (לא חוסמת). כשההגדרה scan_enforce='כן' זה נכנס למרכז האישורים.
+  if (!dlv.scan_status) dlv.scan_status = 'ללא סריקה';
   dlv.status = 'בדרך';
   var route = b5DriverOpenDeliveries(db, dlv.driver);
   var pos = route.findIndex(function (r) { return String(r.id) === String(dlv.id); }) + 1;
@@ -4362,16 +4416,29 @@ function b10ApprovalsInbox(db) {
     };
   });
 
+  // 4) B34: יציאות לדרך ללא סריקת העמסה — לאישור מנהל בדיעבד. מוצג רק כשאכיפת סריקה מופעלת
+  //    (settings: scan_enforce='כן') כדי לא להציף את התור בתקופת ההרצה.
+  var scanEnforce = String((db.settings.find(function (s) { return s.key === 'scan_enforce'; }) || {}).value || '') === 'כן';
+  var scanPending = !scanEnforce ? [] : db.deliveries.filter(function (d) {
+    return d.scan_status === 'ללא סריקה' && d.scan_ack !== 'כן';
+  }).map(function (d) {
+    var o = d.order_id ? db.orders.find(function (x) { return x.id === d.order_id; }) : null;
+    var c = o ? db.customers.find(function (x) { return x.id === o.customer_id; }) : null;
+    return { delivery_id: d.id, order_number: o ? (o.order_number || o.id) : '', customer: c ? c.name : '', driver: d.driver || '', date: d.date || '' };
+  });
+
   return {
     ok: true,
     guarantees: guarantees,
     credit_exceptions: creditExceptions,
     address_removals: addressRemovals,
+    scan_pending: scanPending,
     counts: {
       guarantees: guarantees.length,
       credit_exceptions: creditExceptions.length,
       address_removals: addressRemovals.length,
-      total: guarantees.length + creditExceptions.length + addressRemovals.length
+      scan_pending: scanPending.length,
+      total: guarantees.length + creditExceptions.length + addressRemovals.length + scanPending.length
     }
   };
 }
@@ -4532,4 +4599,291 @@ function b14BiDashboard(db) {
     inventory: b14Inventory(db),
     cashflow: b14Cashflow(db)
   };
+}
+
+// ============================================================
+//  B34: אריזות · מארזים · סריקת העמסה · נסיעות חלוקה
+//  עקרונות: ברקוד קבוע לסוג אריזה (מוצר+כמות) — אין מזהה לחבילה בודדת.
+//  package_moves הוא יומן append-only (כמו laundry_events) — לעולם לא writeTable עליו.
+//  גמישות הרצה: אפשר לדלג על אריזה/מידוף/סריקה; יציאה בלי סריקה נרשמת,
+//  ונאכפת (אישור מנהל בדיעבד) רק כש-settings.scan_enforce='כן'.
+// ============================================================
+
+// הרשאת הנהלה/משרד לפעולות תכנון (נסיעות, אישורי סריקה)
+function b34OfficeOk(db, user) {
+  if (!db.employees.length) return true;
+  var e = db.employees.find(function (x) { return x.name === user && x.active !== 'לא'; });
+  return !!(e && (e.role === 'מנהל' || e.role === 'משרד'));
+}
+
+// בדיקת ייחודיות ברקוד מול כל הישויות בעלות ברקוד במערכת
+function b34BarcodeTaken(db, bc) {
+  bc = String(bc);
+  return db.items.some(function (x) { return String(x.barcode) === bc; }) ||
+    db.units.some(function (x) { return x.deleted !== 'כן' && String(x.barcode) === bc; }) ||
+    db.carts.some(function (x) { return String(x.barcode) === bc; }) ||
+    db.machines.some(function (x) { return String(x.barcode) === bc; }) ||
+    db.shelves.some(function (x) { return String(x.barcode) === bc || String(x.code) === bc; }) ||
+    db.packageTypes.some(function (x) { return String(x.barcode) === bc; }) ||
+    db.cases.some(function (x) { return String(x.barcode) === bc; }) ||
+    db.laundryTasks.some(function (x) { return String(x.package_barcode) === bc; });
+}
+
+// מציאה/יצירה של סוג אריזה למוצר+כמות. ברקוד חיצוני (מדבקה קיימת) — נשמר כפי שהוא; אחרת מונפק PT- קבוע.
+function b34PkgType(db, p) {
+  var it = db.items.find(function (i) { return i.id === p.item_id; });
+  if (!it) return { ok: false, error: 'פריט לא נמצא' };
+  var q = Math.round(Number(p.qty));
+  if (!(q > 0)) return { ok: false, error: 'כמות ליחידת אריזה חייבת להיות מספר חיובי' };
+  var bc = String(p.barcode || '').trim();
+  var tp = db.packageTypes.find(function (t) { return t.item_id === p.item_id && Number(t.qty) === q && t.active !== 'לא'; });
+  if (tp) {
+    if (bc && String(tp.barcode) !== bc) return { ok: false, error: 'לסוג אריזה זה כבר קיים ברקוד קבוע: ' + tp.barcode + '. ברקוד אחד לכל מוצר+כמות.' };
+    return { ok: true, type: tp, created: false };
+  }
+  if (bc && b34BarcodeTaken(db, bc)) return { ok: false, error: 'הברקוד ' + bc + ' כבר בשימוש במערכת' };
+  var generated = !bc;
+  if (!bc) bc = 'PT-' + nextNumber(db, 'pkgtype', 101);
+  tp = { id: genId('PTYP'), item_id: p.item_id, qty: q, barcode: bc, active: 'כן', notes: String(p.notes || ''), created_at: nowTs() };
+  db.packageTypes.push(tp);
+  writeTable('package_types', db.packageTypes);
+  return { ok: true, type: tp, created: true, generated: generated };
+}
+
+// כמות חבילות נטו במלאי לסוג אריזה: אריזה(+) − ליקוט(−) ± התאמה. מידוף לא משנה כמות.
+function b34PkgNet(db, typeId) {
+  return db.packageMoves.filter(function (m) { return String(m.type_id) === String(typeId); })
+    .reduce(function (s, m) {
+      var c = Number(m.count) || 0;
+      if (m.move_type === 'אריזה') return s + c;
+      if (m.move_type === 'ליקוט') return s - c;
+      if (m.move_type === 'התאמה') return s + c; // count חתום (±)
+      return s;
+    }, 0);
+}
+
+// תכולת מארז פעילה (ליקוטים אליו מאז השיוך הנוכחי — כל עוד המארז משויך)
+function b34CaseContents(db, caseId) {
+  var out = {};
+  db.packageMoves.filter(function (m) { return String(m.case_id) === String(caseId) && m.move_type === 'ליקוט'; })
+    .forEach(function (m) { out[m.type_id] = (out[m.type_id] || 0) + (Number(m.count) || 0); });
+  return Object.keys(out).map(function (tid) {
+    var tp = db.packageTypes.find(function (t) { return t.id === tid; });
+    var it = tp ? db.items.find(function (i) { return i.id === tp.item_id; }) : null;
+    return { type_id: tid, count: out[tid], item_name: it ? it.name : '', per_pkg: tp ? tp.qty : '' };
+  });
+}
+
+function b34AppendMove(db, row) {
+  row.id = genId('PMOV'); row.ts = nowTs();
+  db.packageMoves.push(row);
+  appendRowToTable('package_moves', row); // append-only — לא משכתבים את היומן
+}
+
+// אריזה: יצירת חבילות מסוג נתון (עם/בלי מדבקה חיצונית, עם/בלי מידוף — גמישות מלאה)
+function b34PkgPack(db, p, user) {
+  var t = b34PkgType(db, p);
+  if (!t.ok) return t;
+  var n = Math.round(Number(p.count));
+  if (!(n > 0)) return { ok: false, error: 'מספר חבילות חייב להיות מספר חיובי' };
+  b34AppendMove(db, {
+    type_id: t.type.id, count: n, move_type: 'אריזה',
+    shelf_code: String(p.shelf_code || ''), case_id: '', order_id: '', delivery_id: '',
+    user: user || '', note: String(p.note || '')
+  });
+  var it = db.items.find(function (i) { return i.id === t.type.item_id; }) || {};
+  return {
+    ok: true, type: t.type, created: t.created, generated: !!t.generated, balance: b34PkgNet(db, t.type.id),
+    auditNote: 'B34 אריזה · ' + n + ' חבילות של ' + t.type.qty + ' × ' + (it.name || t.type.item_id) + ' · ברקוד ' + t.type.barcode + (p.shelf_code ? ' · מדף ' + p.shelf_code : '')
+  };
+}
+
+// התאמת ספירה ידנית (± עם סיבה) — לתיקון תיעוד חסר/מלאי אבוד
+function b34PkgAdjust(db, p, user) {
+  var tp = db.packageTypes.find(function (t) { return t.id === p.type_id; });
+  if (!tp) return { ok: false, error: 'סוג אריזה לא נמצא' };
+  var n = Math.round(Number(p.count));
+  if (!n) return { ok: false, error: 'כמות התאמה לא יכולה להיות 0' };
+  var reason = String(p.note || '').trim();
+  if (reason.length < 3) return { ok: false, error: 'חובה לפרט סיבת התאמה (לפחות 3 תווים)' };
+  if (b34PkgNet(db, tp.id) + n < 0) return { ok: false, error: 'ההתאמה תוריד את המלאי מתחת לאפס' };
+  b34AppendMove(db, { type_id: tp.id, count: n, move_type: 'התאמה', shelf_code: '', case_id: '', order_id: '', delivery_id: '', user: user || '', note: reason });
+  return { ok: true, balance: b34PkgNet(db, tp.id), auditNote: 'B34 התאמת אריזות · ' + tp.barcode + ' · ' + (n > 0 ? '+' : '') + n + ' · ' + reason };
+}
+
+// מידוף: רישום מיקום של חבילות קיימות (לא משנה כמות) — ניתן לדלג עליו בתקופת ההרצה
+function b34PkgShelve(db, p, user) {
+  var tp = db.packageTypes.find(function (t) { return t.id === p.type_id; });
+  if (!tp) return { ok: false, error: 'סוג אריזה לא נמצא' };
+  var code = String(p.shelf_code || '').trim();
+  if (!code) return { ok: false, error: 'בחר מדף' };
+  if (!db.shelves.some(function (s) { return String(s.code) === code || String(s.barcode) === code; })) return { ok: false, error: 'מדף ' + code + ' לא קיים' };
+  var n = Math.round(Number(p.count)) || 0;
+  b34AppendMove(db, { type_id: tp.id, count: n, move_type: 'מידוף', shelf_code: code, case_id: '', order_id: '', delivery_id: '', user: user || '', note: String(p.note || '') });
+  return { ok: true, auditNote: 'B34 מידוף · ' + tp.barcode + ' · ' + n + ' חבילות → מדף ' + code };
+}
+
+// יצירת מארז רב-פעמי (ברקוד קבוע — חיצוני או מונפק)
+function b34CaseCreate(db, p, user) {
+  var bc = String(p.barcode || '').trim();
+  if (bc && b34BarcodeTaken(db, bc)) return { ok: false, error: 'הברקוד ' + bc + ' כבר בשימוש במערכת' };
+  if (!bc) bc = 'CS-' + nextNumber(db, 'case', 501);
+  var cs = { id: genId('CASE'), barcode: bc, status: 'פנוי', order_id: '', delivery_id: '', active: 'כן', notes: String(p.notes || '') };
+  db.cases.push(cs);
+  writeTable('cases', db.cases);
+  return { ok: true, kase: cs, auditNote: 'B34 מארז חדש · ' + bc };
+}
+
+// ליקוט חבילות למארז + שיוך המארז להזמנה (ובאופציה למשלוח). picks יכול להיות ריק — שיוך בלבד.
+function b34CasePick(db, p, user) {
+  var cs = db.cases.find(function (c) { return c.id === p.case_id || String(c.barcode) === String(p.case_id); });
+  if (!cs) return { ok: false, error: 'מארז לא נמצא' };
+  if (cs.active === 'לא') return { ok: false, error: 'המארז אינו פעיל' };
+  var ord = null;
+  if (p.order_id) {
+    ord = db.orders.find(function (o) { return o.id === p.order_id; });
+    if (!ord) return { ok: false, error: 'הזמנה לא נמצאה' };
+    if (cs.order_id && cs.order_id !== ord.id) return { ok: false, error: 'המארז ' + cs.barcode + ' כבר משויך להזמנה אחרת — שחרר אותו קודם' };
+  } else if (!cs.order_id) return { ok: false, error: 'בחר הזמנה לשיוך המארז' };
+  var picks = Array.isArray(p.picks) ? p.picks : [];
+  var lines = [];
+  for (var i = 0; i < picks.length; i++) {
+    var tp = db.packageTypes.find(function (t) { return t.id === picks[i].type_id; });
+    if (!tp) return { ok: false, error: 'סוג אריזה לא נמצא' };
+    var n = Math.round(Number(picks[i].count));
+    if (!(n > 0)) return { ok: false, error: 'כמות ליקוט חייבת להיות חיובית' };
+    var bal = b34PkgNet(db, tp.id);
+    if (n > bal) {
+      var itP = db.items.find(function (x) { return x.id === tp.item_id; }) || {};
+      return { ok: false, error: 'אין מספיק חבילות במלאי: ' + (itP.name || '') + ' (' + tp.qty + ' ליח\') — מבוקש ' + n + ', קיים ' + bal };
+    }
+    lines.push({ tp: tp, n: n });
+  }
+  if (ord) { cs.order_id = ord.id; }
+  if (p.delivery_id !== undefined) cs.delivery_id = String(p.delivery_id || '');
+  cs.status = 'משויך';
+  writeTable('cases', db.cases);
+  lines.forEach(function (L) {
+    b34AppendMove(db, { type_id: L.tp.id, count: L.n, move_type: 'ליקוט', shelf_code: '', case_id: cs.id, order_id: cs.order_id, delivery_id: cs.delivery_id || '', user: user || '', note: String(p.note || '') });
+  });
+  return { ok: true, kase: cs, contents: b34CaseContents(db, cs.id), auditNote: 'B34 ליקוט למארז ' + cs.barcode + ' · הזמנה ' + ((ord && (ord.order_number || ord.id)) || cs.order_id) + ' · ' + lines.length + ' שורות' };
+}
+
+// שחרור מארז בחזרתו — התכולה ההיסטורית נשארת ביומן; המארז חוזר "פנוי"
+function b34CaseRelease(db, p, user) {
+  var cs = db.cases.find(function (c) { return c.id === p.case_id || String(c.barcode) === String(p.case_id); });
+  if (!cs) return { ok: false, error: 'מארז לא נמצא' };
+  var prev = cs.order_id || '';
+  cs.status = 'פנוי'; cs.order_id = ''; cs.delivery_id = '';
+  writeTable('cases', db.cases);
+  return { ok: true, kase: cs, auditNote: 'B34 שחרור מארז ' + cs.barcode + (prev ? ' (היה משויך ל-' + prev + ')' : '') };
+}
+
+// סריקת העמסה/איסוף של נהג או מחסן: מקבל ברקוד ומאמת שייכות למשלוח.
+// מזהה: מארז / סוג אריזה / ברקוד הזמנה (מזהה או מספר) / מזהה משלוח.
+function b34LoadScan(db, p, user) {
+  var d = db.deliveries.find(function (x) { return String(x.id) === String(p.delivery_id); });
+  if (!d) return { ok: false, error: 'משלוח לא נמצא' };
+  // נהג רשאי לסרוק רק משלוח ששייך לו (אותה בדיקה כמו פעולות B5)
+  var scEmp = db.employees.find(function (e) { return e.name === user && e.active !== 'לא'; });
+  if (scEmp && scEmp.role === 'נהג' && d.driver !== user) return { ok: false, error: 'אין הרשאה למשלוח זה' };
+  var bc = String(p.barcode || '').trim();
+  if (!bc) return { ok: false, error: 'ברקוד ריק' };
+  var label = '';
+  var cs = db.cases.find(function (c) { return (String(c.barcode) === bc || String(c.id) === bc) && c.active !== 'לא'; });
+  if (cs) {
+    if (cs.order_id && d.order_id && cs.order_id !== d.order_id) return { ok: false, error: 'המארז ' + cs.barcode + ' משויך להזמנה אחרת — לא שייך למשלוח זה' };
+    if (!cs.order_id && d.order_id) { cs.order_id = d.order_id; cs.status = 'משויך'; } // גמישות הרצה: סריקה משייכת מארז חופשי
+    cs.delivery_id = d.id;
+    writeTable('cases', db.cases);
+    label = 'מארז ' + cs.barcode;
+  } else {
+    var pt = db.packageTypes.find(function (t) { return String(t.barcode) === bc && t.active !== 'לא'; });
+    if (pt) {
+      var itL = db.items.find(function (i) { return i.id === pt.item_id; }) || {};
+      label = 'חבילה: ' + pt.qty + ' × ' + (itL.name || '');
+    } else {
+      var oL = d.order_id ? db.orders.find(function (o) { return o.id === d.order_id; }) : null;
+      if (oL && (String(oL.id) === bc || String(oL.order_number || '') === bc)) label = 'הזמנה #' + (oL.order_number || oL.id);
+      else if (String(d.id) === bc) label = 'משלוח ' + d.id;
+      else {
+        // הברקוד קיים במערכת אבל לא שייך למשלוח? נבדיל בין "לא נמצא" ל"לא שייך"
+        var known = b34BarcodeTaken(db, bc) || db.orders.some(function (o) { return String(o.id) === bc || String(o.order_number || '') === bc; }) || db.deliveries.some(function (x) { return String(x.id) === bc; });
+        return { ok: false, error: known ? 'הברקוד ' + bc + ' לא שייך למשלוח זה' : 'ברקוד לא נמצא במערכת' };
+      }
+    }
+  }
+  d.scan_status = 'נסרק'; d.scan_ack = '';
+  writeTable('deliveries', db.deliveries);
+  return { ok: true, delivery: d, label: label, auditNote: 'B34 סריקת העמסה · משלוח ' + d.id + ' · ' + label + ' · ' + (user || '') };
+}
+
+// אישור מנהל/משרד בדיעבד ליציאה ללא סריקה
+function b10AckScan(db, p, user) {
+  if (!b34OfficeOk(db, user)) return { ok: false, error: 'פעולה זו מותרת למנהל/משרד בלבד' };
+  var d = db.deliveries.find(function (x) { return String(x.id) === String(p.delivery_id); });
+  if (!d) return { ok: false, error: 'משלוח לא נמצא' };
+  d.scan_ack = 'כן';
+  writeTable('deliveries', db.deliveries);
+  return { ok: true, auditNote: 'B34 אישור בדיעבד ליציאה ללא סריקה · משלוח ' + d.id };
+}
+
+// ---- נסיעות חלוקה (delivery_trips) ----
+function b34TripCreate(db, p, user) {
+  if (!b34OfficeOk(db, user)) return { ok: false, error: 'תכנון נסיעה — מנהל/משרד בלבד' };
+  if (!isDateStr(p.date)) return { ok: false, error: 'תאריך נסיעה לא תקין' };
+  var drv = db.employees.find(function (e) { return e.id === p.driver_id && e.role === 'נהג' && e.active !== 'לא'; });
+  if (!drv) return { ok: false, error: 'בחר נהג פעיל' };
+  if (p.vehicle_id) {
+    var v = db.vehicles.find(function (x) { return x.id === p.vehicle_id; });
+    if (v && v.status && v.status !== 'פעיל') return { ok: false, error: 'הרכב שנבחר אינו פעיל (' + v.status + ')' };
+  }
+  var seq = db.deliveryTrips.filter(function (t) { return String(t.date) === String(p.date) && String(t.driver_id) === String(p.driver_id) && t.status !== 'בוטלה'; }).length + 1;
+  var tr = {
+    id: genId('TRIP'), date: p.date, driver_id: drv.id, vehicle_id: String(p.vehicle_id || ''),
+    seq: seq, planned_time: String(p.planned_time || ''), status: 'מתוכננת', notes: String(p.notes || ''), created_at: nowTs()
+  };
+  db.deliveryTrips.push(tr);
+  writeTable('delivery_trips', db.deliveryTrips);
+  return { ok: true, trip: tr, auditNote: 'B34 נסיעה חדשה · ' + p.date + ' · ' + drv.name + ' · נסיעה ' + seq };
+}
+
+// שיבוץ משלוחים לנסיעה: הרשימה שנשלחת היא המצב המלא — משלוח שהיה בנסיעה ואינו ברשימה משוחרר ממנה.
+// המשלוחים המשובצים מקבלים גם את הנהג של הנסיעה (כדי להופיע במסלול שלו) ואת הרכב אם ריק.
+function b34TripAssign(db, p, user) {
+  if (!b34OfficeOk(db, user)) return { ok: false, error: 'שיבוץ נסיעה — מנהל/משרד בלבד' };
+  var tr = db.deliveryTrips.find(function (t) { return t.id === p.trip_id; });
+  if (!tr) return { ok: false, error: 'נסיעה לא נמצאה' };
+  var drv = db.employees.find(function (e) { return e.id === tr.driver_id; });
+  var ids = (p.delivery_ids || []).map(String);
+  var changed = 0;
+  db.deliveries.forEach(function (d) {
+    var inList = ids.indexOf(String(d.id)) > -1;
+    if (inList) {
+      d.trip_id = tr.id; d.trip_order = ids.indexOf(String(d.id)) + 1;
+      if (drv) d.driver = drv.name;
+      if (!d.vehicle_id && tr.vehicle_id) d.vehicle_id = tr.vehicle_id;
+      changed++;
+    } else if (String(d.trip_id) === String(tr.id)) {
+      d.trip_id = ''; d.trip_order = '';
+      changed++;
+    }
+  });
+  writeTable('deliveries', db.deliveries);
+  return { ok: true, trip: tr, count: ids.length, auditNote: 'B34 שיבוץ נסיעה ' + tr.id + ' · ' + ids.length + ' משלוחים' };
+}
+
+function b34TripSetStatus(db, p, user) {
+  if (!b34OfficeOk(db, user)) return { ok: false, error: 'עדכון נסיעה — מנהל/משרד בלבד' };
+  var tr = db.deliveryTrips.find(function (t) { return t.id === p.trip_id; });
+  if (!tr) return { ok: false, error: 'נסיעה לא נמצאה' };
+  var st = String(p.status || '');
+  if (['מתוכננת', 'יצאה', 'הסתיימה', 'בוטלה'].indexOf(st) === -1) return { ok: false, error: 'סטטוס נסיעה לא חוקי' };
+  tr.status = st;
+  if (st === 'בוטלה') {
+    db.deliveries.forEach(function (d) { if (String(d.trip_id) === String(tr.id)) { d.trip_id = ''; d.trip_order = ''; } });
+    writeTable('deliveries', db.deliveries);
+  }
+  writeTable('delivery_trips', db.deliveryTrips);
+  return { ok: true, trip: tr, auditNote: 'B34 נסיעה ' + tr.id + ' → ' + st };
 }
