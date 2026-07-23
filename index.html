@@ -350,7 +350,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.19-B35 · 23.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.20-B36 · 23.07.2026</div>
   </div>
 </div>
 
@@ -4651,8 +4651,10 @@ var ATT_EMP = '';
 function rAttendance(){
   var isMgr = (ROLE==='מנהל');
   el('main').innerHTML = '<div class="section-title"><h2>נוכחות</h2>'+(isMgr?'<button class="btn ghost sm" onclick="attForm()">+ רישום ידני</button> <button class="btn ghost sm" onclick="doRepairTimeFields()" title="תיקון חד-פעמי לרישומים ישנים שהשתבשו">תיקון נתונים ישנים</button>':'')+'</div>'+
-    '<div class="card" style="text-align:center"><h3 style="margin-bottom:10px">שעון נוכחות</h3>'+
-    '<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="קוד עובד" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
+    // B36: השעון מחתים את העובד המחובר. קוד עובד נשאר לעמדת שעון משותפת בלבד.
+    '<div class="card" style="text-align:center"><h3 style="margin-bottom:4px">שעון נוכחות</h3>'+
+    '<p class="muted" style="margin-bottom:10px;font-size:13px">מחתים את '+esc(USER||'')+'. לעמדת שעון משותפת — הזן קוד עובד.</p>'+
+    '<input id="clockPin" type="password" inputmode="numeric" class="scanbox" placeholder="קוד עובד (לא חובה)" style="max-width:220px;margin:0 auto 10px" onkeydown="if(event.key===\'Enter\')doClock()">'+
     '<br><button class="btn" id="clockBtn" onclick="doClock()">החתם כניסה / יציאה</button><div id="clockMsg" style="margin-top:10px;min-height:20px"></div></div>'+
     '<div class="row" style="margin:14px 0 8px;gap:6px">'+
       '<button class="btn '+(ATT_TAB==='list'?'':'ghost ')+'sm" onclick="ATT_TAB=\'list\';rAttendance()">רשימה</button>'+
@@ -4813,7 +4815,9 @@ function rPayroll(){
   el('main').innerHTML = '<div class="section-title"><h2>שכר</h2></div>'+
     '<div class="card"><div class="row"><input id="pr_month" type="month" value="'+month+'" style="width:auto" onchange="rPayroll()">'+
     (ROLE!=='נהג'?'<button class="btn ghost" onclick="doPayrollPreview()">תצוגה מקדימה — חישוב לבדיקה</button>'+
-      '<span class="muted">השכר מחושב אוטומטית ב-1 בכל חודש עבור החודש שהסתיים, ונשמר כטיוטה לאישורך. שעתי: שעות × תעריף. גלובלי: סכום חודשי קבוע. הכפתור מחשב לתצוגה בלבד ואינו משנה שכר.</span>':'')+'</div></div>'+
+      // B36: הפקה ידנית — עד כה שכר נוצר רק בטריגר החודשי, ואם הוא לא רץ לא היה שכר כלל.
+      (ROLE==='מנהל'?'<button class="btn" onclick="doGeneratePayroll()">הפק שכר לחודש זה</button>':'')+
+      '<span class="muted">השכר מחושב אוטומטית ב-1 בכל חודש עבור החודש שהסתיים, ונשמר כטיוטה לאישורך. שעתי: שעות × תעריף. גלובלי: סכום חודשי קבוע. "תצוגה מקדימה" מחשבת לבדיקה בלבד; "הפק שכר" יוצר טיוטות בפועל ואינו נוגע בשכר שכבר אושר או שולם.</span>':'')+'</div></div>'+
     '<div id="prList">'+payrollTable(month)+'</div>';
 }
 function payrollTable(month){
@@ -4854,6 +4858,20 @@ async function doPayrollPreview(){
       '<tr><td colspan="4"><b>סה"כ בסיס</b></td><td class="tot"><b>'+ils(tot)+'</b></td><td></td></tr>'+
       '</table></div>' : '<div class="card empty">אין עובדים פעילים</div>')+
     '<div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+// B36: הפקת שכר ידנית לחודש הנבחר. יוצר טיוטות בפועל.
+// בטוח להרצה חוזרת — רשומה שאושרה או שולמה לעולם אינה נדרסת.
+async function doGeneratePayroll(){
+  var m = el('pr_month').value;
+  if(!m) return toast('בחר חודש', true);
+  var cur = new Date().toISOString().substring(0,7);
+  var warn = (m===cur) ? '\n\nשים לב: זהו החודש הנוכחי — החישוב מבוסס על הנוכחות שנרשמה עד היום בלבד. אפשר להפיק שוב בסוף החודש והטיוטה תתעדכן.' : '';
+  if(!confirm('להפיק שכר לחודש '+monthLabel(m)+'?\n\nייווצרו רשומות שכר בסטטוס טיוטה. שכר שכבר אושר או שולם לא ישתנה.'+warn)) return;
+  var r = await apiBusy('generatePayroll',{month:m});
+  if(!r || !r.ok) return toast((r&&r.error)||'שגיאה בהפקת השכר', true);
+  var g = await api('getAll'); if(g && g.ok){ DB=g.db; }
+  toast('הופק: '+r.created+' חדשות · '+r.updated+' עודכנו'+(r.locked?' · '+r.locked+' נעולות':''));
+  rPayroll();
 }
 function payrollDetail(pid){
   var p = DB.payroll.find(x=>x.id===pid); if(!p) return;
