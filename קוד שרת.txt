@@ -731,7 +731,7 @@ function handle(action, p, db, user) {
       }
       // מצב ישן (fallback): כניסה לפי PIN
       var emp = db.employees.find(function (x) { return String(x.pin) === String(p.pin) && x.active !== 'לא'; });
-      if (!emp) return { ok: false, error: 'קוד עובד שגוי' };
+      if (!emp) return { ok: false, error: 'מספר אישי שגוי' };
       return { ok: true, user: emp.name, role: emp.role, views: emp.views || '', can_edit: emp.can_edit !== 'לא' };
     }
 
@@ -837,7 +837,7 @@ function handle(action, p, db, user) {
       }
       if (p.table === 'employees' && row.pin) {
         if (db.employees.some(function (x) { return String(x.pin) === String(row.pin); }))
-          return { ok: false, error: 'קוד עובד זה תפוס' };
+          return { ok: false, error: 'המספר האישי הזה כבר תפוס' };
       }
       db[TMAP[p.table]].push(row);           // עקביות בזיכרון להמשך אותה בקשה
       appendRowToTable(p.table, row);         // F1: הוספת שורה בודדת במקום שכתוב כל הטבלה
@@ -1439,17 +1439,20 @@ function handle(action, p, db, user) {
     case 'clock': {
       // B36 (ליקוי 4): קודם השעון זיהה עובד לפי עמודת pin בלבד — ועובד בלי pin
       // (כלומר כמעט כולם) פשוט לא יכול היה להחתים כרטיס.
-      // סדר הזיהוי: קוד עובד שהוקלד במפורש קודם, ורק אחריו העובד המחובר.
-      // הסדר הזה חשוב: בעמדת שעון משותפת שמחוברת לחשבון כלשהו, הקלדת קוד עובד
-      // חייבת לגבור על הסשן — אחרת כל העובדים היו מוחתמים על שם בעל העמדה.
+      // B36a: עובד רגיל מחתים את עצמו בלבד — הוא מזוהה מהסשן ואינו יכול להזין קוד.
+      // הזנת מספר אישי (= החתמה על שם מישהו אחר) מותרת למנהל / מנהל ראשי בלבד,
+      // והיא גוברת על הסשן, כדי שמנהל יוכל להחתים עובד שאין לו גישה למערכת.
+      var clockIsMgr = p._verified_role === 'מנהל' || isSuperAdmin(p._verified_employee_id);
+      var typedPin = String(p.pin || '').trim();
       var ce = null;
-      if (String(p.pin || '').trim())
-        ce = db.employees.find(function (x) { return String(x.pin || '') !== '' && String(x.pin) === String(p.pin) && x.active !== 'לא'; });
-      if (!ce && String(p.pin || '').trim())
-        return { ok: false, error: 'קוד עובד שגוי' };
+      if (typedPin) {
+        if (!clockIsMgr) return { ok: false, error: 'הזנת מספר אישי מותרת למנהל בלבד' };
+        ce = db.employees.find(function (x) { return String(x.pin || '') !== '' && String(x.pin) === typedPin && x.active !== 'לא'; });
+        if (!ce) return { ok: false, error: 'מספר אישי שגוי' };
+      }
       if (!ce && p._verified_employee_id)
         ce = db.employees.find(function (x) { return x.id === p._verified_employee_id && x.active !== 'לא'; });
-      if (!ce) return { ok: false, error: 'לא זוהה עובד — יש להתחבר למערכת או להזין קוד עובד' };
+      if (!ce) return { ok: false, error: 'לא זוהה עובד — יש להתחבר למערכת' };
       var t = today();
       var open = db.attendance.find(function (a) { return a.employee_id === ce.id && a.date === t && !a.out_time; });
       var hhmm = nowTs().substring(11, 16);
@@ -2817,7 +2820,7 @@ function nRound2(n) { return Math.round(Number(n) * 100) / 100; }
 function nobleWorker(db, p, user) {
   if (p.worker_pin !== undefined && String(p.worker_pin) !== '') {
     var byPin = db.employees.find(function (x) { return String(x.pin) === String(p.worker_pin) && x.active !== 'לא'; });
-    if (!byPin) return { ok: false, error: 'קוד עובד שגוי' };
+    if (!byPin) return { ok: false, error: 'מספר אישי שגוי' };
     return { ok: true, id: byPin.id, name: byPin.name };
   }
   if (p._verified_employee_id) {
