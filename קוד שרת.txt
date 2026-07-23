@@ -92,6 +92,10 @@
 //               הקישור ל-deliveries.signature_url. אין נעילה מיוחדת — פעולת כתיבה רגילה (LockService+audit)
 //             • שכבת הממשק: מסך מסירה של נהג בלבד (rDriverRoute/driverStopCard) — לא במסך החזרה
 //             • canary: v4.1-B16
+//  אצווה B36: תיקוני QA — מזהים ייחודיים (genId) · סינון סיסמאות מיומן הפעולות ·
+//              גריעת חוסר/גריטה משויכת למחסן · שעון נוכחות לפי העובד המחובר ·
+//              bootstrapFirstPassword (הקמה ראשונית/שחזור גישה מהעורך) ·
+//              generatePayroll (הפקת שכר ידנית למנהל). ללא עמודות חדשות — אין צורך ב-setupDatabase.
 //  אחרי הדבקה: (1) חובה להריץ setupDatabase פעם אחת מהעורך (עמודות חדשות ל-deliveries)
 //              (2) חובה להגדיר ScriptProperties בשם SUPER_ADMIN_ID עם ה-id של העובד אבי (ראה הוראות במסירה)
 //              (3) Deploy → Manage deployments → Edit → New version → Deploy
@@ -205,7 +209,7 @@ var DEFAULT_SETTINGS = {
 };
 
 var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
-var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = ['delete', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -235,6 +239,57 @@ function b7ListEmployeeIds() {
   var rows = readTable('employees');
   rows.forEach(function (e) { Logger.log(e.name + '  —  id: ' + e.id); });
 }
+// B36 (ליקוי 5): הקמה ראשונית / שחזור גישת מנהל.
+// הבעיה: במערכת חדשה קביעת סיסמה דורשת סשן פעיל, וכניסה דורשת סיסמה קיימת —
+// מעגל סגור שחוסם כל התקנה חדשה, וגם חוסם את אבי אם יאבד את סיסמת המנהל.
+// הפתרון: פונקציה שרצה ידנית מעורך Apps Script בלבד (לא דרך doPost, לא מהאינטרנט).
+//
+// אופן השימוש (פעם אחת):
+//   1. בעורך Apps Script: הגדרות הפרויקט ← מאפייני סקריפט
+//      הוסף BOOTSTRAP_USERNAME (שם המשתמש הרצוי) ו-BOOTSTRAP_PASSWORD (הסיסמה הרצויה)
+//   2. חזור לעורך ← בחר bootstrapFirstPassword ← הרץ
+//   3. הפונקציה מוחקת את שני המאפיינים מיד אחרי השימוש — הסיסמה לא נשארת בשום מקום
+//
+// כללי האבטחה נשמרים: אין סיסמה בקוד, אין סיסמה בגיליון, הסיסמה נשמרת כ-hash בלבד.
+function bootstrapFirstPassword() {
+  var sp = PropertiesService.getScriptProperties();
+  var pw = String(sp.getProperty('BOOTSTRAP_PASSWORD') || '');
+  var un = String(sp.getProperty('BOOTSTRAP_USERNAME') || '').trim().toLowerCase();
+  if (pw.length < 6) { Logger.log('שגיאה: הגדר BOOTSTRAP_PASSWORD באורך 6 תווים לפחות במאפייני הסקריפט.'); return; }
+
+  var emps = readTable('employees');
+  if (!emps.length) { Logger.log('שגיאה: אין עובדים בגיליון. צור קודם עובד מנהל בטבלת employees.'); return; }
+
+  // בחירת העובד: לפי שם המשתמש שהוגדר; אם לא הוגדר — המנהל הפעיל היחיד.
+  var target = null;
+  if (un) {
+    target = emps.filter(function (e) { return String(e.username || '').toLowerCase() === un; })[0] || null;
+  }
+  if (!target) {
+    var mgrs = emps.filter(function (e) { return e.role === 'מנהל' && e.active !== 'לא'; });
+    if (mgrs.length === 1) target = mgrs[0];
+    else if (!un) { Logger.log('שגיאה: נמצאו ' + mgrs.length + ' מנהלים פעילים. הגדר BOOTSTRAP_USERNAME כדי לבחור.'); return; }
+    else { Logger.log('שגיאה: לא נמצא עובד עם שם המשתמש שהוגדר.'); return; }
+  }
+
+  if (un) target.username = un;
+  else if (!target.username) { Logger.log('שגיאה: לעובד אין שם משתמש. הגדר BOOTSTRAP_USERNAME.'); return; }
+  target.password_hash = sha256WithSalt(pw, target.id);
+  writeTable('employees', emps);
+
+  // אם עדיין לא הוגדר מנהל ראשי — העובד הזה הופך למנהל הראשי.
+  if (!sp.getProperty('SUPER_ADMIN_ID') && target.role === 'מנהל') sp.setProperty('SUPER_ADMIN_ID', target.id);
+
+  sp.deleteProperty('BOOTSTRAP_PASSWORD');
+  sp.deleteProperty('BOOTSTRAP_USERNAME');
+
+  appendRowToTable('audit_log', {
+    id: genId('LOG'), ts: nowTs(), user: 'עורך Apps Script', action: 'bootstrapFirstPassword',
+    details: 'נקבעה סיסמה לעובד ' + target.name + ' · שם משתמש ' + target.username
+  });
+  Logger.log('בוצע. עובד: ' + target.name + ' · שם משתמש: ' + target.username + ' · המאפיינים הזמניים נמחקו.');
+}
+
 function setupDatabase() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   Object.keys(TABLES).forEach(function (name) {
@@ -401,8 +456,21 @@ function appendRowToTable(name, o) {
   sh.getRange(rowNum, 1, 1, cols.length).setNumberFormat('@'); // B20: אותו תיקון שורש כמו ב-writeTable
   sh.getRange(rowNum, 1, 1, cols.length).setValues([cols.map(function (c) { return o[c] !== undefined ? o[c] : ''; })]);
 }
+// B36 (ליקוי 1): מזהים כפולים.
+// הגרסה הקודמת הייתה חותמת-זמן במילישניות + 3 ספרות אקראיות בלבד. שתי רשומות
+// שנוצרו באותה מילישנייה התנגשו בהסתברות 1 ל-900 — בבדיקת עומס נמצאו כפילויות
+// ב-100% מהריצות. התיקון מוסיף שני רכיבים:
+//   _idRun — חותם אקראי בן 2 תווים, נקבע פעם אחת בכל הרצת סקריפט
+//   _idSeq — מונה עולה בתוך אותה הרצה
+// תוצאה: בתוך הרצה אחת התנגשות בלתי אפשרית (המונה תמיד שונה); בין הרצות נדרשת
+// גם אותה מילישנייה וגם אותו חותם הרצה. פעולות כתיבה ממילא מסודרות ב-LockService.
+// מזהים קיימים בגיליון אינם משתנים — התיקון חל על מזהים חדשים בלבד.
+var _idSeq = 0;
+var _idRun = ('0' + Math.floor(Math.random() * 1296).toString(36).toUpperCase()).slice(-2);
 function genId(prefix) {
-  return prefix + '-' + new Date().getTime().toString(36).toUpperCase() + Math.floor(Math.random() * 900 + 100);
+  _idSeq = (_idSeq + 1) % 46656;
+  var seq = ('00' + _idSeq.toString(36).toUpperCase()).slice(-3);
+  return prefix + '-' + new Date().getTime().toString(36).toUpperCase() + _idRun + seq;
 }
 function today() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
 function nowTs() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -432,6 +500,22 @@ function nextNumber(db, key, start) {
 // לא דוחפים ל-db.auditLog כדי לא להכריח טעינה של כל היומן (טעינה עצלה); קריאות יומן עוברות דרך loadDb כרגיל.
 function audit(db, user, action, details) {
   appendRowToTable('audit_log', { id: genId('LOG'), ts: nowTs(), user: user || '', action: action, details: details || '' });
+}
+
+// B36 (ליקוי 2): פרצת אבטחה — היומן רשם את גוף הבקשה כמות שהוא, ולכן כל קריאה
+// ל-setPassword כתבה את הסיסמה החדשה בטקסט גלוי לגיליון audit_log.
+// כאן מסננים שדות רגישים לפני הכתיבה, ומדלגים על שדות פנימיים שהשרת מוסיף (_).
+// שם השדה נשאר ביומן — רק הערך מוסתר — כדי שהתיעוד יישאר שימושי לחקירה.
+var AUDIT_REDACT_RE = /(^|_)(pass|password|pwd|pin|token|secret|hash|credential|credentials|cvv|card)($|_)/i;
+function auditPayload(p) {
+  try {
+    var out = {};
+    Object.keys(p || {}).forEach(function (k) {
+      if (String(k).charAt(0) === '_') return;
+      out[k] = AUDIT_REDACT_RE.test(k) ? '***' : p[k];
+    });
+    return JSON.stringify(out).substring(0, 180);
+  } catch (e) { return ''; }
 }
 
 // C2: שליחת מייל עמידה לכשל — לעולם לא שוברת פעולה עסקית
@@ -539,7 +623,7 @@ function route(action, p, user) {
     }
     var r = handle(action, p, db, user);
     if (r && r.ok && READ_ONLY_ACTIONS.indexOf(action) === -1) {  // F1: audit רק לפעולות כתיבה (שמחזיקות נעילה)
-      audit(db, user, action, r.auditNote || JSON.stringify(p).substring(0, 180));
+      audit(db, user, action, r.auditNote || auditPayload(p));   // B36: סינון שדות רגישים
       bumpDataVersion(); // B7: מסמן לכל הלקוחות המחוברים שיש נתונים חדשים למשוך
     }
     if (r) delete r.auditNote;
@@ -1343,7 +1427,8 @@ function handle(action, p, db, user) {
       var was = un2.status;
       un2.status = p.status;
       if (p.status === 'גרוט') {
-        db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: un2.item_id, type: 'גריעה', qty: -1, ref: un2.id, note: 'גריטת יחידה' });
+        // B36 (ליקוי 3): גם כאן חסר היה שיוך למחסן — הגריטה לא הורידה מלאי בפועל.
+        db.stockMoves.push({ id: genId('MOV'), date: today(), item_id: un2.item_id, type: 'גריעה', qty: -1, ref: un2.id, note: 'גריטת יחידה', warehouse_id: pickWarehouse(db, un2.item_id, '') });
         writeTable('stock_moves', db.stockMoves);
       }
       writeTable('units', db.units);
@@ -1352,8 +1437,16 @@ function handle(action, p, db, user) {
 
     // ---- נוכחות ----
     case 'clock': {
-      var ce = db.employees.find(function (x) { return String(x.pin) === String(p.pin) && x.active !== 'לא'; });
-      if (!ce) return { ok: false, error: 'קוד עובד שגוי' };
+      // B36 (ליקוי 4): קודם השעון זיהה עובד לפי עמודת pin בלבד — ועובד בלי pin
+      // (כלומר כמעט כולם) פשוט לא יכול היה להחתים כרטיס.
+      // עכשיו: עובד מחובר מזוהה מהסשן. שדה pin נשמר לתאימות, עבור עמדת שעון
+      // משותפת שאין בה משתמש מחובר.
+      var ce = null;
+      if (p._verified_employee_id)
+        ce = db.employees.find(function (x) { return x.id === p._verified_employee_id && x.active !== 'לא'; });
+      if (!ce && String(p.pin || '').trim())
+        ce = db.employees.find(function (x) { return String(x.pin || '') !== '' && String(x.pin) === String(p.pin) && x.active !== 'לא'; });
+      if (!ce) return { ok: false, error: 'לא זוהה עובד — יש להתחבר למערכת או להזין קוד עובד' };
       var t = today();
       var open = db.attendance.find(function (a) { return a.employee_id === ce.id && a.date === t && !a.out_time; });
       var hhmm = nowTs().substring(11, 16);
@@ -1421,6 +1514,22 @@ function handle(action, p, db, user) {
     case 'runGlobalPayroll': {
       if (!/^\d{4}-\d{2}$/.test(p.month || '')) return { ok: false, error: 'חודש בפורמט YYYY-MM' };
       return { ok: true, preview: true, month: p.month, rows: payrollPreviewRows(db, p.month) };
+    }
+    // B36 (ליקוי 6): עד כה רשומות שכר נוצרו רק בטריגר החודשי. אם הטריגר לא הותקן —
+    // לא נוצר שכר לעולם, ולא הייתה שום דרך להפיק שכר לחודש הנוכחי.
+    // הפעולה כאן מריצה את אותו חישוב בדיוק, ביוזמת מנהל, לחודש שנבחר.
+    // בטוחה להרצה חוזרת: רשומה שאושרה או שולמה לעולם אינה נדרסת (ראה buildPayrollForMonth).
+    case 'generatePayroll': {
+      if (!/^\d{4}-\d{2}$/.test(p.month || '')) return { ok: false, error: 'חודש בפורמט YYYY-MM' };
+      var curMonth = today().substring(0, 7);
+      if (p.month > curMonth) return { ok: false, error: 'לא ניתן להפיק שכר לחודש עתידי' };
+      var gp = buildPayrollForMonth(db, p.month);
+      return {
+        ok: true, month: gp.month, created: gp.created, updated: gp.updated, locked: gp.locked,
+        partial: p.month === curMonth,
+        auditNote: 'הפקת שכר ידנית ' + gp.month + ' · נוצרו: ' + gp.created +
+          ' · עודכנו: ' + gp.updated + ' · נעולות (אושרו/שולמו): ' + gp.locked
+      };
     }
     case 'setBonus': {
       var pr = db.payroll.find(function (x) { return x.id === p.payroll_id; });
@@ -2480,6 +2589,22 @@ function totalStock(db, itemId, wh) {
   return db.stockMoves.filter(function (m) { return m.item_id === itemId && (wh === undefined || String(m.warehouse_id || '') === String(wh || '')); })
     .reduce(function (s, m) { return s + Number(m.qty); }, 0);
 }
+// B36 (ליקוי 3): בחירת המחסן שממנו נגרע פריט כשאין מחסן מפורש בהקשר.
+// סדר ההכרעה שאושר: (1) המחסן שצוין (למשל מחסן ההזמנה); (2) המחסן הפעיל שבו
+// יש לפריט הכי הרבה מלאי; (3) המחסן הפעיל הראשון. אם אין מחסנים כלל — מחרוזת ריקה,
+// והתנהגות המערכת זהה לקודם (בלי שבירה במסד ריק).
+function pickWarehouse(db, itemId, preferred) {
+  if (preferred && String(preferred).trim()) return String(preferred);
+  var best = '', bestQty = 0;
+  (db.warehouses || []).forEach(function (w) {
+    if (w.active === 'לא') return;
+    var q = totalStock(db, itemId, w.id);
+    if (q > bestQty) { bestQty = q; best = w.id; }
+  });
+  if (best) return best;
+  var firstActive = (db.warehouses || []).filter(function (w) { return w.active !== 'לא'; })[0];
+  return firstActive ? firstActive.id : '';
+}
 function datesOverlap(aStart, aEnd, bStart, bEnd) { return aStart <= bEnd && aEnd >= bStart; }
 // B19a (L1): פריט של הזמנת השכרה נשאר "תפוס" גם אחרי תאריך ההחזרה — למשך ימי העבודה
 // שמוגדרים ב-laundry_days (בלי שבת וחג). מטמון פר-תאריך על אובייקט ה-db כדי לא לחשב שוב ושוב.
@@ -2597,7 +2722,9 @@ function receiveReturn(db, orderId, returns, todayStr, genIdFn) {
     l.returned_qty = ret;
     var missing = Number(l.qty) - ret;
     if (missing > 0) {
-      db.stockMoves.push({ id: genIdFn('MOV'), date: todayStr, item_id: l.item_id, type: 'גריעה', qty: -missing, ref: orderId, note: 'חוסר בהחזרה' });
+      // B36 (ליקוי 3): תנועת החוסר נרשמה בלי warehouse_id ולכן נפלה ל"מחסן ריק" —
+      // המלאי במחסן בפועל לא ירד. עכשיו נגרע ממחסן ההזמנה, ואם אינו מוגדר — לפי pickWarehouse.
+      db.stockMoves.push({ id: genIdFn('MOV'), date: todayStr, item_id: l.item_id, type: 'גריעה', qty: -missing, ref: orderId, note: 'חוסר בהחזרה', warehouse_id: pickWarehouse(db, l.item_id, o.warehouse_id) });
       var chItem = db.items.find(function (i) { return i.id === l.item_id; }) || {};
       var chPrice = Number(chItem.replacement_price) || Number(chItem.rent_price) || Number(l.unit_price) || 0;
       shortages.push({ item_id: l.item_id, missing: missing, charge: missing * chPrice });
