@@ -113,7 +113,16 @@
 //              פעולה חדשה b41CloseStalePickups לסגירת איסופים שנקלטו ונשארו פתוחים.
 //  אצווה B41b: תיעוד איסוף נחשב רק כשהנהג המשובץ עצמו סרק/צילם מהחשבון שלו
 //              (עמודות חדשות deliveries.photo_by / scan_by) · אריחי ציוד ריבועיים.
-//              canary: v4.31-B41b
+//              canary: v4.32-B42
+// B42 (26.07.2026): תקלות, טיפולים וביקורי טכנאי — למכונות ולעגלות כאחד.
+//   • ארבע טבלאות חדשות: service_providers · asset_faults · technician_visits · fault_events
+//   • נכס = מכונה או עגלה. שדה המצב שונה ביניהם ולכן עובר דרך b42Asset בלבד:
+//     מכונה → machines.status (פעילה/בתיקון/מושבתת)
+//     עגלה  → carts.condition (תקינה/דורשת טיפול/מושבתת). carts.status (פנויה/בשימוש) לא נוגעים בו.
+//   • כל הפעולות מוגבלות למנהל ולמשרד (b42RequireOffice) — אכיפה בשרת, לא בממשק
+//   • עלות נשמרת באגורות ב-fault_events; ההוצאה נכנסת למנגנון הקיים בלבד
+//     (future_expenses → payFutureExpense). אין מנגנון הוצאות מקביל.
+//   • כל ספק שירות נרשם גם כספק ב-suppliers (או מקושר לספק פעיל קיים באותו שם)
 //  אחרי הדבקה: (1) חובה להריץ setupDatabase פעם אחת מהעורך (עמודות חדשות ל-deliveries)
 //              (2) חובה להגדיר ScriptProperties בשם SUPER_ADMIN_ID עם ה-id של העובד אבי (ראה הוראות במסירה)
 //              (3) Deploy → Manage deployments → Edit → New version → Deploy
@@ -208,7 +217,19 @@ var TABLES = {
   // B34: מארזים רב-פעמיים (כמו עגלות) — ברקוד קבוע, שיוך זמני להזמנה/משלוח ושחרור בחזרה
   cases: ['id', 'barcode', 'status', 'order_id', 'delivery_id', 'active', 'notes'],
   // B34: נסיעות חלוקה (תכנון הנהלה) — נפרד מטבלת trips הקיימת (יומן ק"מ של צי הרכב)
-  delivery_trips: ['id', 'date', 'driver_id', 'vehicle_id', 'seq', 'planned_time', 'status', 'notes', 'created_at']
+  delivery_trips: ['id', 'date', 'driver_id', 'vehicle_id', 'seq', 'planned_time', 'status', 'notes', 'created_at'],
+  // ===================== B42: תקלות, טיפולים וביקורי טכנאי =====================
+  // service_providers — אנשי מקצוע / חברות שירות. supplier_id מקשר לשורה ב-suppliers:
+  // כל טכנאי נרשם גם כספק, כדי שחוב אליו ייכנס לזרם הספקים והחובות הקיים ולא למנגנון מקביל.
+  service_providers: ['id', 'name', 'company', 'phone', 'email', 'domain', 'vat_id', 'notes', 'supplier_id', 'active', 'created_at', 'created_by'],
+  // asset_faults — תקלה על נכס. asset_type = 'מכונה' או 'עגלה' (ראה b42Asset).
+  // prev_state שומר את המצב שלפני הדיווח, כדי שסגירה ב'לא הייתה תקלה' תחזיר בדיוק לשם.
+  asset_faults: ['id', 'asset_type', 'asset_id', 'description', 'done_so_far', 'next_step', 'status', 'reported_by', 'reported_at', 'task_id', 'prev_state', 'close_outcome', 'close_note', 'closed_by', 'closed_at'],
+  // technician_visits — ביקור = טכנאי + תאריך. הפעולות שבוצעו בו תלויות בו דרך fault_events.visit_id
+  technician_visits: ['id', 'date', 'provider_id', 'summary', 'status', 'created_by', 'created_at'],
+  // fault_events — append-only. כל שלב/טיפול/פעולה: מה נעשה, עלות באגורות, מסמכים, מי ומתי.
+  // doc_urls: רשומות מופרדות ב-| בתבנית סוג::שם::קישור
+  fault_events: ['id', 'ts', 'event_type', 'fault_id', 'asset_type', 'asset_id', 'visit_id', 'provider_id', 'description', 'cost_agorot', 'doc_urls', 'expense_id', 'fexp_id', 'other_subject', 'user']
 };
 
 var UNIT_STATUSES = ['פנוי', 'אצל לקוח', 'בכביסה', 'גרוט'];
@@ -240,6 +261,10 @@ var DEFAULT_SETTINGS = {
 };
 
 var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
+// B42: השלב הבא בטיפול בתקלה — רשימה סגורה, כדי שהחתכים יהיו ברי-קיבוץ
+var B42_NEXT_STEPS = ['ממתין לטכנאי', 'הוזמן חלק חילוף', 'בטיפול פנימי', 'ממתין להצעת מחיר', 'ממתין להחלטת הנהלה', 'אחר'];
+// B42: תוצאת הסגירה קובעת את מצב הנכס (הכרעת אבי). הערך סמלי — התרגום למצב בפועל ב-b42Asset.
+var B42_OUTCOMES = { 'תוקנה': 'fixed', 'הושבתה סופית': 'dead', 'לא הייתה תקלה': 'prev' };
 var MANAGER_ONLY = ['delete', 'b38FixPickups', 'b41CloseStalePickups', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
@@ -351,7 +376,9 @@ function setupDatabase() {
     // B20: שכר מתקדם + הוצאות עתידיות
     ['payroll_adjustments', 'תוספות/ניכויים לשכר עם קטגוריה (B20)'], ['payroll_payments', 'תשלומי שכר בפועל, מלא/חלקי (B20)'], ['future_expenses', 'הוצאות עתידיות — שכר שאושר וטרם שולם + הוצאות מתוכננות (B20)'],
     // B34
-    ['package_types', 'סוגי אריזה — ברקוד קבוע למוצר+כמות (B34)'], ['package_moves', 'יומן תנועות אריזה (B34)'], ['cases', 'מארזים רב-פעמיים (B34)'], ['delivery_trips', 'נסיעות חלוקה (B34)']];
+    ['package_types', 'סוגי אריזה — ברקוד קבוע למוצר+כמות (B34)'], ['package_moves', 'יומן תנועות אריזה (B34)'], ['cases', 'מארזים רב-פעמיים (B34)'], ['delivery_trips', 'נסיעות חלוקה (B34)'],
+    // B42
+    ['service_providers', 'אנשי מקצוע וחברות שירות (B42)'], ['asset_faults', 'תקלות מכונות ועגלות (B42)'], ['technician_visits', 'ביקורי טכנאי (B42)'], ['fault_events', 'יומן תקלות וטיפולים — עלויות ומסמכים (B42)']];
   var dic = ss.getSheetByName('מילון');
   if (!dic) dic = ss.insertSheet('מילון', 0);
   dic.clearContents();
@@ -426,7 +453,9 @@ var TMAP = {
   // B1: טבלאות חדשות
   credit_profiles: 'creditProfiles', call_logs: 'callLogs', notifications: 'notifications',
   // B34
-  package_types: 'packageTypes', package_moves: 'packageMoves', cases: 'cases', delivery_trips: 'deliveryTrips'
+  package_types: 'packageTypes', package_moves: 'packageMoves', cases: 'cases', delivery_trips: 'deliveryTrips',
+  // B42
+  service_providers: 'serviceProviders', asset_faults: 'assetFaults', technician_visits: 'technicianVisits', fault_events: 'faultEvents'
 };
 
 // F1: טעינה עצלה — כל טבלה נקראת מהגליון רק בגישה הראשונה אליה (getter + מטמון)
@@ -2546,6 +2575,304 @@ function handle(action, p, db, user) {
       writeTable('expenses', db.expenses);
       return { ok: true, url: ex2.attachment_url };
     }
+
+    // ===================== B42: תקלות, טיפולים וביקורי טכנאי =====================
+    // חל על מכונות ועל עגלות כאחד — ההבדל היחיד ביניהן הוא שדה המצב, וכל הגישה אליו
+    // עוברת דרך b42Asset. הרשאה: מנהל ומשרד בלבד, בכל הפעולות (הכרעת אבי).
+    // האכיפה כאן ולא בממשק — קריאה ישירה ל-API בתפקיד אחר נדחית.
+
+    // איש מקצוע חדש / עדכון. כל טכנאי נרשם גם כספק ב-suppliers; אם כבר קיים ספק
+    // פעיל באותו שם — מתבצע קישור אליו ולא נוצרת כפילות בטבלת הספקים.
+    case 'b42SaveProvider': {
+      var vSP = b42RequireOffice(p);
+      if (!vSP.ok) return vSP;
+      var nmSP = String(p.name || '').trim();
+      if (!nmSP) return { ok: false, error: 'שם איש המקצוע הוא שדה חובה' };
+      var compSP = String(p.company || '').trim();
+      var supName = compSP || nmSP;
+      var linkedSP = false;
+      var supSP = db.suppliers.find(function (x) { return String(x.name || '').trim() === supName && x.active !== 'לא'; });
+      if (supSP) linkedSP = true;
+      else {
+        supSP = {
+          id: genId('SUPP'), name: supName, phone: p.phone || '', email: p.email || '',
+          vat_id: p.vat_id || '', notes: 'נוצר אוטומטית מרישום איש מקצוע (B42)', active: 'כן',
+          address: '', contact_name: nmSP, payment_terms: ''
+        };
+        db.suppliers.push(supSP);
+        writeTable('suppliers', db.suppliers);
+      }
+      if (p.id) {
+        var spU = db.serviceProviders.find(function (x) { return x.id === p.id; });
+        if (!spU) return { ok: false, error: 'איש מקצוע לא נמצא' };
+        spU.name = nmSP; spU.company = compSP; spU.phone = p.phone || ''; spU.email = p.email || '';
+        spU.domain = p.domain || ''; spU.vat_id = p.vat_id || ''; spU.notes = p.notes || '';
+        if (!spU.supplier_id) spU.supplier_id = supSP.id;
+        if (p.active !== undefined) spU.active = (p.active === false || p.active === 'לא') ? 'לא' : 'כן';
+        writeTable('service_providers', db.serviceProviders);
+        return { ok: true, provider: spU, supplier_linked: linkedSP, auditNote: 'B42 עדכון איש מקצוע ' + nmSP };
+      }
+      if (db.serviceProviders.some(function (x) {
+        return String(x.name || '').trim() === nmSP && String(x.company || '').trim() === compSP && x.active !== 'לא';
+      })) return { ok: false, error: 'איש מקצוע בשם הזה כבר קיים' };
+      var spNew = {
+        id: genId('SVCP'), name: nmSP, company: compSP, phone: p.phone || '', email: p.email || '',
+        domain: p.domain || '', vat_id: p.vat_id || '', notes: p.notes || '', supplier_id: supSP.id,
+        active: 'כן', created_at: nowTs(), created_by: user || ''
+      };
+      db.serviceProviders.push(spNew);
+      writeTable('service_providers', db.serviceProviders);
+      return {
+        ok: true, provider: spNew, supplier: supSP, supplier_linked: linkedSP,
+        auditNote: 'B42 איש מקצוע חדש ' + nmSP + (linkedSP ? ' (קושר לספק קיים ' + supSP.name + ')' : ' (נרשם גם כספק)')
+      };
+    }
+
+    // דיווח תקלה על מכונה או על עגלה. מצב הנכס עובר אוטומטית למצב "בתקלה"
+    // (מכונה → בתיקון, עגלה → דורשת טיפול) ונפתחת משימה על שם המדווח.
+    case 'b42ReportFault': {
+      var vRF = b42RequireOffice(p);
+      if (!vRF.ok) return vRF;
+      var aF = b42Asset(db, p.asset_type, p.asset_id);
+      if (!aF) return { ok: false, error: 'נכס לא נמצא (מכונה או עגלה)' };
+      var descF = String(p.description || '').trim();
+      var doneF = String(p.done_so_far || '').trim();
+      var nextF = String(p.next_step || '').trim();
+      if (descF.length < 3) return { ok: false, error: 'פירוט התקלה הוא שדה חובה' };
+      if (doneF.length < 3) return { ok: false, error: 'חובה לפרט מה נעשה עד כה מול איש מקצוע (אפשר לכתוב: טרם נעשה דבר)' };
+      if (B42_NEXT_STEPS.indexOf(nextF) === -1) return { ok: false, error: 'יש לבחור שלב הבא' };
+      if (b42OpenFault(db, aF.type, aF.row.id))
+        return { ok: false, error: 'ל' + aF.label + ' כבר יש תקלה פתוחה — הוסף שלב לתקלה הקיימת או סגור אותה קודם' };
+      var faultId = genId('FLT');
+      // הכרעת B42: המשימה תמיד על שם המדווח
+      var repF = db.employees.find(function (e) { return e.name === user && e.active !== 'לא'; });
+      var taskF = {
+        id: genId('TASK'), title: 'תקלה: ' + aF.label + ' — ' + nextF,
+        details: descF + '\nמה נעשה עד כה: ' + doneF + '\n' + aF.type + ': ' + aF.row.id + ' · תקלה: ' + faultId,
+        assignee_id: repF ? repF.id : '', due_date: isDateStr(p.due_date) ? String(p.due_date) : '',
+        priority: 'גבוהה', status: 'פתוחה', meeting_id: '', created_by: user || '', created_at: nowTs()
+      };
+      db.tasks.push(taskF);
+      writeTable('tasks', db.tasks);
+      var fault = {
+        id: faultId, asset_type: aF.type, asset_id: aF.row.id, description: descF, done_so_far: doneF,
+        next_step: nextF, status: 'פתוחה', reported_by: user || '', reported_at: nowTs(),
+        task_id: taskF.id, prev_state: String(aF.row[aF.field] || ''),
+        close_outcome: '', close_note: '', closed_by: '', closed_at: ''
+      };
+      db.assetFaults.push(fault);
+      writeTable('asset_faults', db.assetFaults);
+      b42SetState(db, aF, aF.onFault);
+      b42AppendEvent(db, {
+        event_type: 'תקלה', fault_id: faultId, asset_type: aF.type, asset_id: aF.row.id,
+        description: descF + ' · שלב הבא: ' + nextF, user: user || ''
+      });
+      return {
+        ok: true, fault: fault, task: taskF, asset_state: aF.row[aF.field],
+        auditNote: 'B42 דיווח תקלה ' + faultId + ' · ' + aF.type + ' ' + aF.row.id + ' · שלב הבא: ' + nextF
+      };
+    }
+
+    // שלב בתקלה / פעולה בביקור / פעולה בנושא אחר (תשתיות ומבנה, בלי נכס).
+    // עלות > 0 יוצרת הוצאה במנגנון ההוצאות הקיים בלבד.
+    case 'b42AddEvent': {
+      var vAE = b42RequireOffice(p);
+      if (!vAE.ok) return vAE;
+      var descE = String(p.description || '').trim();
+      if (descE.length < 3) return { ok: false, error: 'פירוט מה נעשה הוא שדה חובה' };
+      var typeE = ['שלב', 'טיפול', 'ביקור'].indexOf(String(p.event_type)) > -1 ? String(p.event_type) : 'שלב';
+      var fltE = null;
+      if (p.fault_id) {
+        fltE = db.assetFaults.find(function (f) { return f.id === p.fault_id; });
+        if (!fltE) return { ok: false, error: 'תקלה לא נמצאה' };
+        if (fltE.status !== 'פתוחה') return { ok: false, error: 'התקלה כבר סגורה — אי אפשר להוסיף לה שלבים' };
+      }
+      var aE = null;
+      var atE = p.asset_type || (fltE ? fltE.asset_type : '');
+      var aidE = p.asset_id || (fltE ? fltE.asset_id : '');
+      if (atE && aidE) {
+        aE = b42Asset(db, atE, aidE);
+        if (!aE) return { ok: false, error: 'נכס לא נמצא (מכונה או עגלה)' };
+      }
+      var visitE = null;
+      if (p.visit_id) {
+        visitE = db.technicianVisits.find(function (v) { return v.id === p.visit_id; });
+        if (!visitE) return { ok: false, error: 'ביקור לא נמצא' };
+      }
+      var provE = null;
+      if (p.provider_id) {
+        provE = db.serviceProviders.find(function (x) { return x.id === p.provider_id; });
+        if (!provE) return { ok: false, error: 'איש מקצוע לא נמצא' };
+      }
+      var otherE = String(p.other_subject || '').trim();
+      if (!aE && !fltE && !visitE && !otherE)
+        return { ok: false, error: 'פעולה חייבת להיות משויכת למכונה, לעגלה, לתקלה, לביקור או לנושא אחר' };
+      var costE = Math.round(Number(p.cost_agorot) || 0);
+      if (!isFinite(costE) || costE < 0) return { ok: false, error: 'עלות לא תקינה' };
+      // אימות לפני כל כתיבה — ל-Sheets אין טרנזקציות, וכישלון באמצע היה משאיר אירוע יתום
+      var preE = b42PreCheckExpense(db, costE, p);
+      if (!preE.ok) return preE;
+      var ev = b42AppendEvent(db, {
+        event_type: typeE, fault_id: fltE ? fltE.id : '',
+        asset_type: aE ? aE.type : '', asset_id: aE ? aE.row.id : '',
+        visit_id: visitE ? visitE.id : '', provider_id: provE ? provE.id : '',
+        description: descE, cost_agorot: costE, other_subject: otherE, user: user || ''
+      });
+      if (costE > 0) {
+        var exE = b42CreateExpense(db, ev, provE, p, user);
+        if (!exE.ok) return exE;
+        ev.fexp_id = exE.fexp_id || ''; ev.expense_id = exE.expense_id || '';
+        writeTable('fault_events', db.faultEvents);
+      }
+      if (fltE && p.next_step && B42_NEXT_STEPS.indexOf(String(p.next_step)) > -1 && String(p.next_step) !== fltE.next_step) {
+        fltE.next_step = String(p.next_step);
+        writeTable('asset_faults', db.assetFaults);
+        var tkE = fltE.task_id ? db.tasks.find(function (t) { return t.id === fltE.task_id; }) : null;
+        if (tkE && tkE.status !== 'הושלמה') {
+          tkE.title = 'תקלה: ' + (aE ? aE.label : fltE.asset_id) + ' — ' + fltE.next_step;
+          writeTable('tasks', db.tasks);
+        }
+      }
+      return {
+        ok: true, event: ev,
+        auditNote: 'B42 ' + typeE + ' · ' + (aE ? (aE.type + ' ' + aE.row.id) : (otherE || (visitE ? visitE.id : ''))) +
+          (costE > 0 ? ' · עלות ' + (costE / 100) + ' ₪ ' + (p.expense_paid ? '(שולם)' : '(טרם שולם)') : '')
+      };
+    }
+
+    // רישום טיפול. הלוגיקה המקורית של המכונה נשמרת כלשונה (תאריך אחרון/הבא, סטטוס, הערות),
+    // ובנוסף נרשם אירוע ביומן עם ספק ועלות אופציונליים כדי שיופיע בהיסטוריה ובחתכים.
+    // לעגלה אין תאריכי טיפול — אצלה מתעדכנים המצב וההערות בלבד.
+    case 'b42SaveService': {
+      var vSS = b42RequireOffice(p);
+      if (!vSS.ok) return vSS;
+      var aS = b42Asset(db, p.asset_type, p.asset_id);
+      if (!aS) return { ok: false, error: 'נכס לא נמצא (מכונה או עגלה)' };
+      var descS = String(p.description || '').trim();
+      if (descS.length < 3) return { ok: false, error: 'פירוט מה בוצע הוא שדה חובה' };
+      var costS = Math.round(Number(p.cost_agorot) || 0);
+      if (!isFinite(costS) || costS < 0) return { ok: false, error: 'עלות לא תקינה' };
+      var provS = null;
+      if (p.provider_id) {
+        provS = db.serviceProviders.find(function (x) { return x.id === p.provider_id; });
+        if (!provS) return { ok: false, error: 'איש מקצוע לא נמצא' };
+      }
+      var preS = b42PreCheckExpense(db, costS, p);
+      if (!preS.ok) return preS;
+      if (aS.type === 'מכונה') {
+        if (isDateStr(p.last_service)) aS.row.last_service = String(p.last_service);
+        if (p.next_service !== undefined) aS.row.next_service = isDateStr(p.next_service) ? String(p.next_service) : '';
+      }
+      if (p.state !== undefined && aS.states.indexOf(String(p.state)) > -1) aS.row[aS.field] = String(p.state);
+      if (p.notes !== undefined) aS.row.notes = String(p.notes);
+      writeTable(aS.table, aS.rows);
+      var evS = b42AppendEvent(db, {
+        event_type: 'טיפול', asset_type: aS.type, asset_id: aS.row.id, visit_id: p.visit_id || '',
+        provider_id: provS ? provS.id : '', description: descS, cost_agorot: costS, user: user || ''
+      });
+      if (costS > 0) {
+        var exS = b42CreateExpense(db, evS, provS, p, user);
+        if (!exS.ok) return exS;
+        evS.fexp_id = exS.fexp_id || ''; evS.expense_id = exS.expense_id || '';
+        writeTable('fault_events', db.faultEvents);
+      }
+      return {
+        ok: true, event: evS, asset: aS.row, asset_state: aS.row[aS.field],
+        auditNote: 'B42 רישום טיפול · ' + aS.type + ' ' + aS.row.id + (costS > 0 ? ' · עלות ' + (costS / 100) + ' ₪' : '')
+      };
+    }
+
+    // סגירת תקלה. התוצאה קובעת את מצב הנכס (הכרעת אבי), והמשימה נסגרת יחד איתה.
+    case 'b42CloseFault': {
+      var vCF = b42RequireOffice(p);
+      if (!vCF.ok) return vCF;
+      var fC = db.assetFaults.find(function (f) { return f.id === p.fault_id; });
+      if (!fC) return { ok: false, error: 'תקלה לא נמצאה' };
+      if (fC.status !== 'פתוחה') return { ok: false, error: 'התקלה כבר סגורה' };
+      var outC = String(p.outcome || '');
+      if (!Object.prototype.hasOwnProperty.call(B42_OUTCOMES, outC)) return { ok: false, error: 'יש לבחור תוצאת סגירה' };
+      var noteC = String(p.close_note || '').trim();
+      if (noteC.length < 3) return { ok: false, error: 'פירוט הסגירה הוא שדה חובה' };
+      var aC = b42Asset(db, fC.asset_type, fC.asset_id);
+      var newState = '';
+      if (aC) {
+        var symC = B42_OUTCOMES[outC];
+        newState = symC === 'fixed' ? aC.fixed : (symC === 'dead' ? aC.dead : String(fC.prev_state || ''));
+        if (aC.states.indexOf(newState) === -1) newState = aC.fixed;
+        b42SetState(db, aC, newState);
+      }
+      fC.status = 'סגורה'; fC.close_outcome = outC; fC.close_note = noteC;
+      fC.closed_by = user || ''; fC.closed_at = nowTs();
+      writeTable('asset_faults', db.assetFaults);
+      if (fC.task_id) {
+        var tC = db.tasks.find(function (t) { return t.id === fC.task_id; });
+        if (tC && tC.status !== 'הושלמה') { tC.status = 'הושלמה'; writeTable('tasks', db.tasks); }
+      }
+      b42AppendEvent(db, {
+        event_type: 'סגירה', fault_id: fC.id, asset_type: fC.asset_type, asset_id: fC.asset_id,
+        description: outC + ' — ' + noteC, user: user || ''
+      });
+      return {
+        ok: true, fault: fC, asset_state: newState,
+        auditNote: 'B42 סגירת תקלה ' + fC.id + ' · ' + outC + ' · ' + fC.asset_type + ' ' + fC.asset_id + ' → ' + newState
+      };
+    }
+
+    // ביקור טכנאי = טכנאי + תאריך. הפעולות נרשמות תחתיו דרך b42AddEvent עם visit_id.
+    case 'b42SaveVisit': {
+      var vSV = b42RequireOffice(p);
+      if (!vSV.ok) return vSV;
+      if (!isDateStr(p.date)) return { ok: false, error: 'תאריך הביקור הוא שדה חובה' };
+      var provV = db.serviceProviders.find(function (x) { return x.id === p.provider_id; });
+      if (!provV) return { ok: false, error: 'יש לבחור איש מקצוע' };
+      var stV = ['מתוכנן', 'בוצע', 'בוטל'].indexOf(String(p.status)) > -1 ? String(p.status) : 'בוצע';
+      if (p.id) {
+        var vU = db.technicianVisits.find(function (v) { return v.id === p.id; });
+        if (!vU) return { ok: false, error: 'ביקור לא נמצא' };
+        vU.date = String(p.date); vU.provider_id = provV.id;
+        vU.summary = String(p.summary || ''); vU.status = stV;
+        writeTable('technician_visits', db.technicianVisits);
+        return { ok: true, visit: vU, auditNote: 'B42 עדכון ביקור ' + vU.id };
+      }
+      var vNew = {
+        id: genId('VISIT'), date: String(p.date), provider_id: provV.id,
+        summary: String(p.summary || ''), status: stV, created_by: user || '', created_at: nowTs()
+      };
+      db.technicianVisits.push(vNew);
+      writeTable('technician_visits', db.technicianVisits);
+      return {
+        ok: true, visit: vNew,
+        auditNote: 'B42 ביקור טכנאי ' + vNew.id + ' · ' + (provV.company || provV.name) + ' · ' + vNew.date
+      };
+    }
+
+    // מסמך לפעולה — כללי (אחריות / דוח טכנאי) או מסמך הוצאה (קבלה / חשבונית).
+    // מסמך הוצאה מוצמד גם לרשומת ההוצאה עצמה, כדי שייראה בכל דוח הוצאות קיים.
+    case 'b42UploadDoc': {
+      var vUD = b42RequireOffice(p);
+      if (!vUD.ok) return vUD;
+      var evD = db.faultEvents.find(function (x) { return x.id === p.event_id; });
+      if (!evD) return { ok: false, error: 'פעולה לא נמצאה' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      var kindD = String(p.doc_kind) === 'הוצאה' ? 'הוצאה' : 'כללי';
+      var fnB = 'MAPA-NOBLE תחזוקה';
+      var flsB = DriveApp.getFoldersByName(fnB);
+      var fldB = flsB.hasNext() ? flsB.next() : DriveApp.createFolder(fnB);
+      var fB = fldB.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, (p.name || kindD) + '_' + evD.id));
+      fB.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      var urlD = fB.getUrl();
+      if (kindD === 'הוצאה' && evD.expense_id) {
+        var exD = db.expenses.find(function (x) { return x.id === evD.expense_id; });
+        if (exD && !exD.attachment_url) { exD.attachment_url = urlD; writeTable('expenses', db.expenses); }
+      }
+      var listD = String(evD.doc_urls || '').split('|').filter(function (x) { return x; });
+      listD.push(kindD + '::' + String(p.name || 'מסמך').replace(/[|:]/g, '-') + '::' + urlD);
+      evD.doc_urls = listD.join('|');
+      writeTable('fault_events', db.faultEvents);
+      return { ok: true, url: urlD, doc_urls: evD.doc_urls, auditNote: 'B42 מסמך ' + kindD + ' לפעולה ' + evD.id };
+    }
+
     case 'setPassword': {
       if (!p.new_password || String(p.new_password).trim().length < 6)
         return { ok: false, error: 'סיסמה חייבת להכיל לפחות 6 תווים' };
@@ -5924,4 +6251,132 @@ function b35ShelfCount(db, p, user) {
     contents: b35ShelfContents(db, code),
     auditNote: 'B35 ספירת מדף ' + code + ' · ' + changed + ' סוגים · מודפו ' + moved + ' · נוספו ' + added + ' · נגרעו ' + removed + ' · ' + reason
   };
+}
+
+
+// ===================== B42: עזרי תקלות, טיפולים וביקורי טכנאי =====================
+
+// הרשאה אחידה לכל פעולות B42 — מנהל ומשרד בלבד (הכרעת אבי).
+// האכיפה בשרת ולא בממשק: הסתרת כפתור אינה אבטחה.
+function b42RequireOffice(p) {
+  var role = String(p._verified_role || '');
+  if (role === 'מנהל' || role === 'משרד') return { ok: true };
+  if (isSuperAdmin(p._verified_employee_id)) return { ok: true };
+  return { ok: false, error: 'מערכת התקלות והתחזוקה מוגבלת למנהל ולמשרד' };
+}
+
+// נכס = מכונה או עגלה. שדה המצב שונה בין השניים, וזו הנקודה היחידה בקוד שיודעת זאת:
+//   מכונה → machines.status  (פעילה / בתיקון / מושבתת)
+//   עגלה  → carts.condition  (תקינה / דורשת טיפול / מושבתת)
+// carts.status הוא פנויה/בשימוש — שדה תפעולי של המכבסה, ו-B42 לעולם לא נוגע בו.
+function b42Asset(db, type, id) {
+  var t = String(type || ''), aid = String(id || '');
+  if (!aid) return null;
+  if (t === 'מכונה') {
+    var m = (db.machines || []).find(function (x) { return String(x.id) === aid; });
+    if (!m) return null;
+    return {
+      type: 'מכונה', row: m, table: 'machines', rows: db.machines, field: 'status',
+      label: String(m.type || 'מכונה') + ' ' + m.id, states: ['פעילה', 'בתיקון', 'מושבתת'],
+      onFault: 'בתיקון', fixed: 'פעילה', dead: 'מושבתת'
+    };
+  }
+  if (t === 'עגלה') {
+    var c = (db.carts || []).find(function (x) { return String(x.id) === aid; });
+    if (!c) return null;
+    return {
+      type: 'עגלה', row: c, table: 'carts', rows: db.carts, field: 'condition',
+      label: 'עגלה ' + c.id, states: ['תקינה', 'דורשת טיפול', 'מושבתת'],
+      onFault: 'דורשת טיפול', fixed: 'תקינה', dead: 'מושבתת'
+    };
+  }
+  return null;
+}
+
+function b42SetState(db, a, state) {
+  if (!a || a.states.indexOf(state) === -1) return false;
+  a.row[a.field] = state;
+  writeTable(a.table, a.rows);
+  return true;
+}
+
+function b42OpenFault(db, assetType, assetId) {
+  return (db.assetFaults || []).find(function (f) {
+    return f.asset_type === assetType && String(f.asset_id) === String(assetId) && f.status === 'פתוחה';
+  }) || null;
+}
+
+// יומן append-only. אירוע קיים לא מתעדכן חוץ מהצמדת מסמכים ומזהי הוצאה.
+function b42AppendEvent(db, o) {
+  var ev = {
+    id: genId('FEV'), ts: nowTs(), event_type: o.event_type || 'שלב',
+    fault_id: o.fault_id || '', asset_type: o.asset_type || '', asset_id: o.asset_id || '',
+    visit_id: o.visit_id || '', provider_id: o.provider_id || '', description: o.description || '',
+    cost_agorot: Math.round(Number(o.cost_agorot) || 0), doc_urls: '',
+    expense_id: '', fexp_id: '', other_subject: o.other_subject || '', user: o.user || ''
+  };
+  db.faultEvents.push(ev);
+  writeTable('fault_events', db.faultEvents);
+  return ev;
+}
+
+function b42VatRate(db) {
+  var row = (db.settings || []).find(function (s) { return s.key === 'vat_rate'; });
+  var r = parseFloat((row && row.value) || '0.18');
+  return (r > 0 && r < 1) ? r : 0.18;
+}
+
+// אימות מקדים לפני כל כתיבה: תשלום במזומן דורש יתרה מספיקה בקופה.
+function b42PreCheckExpense(db, costAgorot, p) {
+  if (!(costAgorot > 0) || !p.expense_paid) return { ok: true };
+  if (String(p.expense_method || '').indexOf('מזומן') === -1) return { ok: true };
+  var bal = cashBalanceSrv(db);
+  var gross = Math.round(costAgorot) / 100;
+  if (gross > bal + 0.01)
+    return { ok: false, error: 'אין מספיק מזומן בקופה (יתרה: ' + bal + ' ₪). בחר אמצעי תשלום אחר' };
+  return { ok: true };
+}
+
+// עלות של שלב/טיפול → הוצאה, במנגנון ההוצאות הקיים בלבד. אין מנגנון מקביל.
+//   ברירת מחדל  — חוב שטרם שולם: שורה ב-future_expenses, וממשיכה בזרם payFutureExpense הרגיל.
+//   סומן "שולם" — נסגר מיד באותם צעדים בדיוק: expense_payments + expenses + סטטוס 'שולם'.
+// הסכום מוזן תמיד כולל מע"מ ומפוצל לנטו + מע"מ (הכרעת אבי).
+function b42CreateExpense(db, ev, prov, p, user) {
+  var gross = Math.round(Number(ev.cost_agorot) || 0) / 100;
+  if (!(gross > 0)) return { ok: true, fexp_id: '', expense_id: '' };
+  var rate = b42VatRate(db);
+  var net = Math.round((gross / (1 + rate)) * 100) / 100;
+  var vatAmt = Math.round((gross - net) * 100) / 100;
+  var cat = String(p.expense_category || 'תחזוקה').trim() || 'תחזוקה';
+  var supId = (prov && prov.supplier_id) ? prov.supplier_id : '';
+  var who = prov ? (prov.company || prov.name) : '';
+  var descX = String(ev.description || 'תיקון').substring(0, 120) + (who ? ' — ' + who : '');
+  var fexpId = genId('FEXP');
+  db.futureExpenses.push({
+    id: fexpId, source: 'fault', ref_id: ev.id, employee_id: '', category: cat,
+    description: descX, amount: gross,
+    due_date: isDateStr(p.expense_due_date) ? String(p.expense_due_date) : today(),
+    urgency: ['רגיל', 'דחוף', 'קריטי'].indexOf(String(p.expense_urgency)) > -1 ? String(p.expense_urgency) : 'רגיל',
+    status: 'ממתין', created_at: nowTs(), supplier_id: supId, vat_amount: vatAmt,
+    deleted: '', delete_reason: '', deleted_by: '', deleted_at: ''
+  });
+  writeTable('future_expenses', db.futureExpenses);
+  if (!p.expense_paid) return { ok: true, fexp_id: fexpId, expense_id: '' };
+  var method = String(p.expense_method || 'העברה');
+  var paidAt = isDateStr(p.expense_paid_at) ? String(p.expense_paid_at) : today();
+  var epId = genId('EPAY');
+  db.expensePayments.push({
+    id: epId, fexp_id: fexpId, supplier_id: supId, amount: gross, method: method,
+    note: descX, paid_at: paidAt, created_by: user || '', created_at: nowTs()
+  });
+  writeTable('expense_payments', db.expensePayments);
+  var expId = genId('EXP');
+  db.expenses.push({
+    id: expId, date: paidAt, category: cat, supplier_id: supId,
+    amount: net, vat: vatAmt, note: descX + ' (' + method + ')', attachment_url: ''
+  });
+  writeTable('expenses', db.expenses);
+  var feRow = db.futureExpenses.find(function (x) { return x.id === fexpId; });
+  if (feRow) { feRow.status = 'שולם'; writeTable('future_expenses', db.futureExpenses); }
+  return { ok: true, fexp_id: fexpId, expense_id: expId };
 }
