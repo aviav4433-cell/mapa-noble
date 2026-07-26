@@ -2316,7 +2316,9 @@ function rLaundry(){
         '</div>':'')+'</div>';
       }).join('')+'</div>';
   }).join('');
-  el('main').innerHTML = '<div class="section-title"><h2>לוח כביסה</h2><span class="muted">"מוכן" מציג 3 ימים אחרונים · לחיצה על כרטיס פותחת היסטוריה</span></div><div class="kanban">'+cols+'</div>';
+  el('main').innerHTML = '<div class="section-title"><h2>לוח כביסה</h2><span class="muted">"מוכן" מציג 3 ימים אחרונים · לחיצה על כרטיס פותחת היסטוריה</span>'+
+    (allowedViews().some(function(v){ return v[0]==='reports'; })?'<button class="btn ghost sm" onclick="goReport(\'noble\')">📊 דוח ביצועי מכבסה</button>':'')+
+    '</div><div class="kanban">'+cols+'</div>';
 }
 /* --- עוזרי היסטוריה --- */
 function b40Events(tid){
@@ -5457,6 +5459,9 @@ function reportGroupIcon(label){
   return g? g[0] : '';
 }
 function repFieldId(entry,p){ return p.id || ('rp_'+entry.id+'_'+p.key); }
+/* רצועת KPI אחידה לראש כל דוח — אותו דפוס ויזואלי כמו לוח הבקרה (.kpi/.gridkpi), בלי ניווט וקישור מסך */
+function repKpi(v,l,alert){ return '<div class="kpi'+(alert?' alert':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
+function repKpiRow(items){ return '<div class="gridkpi" style="margin-bottom:14px">'+items.map(function(x){ return repKpi(x.v,x.l,x.alert); }).join('')+'</div>'; }
 function repParamsForm(entry){
   if(!entry.params || !entry.params.length) return '';
   return '<div class="card"><div class="grid3">'+
@@ -5518,10 +5523,22 @@ function rReports(){
   if(entry.autoRun) runReport(entry.id);
 }
 async function loadSummary(){
+  var box = el('repSummary'); if(!box) return;
+  box.innerHTML = '<div class="card empty">טוען...</div>';
   var r = await api('reports',{});
-  if(!r.ok) return;
+  if(!r.ok){ box.innerHTML = '<div class="card empty">'+esc(r.error||'שגיאה בטעינה')+'</div>'; return; }
   var months = Object.keys(Object.assign({},r.revenueByMonth,r.expensesByMonth)).sort();
+  var totRev = months.reduce(function(s,m){ return s+Number(r.revenueByMonth[m]||0); },0);
+  var totEx = months.reduce(function(s,m){ return s+Number(r.expensesByMonth[m]||0); },0);
+  var totDebt = (r.aging||[]).reduce(function(s,a){ return s+Number(a.balance||0); },0);
   el('repSummary').innerHTML =
+    repKpiRow([
+      {v:ils(totRev), l:'סה"כ הכנסות'},
+      {v:ils(totEx), l:'סה"כ הוצאות'},
+      {v:ils(totRev-totEx), l:'רווח גולמי', alert:(totRev-totEx)<0},
+      {v:ils(totDebt), l:'חובות לקוחות פתוחים', alert:totDebt>0},
+      {v:(r.lowStock||[]).length, l:'פריטים מתחת למינימום', alert:(r.lowStock||[]).length>0}
+    ])+
     '<h3 style="margin:16px 0 8px">הכנסות מול הוצאות (לפני מע"מ)</h3><div class="card"><table><tr><th>חודש</th><th>הכנסות</th><th>הוצאות</th><th>רווח גולמי</th></tr>'+
     (months.length? months.map(function(m){ var rev=r.revenueByMonth[m]||0, ex=r.expensesByMonth[m]||0;
       return '<tr><td>'+m+'</td><td>'+ils(rev)+'</td><td>'+ils(ex)+'</td><td style="color:'+((rev-ex)>=0?'var(--ok)':'var(--danger)')+';font-weight:600">'+ils(rev-ex)+'</td></tr>'; }).join(''):'<tr><td colspan="4" class="empty">אין נתונים</td></tr>')+'</table></div>'+
@@ -5546,7 +5563,12 @@ async function loadAgingReport(customerId){
   } else {
     t = r.totals||{current_ag:0,d30_ag:0,d60_ag:0,d90_ag:0,total_ag:0};
   }
-  box.innerHTML = '<h3 style="margin:16px 0 8px">דוח חובות לפי גיל <span class="muted" style="font-weight:400;font-size:12.5px">· לפי ימי איחור מעבר למועד הפירעון</span></h3><div class="card">'+
+  box.innerHTML = repKpiRow([
+      {v:ils(fromAg(t.total_ag)), l:(customerId?'סה"כ חוב ללקוח':'סה"כ חובות פתוחים'), alert:fromAg(t.total_ag)>0},
+      {v:ils(fromAg(t.d90_ag)), l:'מתוכם 60+ יום באיחור', alert:fromAg(t.d90_ag)>0},
+      {v:rows.length, l:(customerId?'שורות':'לקוחות עם יתרה')}
+    ])+
+    '<h3 style="margin:16px 0 8px">דוח חובות לפי גיל <span class="muted" style="font-weight:400;font-size:12.5px">· לפי ימי איחור מעבר למועד הפירעון</span></h3><div class="card">'+
     (rows.length?
       '<table><tr><th>לקוח</th><th>טרם פירעון</th><th>1-30 באיחור</th><th>31-60</th><th>60+</th><th>סה&quot;כ</th></tr>'+
       rows.map(function(x){
@@ -5573,7 +5595,16 @@ async function loadExceptionsDashboard(){
   box.innerHTML = '<h3 style="margin:16px 0 8px">דשבורד חריגים</h3><div class="card empty">טוען...</div>';
   var r = await api('b9ExceptionsDashboard',{});
   if(!r.ok){ box.innerHTML=''; return; }
-  var html = '<h3 style="margin:16px 0 8px">דשבורד חריגים</h3>';
+  var c1=(r.credit_over90||[]).length, c2=(r.overdue_returns||[]).length, c3=(r.stuck_deliveries||[]).length,
+      c4=(r.pending_guarantees||[]).length, c5=(r.draft_invoices||[]).length, tot=c1+c2+c3+c4+c5;
+  var html = repKpiRow([
+    {v:tot, l:'סה"כ חריגים', alert:tot>0},
+    {v:c1, l:'לקוחות מעל 90% אשראי', alert:c1>0},
+    {v:c2, l:'החזרות באיחור', alert:c2>0},
+    {v:c3, l:'משלוחים תקועים', alert:c3>0},
+    {v:c4+c5, l:'ממתין לאישור (ערבויות+טיוטות)', alert:(c4+c5)>0}
+  ]);
+  html += '<h3 style="margin:16px 0 8px">דשבורד חריגים</h3>';
   html += b9ExcSection('לקוחות מעל 90% ניצול אשראי', r.credit_over90, function(x){
     return '<div class="attn-row" style="cursor:pointer" onclick="openCust(\''+x.customer_id+'\')"><span class="tag" style="background:var(--danger)">'+x.pct+'%</span>'+
       '<div class="grow">'+esc(x.customer)+'</div><span class="muted">'+ils(fromAg(x.used_ag))+' מתוך '+ils(fromAg(x.limit_ag))+'</span></div>';
@@ -5857,7 +5888,15 @@ async function runOrdersReport(){
   var r = await api('ordersReport', f);
   if(!r.ok) return el('repRes').innerHTML = '<div class="card empty">'+esc(r.error)+'</div>';
   LAST_REPORT = {filters:f, data:r};
-  el('repRes').innerHTML = '<div class="card"><div class="row" style="margin-bottom:8px"><b class="grow">תוצאות: '+r.rows.length+' הזמנות · '+ils(r.total)+'</b>'+
+  var totPaid = r.rows.reduce(function(s,x){ return s+Number(x.paid||0); },0);
+  var totBal = r.rows.reduce(function(s,x){ return s+Number(x.balance||0); },0);
+  el('repRes').innerHTML = repKpiRow([
+      {v:r.rows.length, l:'הזמנות'},
+      {v:ils(r.total), l:'סה"כ'},
+      {v:ils(totPaid), l:'שולם'},
+      {v:ils(totBal), l:'יתרה פתוחה', alert:totBal>0}
+    ])+
+    '<div class="card"><div class="row" style="margin-bottom:8px"><b class="grow">תוצאות: '+r.rows.length+' הזמנות · '+ils(r.total)+'</b>'+
     '<button class="btn ghost sm" onclick="printReport()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> הדפס דוח רשמי</button></div>'+
     (r.rows.length?'<table><tr><th>תאריך</th><th>לקוח</th><th>סוג</th><th>סטטוס</th><th>סכום</th><th>שולם</th><th>יתרה</th></tr>'+
     r.rows.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.customer)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.status)+'</td><td>'+ils(x.total)+'</td><td>'+ils(x.paid)+'</td><td>'+ils(x.balance)+'</td></tr>').join('')+'</table>':'<div class="empty">אין תוצאות לפילטר זה</div>')+'</div>';
@@ -5884,7 +5923,7 @@ function renderNobleReports(containerId){
   containerId = containerId || 'repNoble';
   var box = el(containerId); if(!box) return;
   var evs = DB.laundryEvents||[];
-  if(!evs.length){ box.innerHTML=''; return; }
+  if(!evs.length){ box.innerHTML='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3><div class="card empty">אין עדיין נתוני מכבסה להצגה — הדוח יתמלא ברגע שיירשמו אירועי כביסה (התחלה/סיום שלב, שקילה)</div>'; return; }
   var parseT = function(x){ var d=new Date(String(x||'').replace(' ','T')); return isNaN(d.getTime())?null:d; };
   var ld = function(d){ return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); };
   var since = Date.now() - NOBLE_REP_DAYS*864e5;
@@ -5947,7 +5986,7 @@ function renderNobleReports(containerId){
   var maxBusy=0; Object.keys(busyTot).forEach(function(m){ if(busyTot[m]>maxBusy) maxBusy=busyTot[m]; });
   var pct=function(x,y){ return y>0?Math.min(100,Math.round(x/y*100)):0; };
   var bar=function(p,color){ return '<div style="background:var(--line);border-radius:6px;height:8px;overflow:hidden"><div style="width:'+p+'%;height:100%;background:'+color+'"></div></div>'; };
-  var machRows = DB.machines.map(function(m){
+  var machRows = (DB.machines||[]).map(function(m){
     var bt=busyTot[m.id]||0;
     return {id:m.id, stage:m.auto_stage||'', bt:bt, a:pct(busyWin[m.id]||0,winTotal), b:pct(bt,spanTotal), c:pct(bt,maxBusy)};
   }).sort(function(x,y){ return y.bt-x.bt; });
