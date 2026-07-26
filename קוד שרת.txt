@@ -4,7 +4,9 @@
 //             מתנאי הספק בהוצאה עתידית · תזכורת חוב לפי מועד פירעון (B43)
 //             B45 — כלל אחיד: כל סכום נקלט ומוצג לפני מע"מ
 //             B46 — PDF אמיתי (Drive v3/v2 + fallback מדווח), תיקון רטרואקטיבי,
-//                   תמונת עובד ורכב (photo_url) — canary v4.38-B46
+//                   תמונת עובד ורכב (photo_url)
+//             B48 — מקור אמת אחד ליתרות לקוחות (customerBalance נגזר מ-b43Receivables)
+//                   + "מתחת למינימום" לפי פנוי-על-המדף — canary v4.40-B48
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -1721,13 +1723,18 @@ function handle(action, p, db, user) {
         var m = String(x.date).substring(0, 7);
         exp[m] = Math.round(((exp[m] || 0) + Number(x.amount)) * 100) / 100;
       });
-      var aging = db.customers.map(function (c) { // יתרות לקוחות
-        var b = customerBalance(db, c.id);
-        return { customer: c.name, balance: Math.round(b * 100) / 100 };
+      // B48: יתרות לקוחות נגזרות מהשורות הקנוניות — פאס אחד לכל הלקוחות,
+      // ואותו מספר בדיוק שמוצג בכרטיס הלקוח, בדוח הגיל ובפורטל.
+      var balMap = b48BalancesAg(db);
+      var aging = db.customers.map(function (c) {
+        return { customer: c.name, balance: agIls(balMap[c.id] || 0) };
       }).filter(function (x) { return x.balance > 0; }).sort(function (a, b) { return b.balance - a.balance; });
-      var low = db.items.filter(function (i) { // מלאי נמוך
-        return i.min_stock !== '' && (totalStock(db, i.id) - inLaundryQty(db, i.id)) < Number(i.min_stock);
-      }).map(function (i) { return { item: i.name, available: totalStock(db, i.id) - inLaundryQty(db, i.id), min: Number(i.min_stock) }; });
+      // B48 (הכרעת אבי): "מתחת למינימום" נמדד מול פנוי-על-המדף — כולל
+      // הזמנות עתידיות שכבר התחייבנו עליהן, כדי שהתראת הרכש תגיע בזמן.
+      var low = db.items.map(function (i) {
+        return { item: i.name, available: b48FreeOnShelf(db, i.id), min: Number(i.min_stock), _has: i.min_stock !== '' };
+      }).filter(function (x) { return x._has && x.available < x.min; })
+        .map(function (x) { return { item: x.item, available: x.available, min: x.min }; });
       return { ok: true, revenueByMonth: rev, expensesByMonth: exp, aging: aging, lowStock: low };
     }
 
@@ -3437,6 +3444,34 @@ function availableQty(db, itemId, start, end, excludeOrderId, wh) {
   var total = totalStock(db, itemId, wh);
   return total - availDepreciationQty(db, total) - reservedQty(db, itemId, start, end, excludeOrderId, wh) - inLaundryQty(db, itemId, wh, start);
 }
+// ------------------------------------------------------------
+// B48 (הכרעת אבי): "פנוי על המדף" — כמה יחידות מונחות אצלנו עכשיו ואינן
+// מובטחות לאף אחד. זהו המספר שמפעיל את התראת "מתחת למינימום", והוא זהה
+// בדיוק למספר "פנוי" שמוצג בכרטיס הפריט בממשק (b40ItemBreakdown).
+//
+// ההבדל מ-availableQty מכוון ומתועד: availableQty סופרת רק הזמנות שחופפות
+// לטווח תאריכים מסוים ועונה על "כמה אפשר להזמין לתאריכים האלה"; כאן נספרת
+// **כל** הזמנת השכרה מאושרת או שסופקה, גם עתידית, כי הסחורה כבר התחייבנו
+// עליה ואינה זמינה לרכש. התוצאה תמיד קטנה או שווה ל-availableQty — הכיוון
+// הבטוח להתראת רכש.
+// ------------------------------------------------------------
+// כמות מחויבת: כל שורות ההשכרה בהזמנות מאושרות/שסופקו, בלי תלות בתאריכים.
+function b48CommittedQty(db, itemId, wh) {
+  var qty = 0;
+  db.orderLines.forEach(function (l) {
+    if (l.item_id !== itemId) return;
+    var o = db.orders.find(function (x) { return x.id === l.order_id; });
+    if (!o || o.type !== 'השכרה') return;
+    if (wh !== undefined && String(o.warehouse_id || '') !== String(wh || '')) return;
+    if (RESERVING_STATUSES.indexOf(o.status) === -1) return;
+    qty += Number(l.qty);
+  });
+  return qty;
+}
+function b48FreeOnShelf(db, itemId, wh) {
+  var total = totalStock(db, itemId, wh);
+  return total - availDepreciationQty(db, total) - b48CommittedQty(db, itemId, wh) - inLaundryQty(db, itemId, wh);
+}
 // B19b (L2): בדיקת חוסר בצד השרת בעת יצירת הזמנה מפורטל/חנות — מחזיר סיומת הערה למשרד.
 // מקור האמת הוא השרת (לא דגל מהלקוח) — כך ההערה נכונה גם אם הלקוח דילג על האזהרה.
 function b19ShortageSuffix(db, orderId, startD, endD) {
@@ -3681,16 +3716,43 @@ function orderBalance(db, orderId) {
   var base = inv ? Number(inv.total) : orderTotal(db, orderId);
   return base - orderPaid(db, orderId);
 }
-function customerBalance(db, customerId) {
-  var b = db.orders.filter(function (o) { return o.customer_id === customerId && o.status !== 'בוטלה' && o.status !== 'טיוטה' && o.status !== 'הצעת מחיר'; })
-    .reduce(function (s, o) { return s + orderBalance(db, o.id); }, 0);
-  // NC4: חשבוניות מכבסה מרוכזות (ללא הזמנה) נכללות ביתרת הלקוח — כמו בממשק
-  db.invoices.filter(function (v) { return v.customer_id === customerId && !v.order_id && v.status !== 'בוטלה'; }).forEach(function (v) {
-    var paid = db.payments.filter(function (x) { return x.invoice_id === v.id; }).reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0);
-    b += Math.max(0, Number(v.total) - paid);
+// ============================================================
+//  B48: מקור אמת אחד ליתרת לקוח
+//  ------------------------------------------------------------
+//  עד B48 חיו במקביל שלושה חישובי יתרה. מעכשיו יש אחד: שורות החוב
+//  הקנוניות של b43Receivables (רמת מסמך — הזמנה או חשבונית, עם מועד
+//  פירעון), ועליהן איבר זיכוי.
+//
+//  למה צריך איבר זיכוי: b43Receivables מחזירה רק יתרות חיוביות — שורת
+//  חוב שלילית אינה חוב ואין לה מועד פירעון, ולכן אין לה מקום בדוח הגיל
+//  ובתחזית התזרים. אבל ביתרת הלקוח היא כן מקזזת. יתרת הזמנה שלילית
+//  נוצרת מתשלום ביתר; מסלולי התשלום חוסמים אותו (b2ProcessPayment,
+//  addPayment), אך ביטול חשבונית אחרי תשלום עדיין עלול ליצור זאת.
+//
+//  ⚠ ההגדרה כאן זהה מתמטית ל-b2CreditUsedAg (הכרעה S5) — וזה מכוון:
+//  יתרת הלקוח שמוצגת בדוחות, בכרטיס הלקוח ובפורטל היא בדיוק אותו מספר
+//  שמנוע האשראי סופר כ-credit_used. בדיקה אוטומטית מאמתת את השוויון.
+//  אין לשנות אחד בלי השני.
+// ============================================================
+function b48BalancesAg(db) {
+  var m = {};
+  var add = function (cid, ag) { if (!cid) return; m[cid] = (m[cid] || 0) + ag; };
+  b43Receivables(db).forEach(function (r) { add(r.customer_id, r.amount_ag); });
+  db.orders.filter(function (o) {
+    return ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
+  }).forEach(function (o) {
+    var b = b2OrderBalanceAg(db, o.id);
+    if (b < 0) add(o.customer_id, b);   // זיכוי — מקזז את החוב, אינו שורת חוב
   });
-  return b;
+  return m;
 }
+// גישה ללקוח בודד. ⚠ בונה את כל המפה — בלולאה על לקוחות רבים יש לקרוא
+// ל-b48BalancesAg(db) פעם אחת ולקרוא ממנה, כפי שעושה case 'reports'.
+function b48CustomerBalanceAg(db, customerId) {
+  var m = b48BalancesAg(db);
+  return m[customerId] || 0;
+}
+function customerBalance(db, customerId) { return agIls(b48CustomerBalanceAg(db, customerId)); }
 // ============================================================
 //  NC1: מודול רצפת ייצור NOBLE (מכבסה תעשייתית)
 //  ארכיטקטורת יומן אירועים: כל פעולת רצפה = שורה ביומן laundry_events
