@@ -8772,6 +8772,7 @@ function rFloor(){
   var tabBtn = function(key,lbl){ return '<button class="btn '+(FLOOR_TAB===key?'':'ghost')+' grow" style="font-size:16px;padding:12px" onclick="FLOOR_TAB=\''+key+'\';rFloor()">'+lbl+'</button>'; };
   el('main').innerHTML =
     '<div class="section-title"><h2>רצפת ייצור — מכבסה</h2>'+
+    (allowedViews().some(function(v){ return v[0]==='reports'; })?'<button class="btn ghost sm" onclick="goReport(\'noble\')">📊 דוח ביצועי מכבסה</button>':'')+
     '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" '+(floorTablet()?'checked':'')+' onchange="floorTabletToggle()" style="width:auto"> טאבלט משותף (מספר אישי לכל פעולה)</label></div>'+
     (floorTablet()?'<div class="card" style="padding:10px"><div class="frow" style="margin:0"><label>מספר אישי (חובה לפני כל פעולה)</label><input id="fl_pin" type="password" inputmode="numeric" placeholder="המספר האישי שלך" style="font-size:18px"></div></div>':'')+
     '<div class="row" style="margin:10px 0;flex-wrap:wrap">'+tabBtn('board','לוח חי')+tabBtn('work','עבודה וסריקה')+tabBtn('intake','קליטה חדשה')+tabBtn('pack','אריזה ומידוף')+tabBtn('dispatch','העמסה והחזרות')+'</div>'+
