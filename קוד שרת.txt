@@ -2,7 +2,9 @@
 //  MAPA-NOBLE ERP — Backend v4.0 (Google Apps Script)
 //  אצווה B44: סריקת העמסה מרובה (נסרק רק כשכל המארזים נסרקו) · מועד יעד אוטומטי
 //             מתנאי הספק בהוצאה עתידית · תזכורת חוב לפי מועד פירעון (B43)
-//             B45 — כלל אחיד: כל סכום נקלט ומוצג לפני מע"מ — canary v4.35-B45
+//             B45 — כלל אחיד: כל סכום נקלט ומוצג לפני מע"מ
+//             B46 — PDF אמיתי (Drive v3/v2 + fallback מדווח), תיקון רטרואקטיבי,
+//                   תמונת עובד ורכב (photo_url) — canary v4.38-B46
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -191,7 +193,7 @@ var TABLES = {
   links: ['id', 'from_type', 'from_id', 'to_type', 'to_id', 'note', 'created', 'user'],
   // B39: location — מיקום המכונה, נבחר מרשימת מיקומים נשלטת. עמודה חדשה בסוף.
   machines: ['id', 'type', 'capacity', 'status', 'last_service', 'next_service', 'manufacturer', 'model', 'serial', 'purchase_date', 'notes', 'auto_stage', 'barcode', 'location'],
-  employees: ['id', 'name', 'role', 'phone', 'pin', 'hourly_rate', 'views', 'can_edit', 'active', 'national_id', 'address', 'email', 'start_date', 'emergency_name', 'emergency_phone', 'bank_details', 'notes', 'license_number', 'license_expiry', 'username', 'password_hash', 'pay_type', 'monthly_salary'],
+  employees: ['id', 'name', 'role', 'phone', 'pin', 'hourly_rate', 'views', 'can_edit', 'active', 'national_id', 'address', 'email', 'start_date', 'emergency_name', 'emergency_phone', 'bank_details', 'notes', 'license_number', 'license_expiry', 'username', 'password_hash', 'pay_type', 'monthly_salary', 'photo_url'],   // B46: תמונת עובד (URL ב-Drive)
   // B21: void_hours = שעות שנפסלו ע"י ההנהלה (חלקי או מלא), void_reason = סיבת הפסילה
   attendance: ['id', 'employee_id', 'date', 'in_time', 'out_time', 'hours', 'in_date', 'out_date', 'void_hours', 'void_reason', 'voided_by', 'voided_at'],
   payroll: ['id', 'employee_id', 'month', 'hours', 'hourly_rate', 'base_pay', 'bonus', 'bonus_note', 'total', 'status', 'pay_type'],
@@ -213,7 +215,7 @@ var TABLES = {
   task_comments: ['id', 'task_id', 'ts', 'user', 'text', 'status', 'handled_by', 'handled_ts'],
   meetings: ['id', 'title', 'date', 'time', 'participants', 'protocol', 'created_by', 'location', 'participant_ids'],
   warehouses: ['id', 'name', 'city', 'address', 'phone', 'active'],
-  vehicles: ['id', 'plate', 'make', 'model', 'year', 'vtype', 'fuel', 'ownership', 'leasing_company', 'insurance_expiry', 'test_date', 'mileage_km', 'last_service_date', 'next_service_date', 'next_service_km', 'assigned_driver_id', 'status', 'purchase_date', 'purchase_cost', 'notes', 'active'],
+  vehicles: ['id', 'plate', 'make', 'model', 'year', 'vtype', 'fuel', 'ownership', 'leasing_company', 'insurance_expiry', 'test_date', 'mileage_km', 'last_service_date', 'next_service_date', 'next_service_km', 'assigned_driver_id', 'status', 'purchase_date', 'purchase_cost', 'notes', 'active', 'photo_url'],   // B46: תמונת רכב (URL ב-Drive)
   trips: ['id', 'date', 'kind', 'method', 'driver_id', 'vehicle_id', 'external_carrier', 'from_loc', 'to_loc', 'ref', 'start_km', 'end_km', 'cost', 'notes'],
   notes: ['id', 'ts', 'user', 'entity_type', 'entity_id', 'text', 'attachment_url', 'link_note_id'],
   settings: ['key', 'value'],
@@ -311,7 +313,9 @@ var MANAGER_ONLY = ['delete', 'b38FixPickups', 'b41CloseStalePickups', 'cancelIn
   // B28: מחיקה רכה של הוצאה עתידית והשלמת תאריך יעד — מנהל בלבד
   'deleteFutureExpense', 'setFutureExpenseDue',
   // B21: פסילת שעות נוכחות — מנהל בלבד
-  'voidAttendance'];
+  'voidAttendance',
+  // B46: תיקון רטרואקטיבי של מסמכי HTML ל-PDF, והעלאת תמונות עובד/רכב — מנהל בלבד
+  'b46FixPdfDocs', 'b46UploadEmpPhoto', 'b46UploadVehPhoto'];
 
 // הרץ פעם אחת מהעורך
 // B7: עוזר חד-פעמי — מדפיס ליומן (View → Logs) את שם וה-id של כל עובד,
@@ -2653,6 +2657,36 @@ function handle(action, p, db, user) {
       return { ok: true, url: ex2.attachment_url };
     }
 
+    // ===================== B46: תיקון PDF ותמונות עובד/רכב =====================
+    // שלוש הפעולות מנהל-בלבד (נאכף ב-MANAGER_ONLY) וכולן כותבות — לא ב-READ_ONLY_ACTIONS.
+
+    // תיקון רטרואקטיבי של מסמכים שנשמרו כ-HTML. נקרא בלולאה מהממשק עד more:0.
+    case 'b46FixPdfDocs': return b46FixPdfDocs(db, p);
+
+    // תמונת עובד
+    case 'b46UploadEmpPhoto': {
+      var empPH = db.employees.find(function (x) { return x.id === p.employee_id; });
+      if (!empPH) return { ok: false, error: 'עובד לא נמצא' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (String(p.mime).indexOf('image/') !== 0) return { ok: false, error: 'יש להעלות קובץ תמונה' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      empPH.photo_url = b46SavePhoto('MAPA-NOBLE תמונות עובדים', 'emp_' + empPH.id, p.base64, p.mime);
+      writeTable('employees', db.employees);
+      return { ok: true, url: empPH.photo_url, auditNote: 'תמונת עובד עודכנה · ' + empPH.name };
+    }
+
+    // תמונת רכב
+    case 'b46UploadVehPhoto': {
+      var vehPH = db.vehicles.find(function (x) { return x.id === p.vehicle_id; });
+      if (!vehPH) return { ok: false, error: 'רכב לא נמצא' };
+      if (!p.base64 || !p.mime) return { ok: false, error: 'קובץ חסר' };
+      if (String(p.mime).indexOf('image/') !== 0) return { ok: false, error: 'יש להעלות קובץ תמונה' };
+      if (p.base64.length > 6000000) return { ok: false, error: 'קובץ גדול מדי (עד ~4MB)' };
+      vehPH.photo_url = b46SavePhoto('MAPA-NOBLE תמונות רכבים', 'veh_' + vehPH.id, p.base64, p.mime);
+      writeTable('vehicles', db.vehicles);
+      return { ok: true, url: vehPH.photo_url, auditNote: 'תמונת רכב עודכנה · ' + (vehPH.plate || vehPH.id) };
+    }
+
     // ===================== B42: תקלות, טיפולים וביקורי טכנאי =====================
     // חל על מכונות ועל עגלות כאחד — ההבדל היחיד ביניהן הוא שדה המצב, וכל הגישה אליו
     // עוברת דרך b42Asset. הרשאה: מנהל ומשרד בלבד, בכל הפעולות (הכרעת אבי).
@@ -4317,38 +4351,203 @@ function nobleCreateInvoice(db, p, user) {
 // סוגי מסמכים חוקיים
 var INVOICE_TYPES = ['חשבונית מס', 'קבלה', 'חשבונית מס-קבלה', 'חשבונית עסקה'];
 
-// B1: שמירת HTML → PDF ב-Drive והחזרת URL ציבורי
-// הערה: Apps Script אינו תומך ב-PDF מ-HTML ישירות — שומרים HTML ב-Drive
-// (בשלב ייצור ניתן להמיר ע"י Google Docs API — כאן שומרים כ-HTML עם סיומת .html)
-function invoiceSaveToDrive(db, invId, htmlContent) {
-  try {
-    var folderName = 'MAPA-NOBLE חשבוניות';
-    var folders = DriveApp.getFoldersByName(folderName);
-    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
-    // המרה ל-PDF דרך Google Docs API (הדרך היחידה ב-Apps Script)
-    var htmlBlob = Utilities.newBlob(htmlContent, 'text/html', 'invoice_' + invId);
-    var docFile = Drive.Files.insert(
-      { title: 'invoice_' + invId, mimeType: 'application/vnd.google-apps.document',
+// ============================================================
+//  B46: שמירת מסמך כ-PDF אמיתי ב-Drive
+// ============================================================
+// עד B45 הפונקציה קראה ל-Drive.Files.insert — שירות Drive המתקדם בגרסה v2 בלבד.
+// כשהשירות לא הופעל בעורך הסקריפט, או הופעל כברירת המחדל v3 (שבה אין insert אלא
+// create), נזרקה שגיאה וה-catch שמר את ה-HTML הגולמי. הכישלון היה שקט — ולכן
+// כל חשבונית וקבלה שיצאו ללקוח היו קובץ HTML שנראה כזבל.
+// מעכשיו: זיהוי יכולות (v3 → v2 → אין), ו-fallback שמדווח על עצמו.
+
+var B46_INV_FOLDER = 'MAPA-NOBLE חשבוניות';
+// דגל מודולרי: 1 אם השמירה האחרונה נפלה ל-HTML. נקרא מיד אחרי invoiceSaveToDrive
+// ומוחזר לממשק כ-pdf_fallback. חתימת invoiceSaveToDrive לא שונתה (חמישה אתרי קריאה).
+var PDF_LAST_FALLBACK = 0;
+
+// איזו גרסה של שירות Drive המתקדם זמינה: 'v3' | 'v2' | '' (לא מופעל)
+function b46DriveCaps() {
+  if (typeof Drive === 'undefined' || !Drive || !Drive.Files) return '';
+  if (typeof Drive.Files.create === 'function') return 'v3';
+  if (typeof Drive.Files.insert === 'function') return 'v2';
+  return '';
+}
+
+// תיקיית המסמכים (נוצרת פעם אחת)
+function b46InvFolder() {
+  var folders = DriveApp.getFoldersByName(B46_INV_FOLDER);
+  return folders.hasNext() ? folders.next() : DriveApp.createFolder(B46_INV_FOLDER);
+}
+
+// המרת HTML ל-PDF אמיתי דרך Google Docs. מחזיר URL, או '' אם השירות לא זמין.
+// זורק שגיאה רק אם ההמרה עצמה נכשלה — הקורא אחראי ל-catch.
+function b46HtmlToPdf(folder, baseName, htmlContent) {
+  var caps = b46DriveCaps();
+  if (!caps) return '';
+  var htmlBlob = Utilities.newBlob(htmlContent, 'text/html', baseName);
+  var docId = '';
+  if (caps === 'v3') {
+    var f3 = Drive.Files.create(
+      { name: baseName, mimeType: 'application/vnd.google-apps.document', parents: [folder.getId()] },
+      htmlBlob
+    );
+    docId = f3 && f3.id;
+  } else {
+    var f2 = Drive.Files.insert(
+      { title: baseName, mimeType: 'application/vnd.google-apps.document',
         parents: [{ id: folder.getId() }] },
       htmlBlob, { convert: true }
     );
-    var pdfBlob = DriveApp.getFileById(docFile.id).getAs('application/pdf');
-    pdfBlob.setName('invoice_' + invId + '.pdf');
-    var pdfFile = folder.createFile(pdfBlob);
-    pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    try { DriveApp.getFileById(docFile.id).setTrashed(true); } catch(e2) {}
-    return pdfFile.getUrl();
-  } catch (e) {
-    // Fallback: HTML אם Drive API לא מופעל
-    try {
-      var f2 = DriveApp.getFoldersByName('MAPA-NOBLE חשבוניות');
-      var fld2 = f2.hasNext() ? f2.next() : DriveApp.createFolder('MAPA-NOBLE חשבוניות');
-      var b2 = Utilities.newBlob(htmlContent, 'text/html', 'invoice_' + invId + '.html');
-      var file2 = fld2.createFile(b2);
-      file2.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      return file2.getUrl();
-    } catch(e3) { return ''; }
+    docId = f2 && f2.id;
   }
+  if (!docId) return '';
+  var pdfBlob = DriveApp.getFileById(docId).getAs('application/pdf');
+  pdfBlob.setName(baseName + '.pdf');
+  var pdfFile = folder.createFile(pdfBlob);
+  pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  try { DriveApp.getFileById(docId).setTrashed(true); } catch (e2) { }
+  return pdfFile.getUrl();
+}
+
+// B1/B46: שמירת HTML → PDF ב-Drive והחזרת URL ציבורי.
+// חתימה ללא שינוי (db, invId, htmlContent) → string. הדיווח על fallback דרך PDF_LAST_FALLBACK.
+function invoiceSaveToDrive(db, invId, htmlContent) {
+  PDF_LAST_FALLBACK = 0;
+  var baseName = 'invoice_' + invId;
+  try {
+    var folder = b46InvFolder();
+    var url = b46HtmlToPdf(folder, baseName, htmlContent);
+    if (url) return url;
+  } catch (e) { /* ההמרה נכשלה — ממשיכים ל-fallback המדווח */ }
+  // Fallback: HTML. מסומן במפורש כדי שהממשק יציג אזהרה למנהל.
+  PDF_LAST_FALLBACK = 1;
+  try {
+    var fld2 = b46InvFolder();
+    var b2 = Utilities.newBlob(htmlContent, 'text/html', baseName + '.html');
+    var file2 = fld2.createFile(b2);
+    file2.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return file2.getUrl();
+  } catch (e3) { return ''; }
+}
+
+// חילוץ מזהה קובץ Drive מתוך URL בכל אחד מהפורמטים של Drive
+function b46DriveIdFromUrl(url) {
+  var m = String(url || '').match(/[-\w]{25,}/);
+  return m ? m[0] : '';
+}
+
+// האם ה-URL מצביע על קובץ שאינו PDF (כלומר טעון תיקון). מחזיר 'pdf' | 'bad' | 'gone'
+function b46UrlKind(url) {
+  var id = b46DriveIdFromUrl(url);
+  if (!id) return 'gone';
+  try {
+    return DriveApp.getFileById(id).getMimeType() === 'application/pdf' ? 'pdf' : 'bad';
+  } catch (e) { return 'gone'; }
+}
+
+// B46: תיקון רטרואקטיבי — ממיר מסמכים שנשמרו כ-HTML ל-PDF אמיתי.
+// מעבד עד B46_FIX_BATCH מסמכים לקריאה (מגבלת זמן ריצה) ומחזיר more:1 להמשך;
+// הממשק קורא בלולאה עד more:0. אידמפוטנטי — הרצה חוזרת מדלגת על מה שכבר PDF.
+var B46_FIX_BATCH = 30;
+function b46FixPdfDocs(db, p) {
+  if (!b46DriveCaps()) {
+    return { ok: false, error: 'שירות Drive API אינו מופעל בעורך הסקריפט. בעורך: "שירותים" (Services) → + → Drive API → הוספה. בלי זה לא ניתן להמיר מסמכים ל-PDF.' };
+  }
+  var folder = b46InvFolder();
+  var offset = Math.max(0, Number((p && p.offset) || 0));
+  var fixed = 0, already = 0, noSource = 0;
+  var failed = [];
+  var touchedInv = false, touchedPay = false;
+
+  // ---- רשימת העבודה: חשבוניות עם קישור, ואחריהן קבוצות קבלה עם קישור ----
+  var work = [];
+  (db.invoices || []).forEach(function (inv) {
+    if (String(inv.pdf_url || '').trim()) work.push({ kind: 'inv', inv: inv });
+  });
+  var seenRcpt = {};
+  (db.payments || []).forEach(function (pay) {
+    var rn = String(pay.receipt_number || '').trim();
+    if (!rn || seenRcpt[rn]) return;
+    if (!String(pay.pdf_url || '').trim()) return;
+    seenRcpt[rn] = 1;
+    work.push({ kind: 'rcpt', number: rn });
+  });
+
+  var i = offset, done = 0;
+  for (; i < work.length && done < B46_FIX_BATCH; i++) {
+    var w = work[i];
+    try {
+      if (w.kind === 'inv') {
+        var inv = w.inv;
+        var k = b46UrlKind(inv.pdf_url);
+        if (k === 'pdf') { already++; continue; }
+        // שחזור נאמן אפשרי רק כשיש מקור שורות. חשבונית מכבסה מרוכזת (ללא order_id)
+        // אין לה שורות בטבלת orderLines — בנייה מחדש הייתה מפיקה מסמך ריק. מדלגים.
+        if (!String(inv.order_id || '').trim()) { noSource++; done++; continue; }
+        var lines = (db.orderLines || []).filter(function (l) { return l.order_id === inv.order_id; })
+          .map(function (l) {
+            var it = (db.items || []).find(function (x) { return x.id === l.item_id; }) || {};
+            return { item_id: l.item_id, item_name: it.name || l.item_id, qty: l.qty, unit_price: l.unit_price };
+          });
+        if (!lines.length) { noSource++; done++; continue; }
+        var cust = (db.customers || []).find(function (c) { return c.id === inv.customer_id; }) || null;
+        var html = buildInvoiceHtml(db, inv, lines, cust, db.settings);
+        var oldId = b46DriveIdFromUrl(inv.pdf_url);
+        var newUrl = b46HtmlToPdf(folder, 'invoice_' + inv.id, html);
+        if (!newUrl) { failed.push(inv.number || inv.id); done++; continue; }
+        inv.pdf_url = newUrl; touchedInv = true; fixed++; done++;
+        if (oldId && k === 'bad') { try { DriveApp.getFileById(oldId).setTrashed(true); } catch (e1) { } }
+      } else {
+        var rows = (db.payments || []).filter(function (x) { return String(x.receipt_number) === w.number; });
+        if (!rows.length) { noSource++; done++; continue; }
+        var kr = b46UrlKind(rows[0].pdf_url);
+        if (kr === 'pdf') { already++; continue; }
+        var custR = (db.customers || []).find(function (c) { return c.id === rows[0].customer_id; }) || null;
+        if (!custR && rows[0].order_id) {
+          var ooR = (db.orders || []).find(function (x) { return x.id === rows[0].order_id; });
+          if (ooR) custR = (db.customers || []).find(function (c) { return c.id === ooR.customer_id; }) || null;
+        }
+        var linesR = rows.map(function (r) {
+          return { desc: (r.type || 'תשלום') + (r.order_id ? ' — הזמנה ' + r.order_id : ''), amount: Number(r.amount || 0) };
+        });
+        var totalR = nRound2(rows.reduce(function (s, r) { return s + Number(r.amount || 0); }, 0));
+        var htmlR = b2BuildReceiptHtml(db, {
+          number: w.number, date: rows[0].date, customer: custR,
+          method: rows[0].method || '', lines: linesR, total: totalR, note: rows[0].note || ''
+        });
+        var oldIdR = b46DriveIdFromUrl(rows[0].pdf_url);
+        var newUrlR = b46HtmlToPdf(folder, 'invoice_RCPT-' + w.number, htmlR);
+        if (!newUrlR) { failed.push('קבלה ' + w.number); done++; continue; }
+        rows.forEach(function (r) { r.pdf_url = newUrlR; });
+        touchedPay = true; fixed++; done++;
+        if (oldIdR && kr === 'bad') { try { DriveApp.getFileById(oldIdR).setTrashed(true); } catch (e4) { } }
+      }
+    } catch (eLoop) {
+      failed.push((w.kind === 'inv' ? (w.inv.number || w.inv.id) : ('קבלה ' + w.number)) + ' — ' + eLoop);
+      done++;
+    }
+  }
+
+  if (touchedInv) writeTable('invoices', db.invoices);
+  if (touchedPay) writeTable('payments', db.payments);
+
+  var more = i < work.length ? 1 : 0;
+  return {
+    ok: true, fixed: fixed, already: already, no_source: noSource, failed: failed,
+    total: work.length, offset: i, more: more,
+    auditNote: 'תיקון PDF רטרואקטיבי · תוקנו ' + fixed + ' · תקינים ' + already +
+      ' · ללא מקור ' + noSource + ' · נכשלו ' + failed.length
+  };
+}
+
+// B46: העלאת תמונה ושמירתה ב-Drive — דפוס uploadReceipt. מחזיר URL.
+function b46SavePhoto(folderName, baseName, base64, mime) {
+  var folders = DriveApp.getFoldersByName(folderName);
+  var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+  var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime, baseName);
+  var file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return file.getUrl();
 }
 
 // B1: בניית HTML חשבונית/קבלה תקני לפי הגדרות העסק
@@ -4496,6 +4695,7 @@ function b1CreateInvoice(db, p, user) {
   return {
     ok: true,
     invoice: inv,
+    pdf_fallback: PDF_LAST_FALLBACK,   // B46: 1 = נשמר כ-HTML, יש להפעיל Drive API
     auditNote: invoiceType + ' ' + inv.number + ' · ' + (cust ? cust.name : '') + ' · ₪' + inv.total +
       (inv.allocation_number ? ' · הקצאה ' + inv.allocation_number : '')
   };
@@ -4505,6 +4705,7 @@ function b1CreateInvoice(db, p, user) {
 function b1GetInvoiceLink(db, p) {
   var inv = db.invoices.find(function(v) { return v.id === p.invoice_id; });
   if (!inv) return { ok: false, error: 'חשבונית לא נמצאה' };
+  PDF_LAST_FALLBACK = 0;   // B46: אם לא נשמר מחדש — אין דיווח fallback
   if (!inv.pdf_url) {
     // יצירה מחדש אם חסר קישור
     var lines = db.orderLines.filter(function(l) { return l.order_id === inv.order_id; }).map(function(l) {
@@ -4516,7 +4717,7 @@ function b1GetInvoiceLink(db, p) {
     inv.pdf_url = invoiceSaveToDrive(db, inv.id, html);
     if (inv.pdf_url) writeTable('invoices', db.invoices);
   }
-  return { ok: true, url: inv.pdf_url, number: inv.number, type: inv.type };
+  return { ok: true, url: inv.pdf_url, number: inv.number, type: inv.type, pdf_fallback: PDF_LAST_FALLBACK };
 }
 
 // B1: עדכון מספר הקצאה לחשבונית קיימת (מנהל בלבד)
@@ -4534,7 +4735,7 @@ function b1SetAllocationNumber(db, p) {
   var html = buildInvoiceHtml(db, inv, lines, cust, db.settings);
   inv.pdf_url = invoiceSaveToDrive(db, inv.id, html);
   writeTable('invoices', db.invoices);
-  return { ok: true, auditNote: 'מספר הקצאה ' + inv.allocation_number + ' שויך לחשבונית ' + inv.number };
+  return { ok: true, pdf_fallback: PDF_LAST_FALLBACK, auditNote: 'מספר הקצאה ' + inv.allocation_number + ' שויך לחשבונית ' + inv.number };
 }
 // ============================================================
 //  B2: מנוע תשלום + אשראי (D9 / D7 / D15 · הכרעות S1, S2, S5)
@@ -4789,12 +4990,14 @@ function b2ProcessPayment(db, p, user) {
   // B31c: כשהופקה "חשבונית מס-קבלה" — המסמך המאוחד כבר משמש כקבלה.
   // שורת התשלום נשמרת כרגיל (היא זו שמקטינה את החוב), אך לא מופק מסמך קבלה שני.
   var url = '';
+  var rcptFallback = 0;   // B46
   if (p.receipt_doc === false) {
     url = String(p.doc_url || '');
     newRows.forEach(function (r) { r.pdf_url = url; r.type = (r.type || 'תשלום') + ' · חשבונית מס-קבלה'; });
   } else {
     var html = b2BuildReceiptHtml(db, { number: rcptNum, date: p.date || today(), customer: cust, method: p.method || '', lines: docLines, total: totalIls, note: p.note || '' });
     url = invoiceSaveToDrive(db, 'RCPT-' + rcptNum, html);
+    rcptFallback = PDF_LAST_FALLBACK;
     if (url) newRows.forEach(function (r) { r.pdf_url = url; });
   }
 
@@ -4803,7 +5006,7 @@ function b2ProcessPayment(db, p, user) {
   if (ordTouched) writeTable('orders', db.orders);
 
   return {
-    ok: true, receipt_number: rcptNum, pdf_url: url, total: totalIls,
+    ok: true, receipt_number: rcptNum, pdf_url: url, total: totalIls, pdf_fallback: rcptFallback,
     pay_ids: newRows.map(function (r) { return r.id; }),   // B31: לצירוף אסמכתאות לקבלה
     order_balance_ag: o ? b2OrderBalanceAg(db, o.id) : 0,
     credit: b2CreditStatusObj(db, cust.id),
@@ -4816,7 +5019,7 @@ function b2GetReceiptLink(db, p) {
   var rows = db.payments.filter(function (x) { return String(x.receipt_number) === String(p.receipt_number); });
   if (!rows.length) return { ok: false, error: 'קבלה לא נמצאה' };
   var withUrl = rows.find(function (x) { return x.pdf_url; });
-  if (withUrl) return { ok: true, url: withUrl.pdf_url, receipt_number: p.receipt_number, auditNote: 'קישור קבלה ' + p.receipt_number };
+  if (withUrl) return { ok: true, url: withUrl.pdf_url, receipt_number: p.receipt_number, pdf_fallback: 0, auditNote: 'קישור קבלה ' + p.receipt_number };
   var cust = db.customers.find(function (c) { return c.id === rows[0].customer_id; }) || null;
   if (!cust && rows[0].order_id) {
     var oo = db.orders.find(function (x) { return x.id === rows[0].order_id; });
@@ -4827,7 +5030,7 @@ function b2GetReceiptLink(db, p) {
   var html = b2BuildReceiptHtml(db, { number: p.receipt_number, date: rows[0].date, customer: cust, method: rows[0].method || '', lines: lines, total: total, note: rows[0].note || '' });
   var url = invoiceSaveToDrive(db, 'RCPT-' + p.receipt_number, html);
   if (url) { rows.forEach(function (r) { r.pdf_url = url; }); writeTable('payments', db.payments); }
-  return { ok: true, url: url, receipt_number: p.receipt_number, auditNote: 'שחזור קבלה ' + p.receipt_number };
+  return { ok: true, url: url, receipt_number: p.receipt_number, pdf_fallback: PDF_LAST_FALLBACK, auditNote: 'שחזור קבלה ' + p.receipt_number };
 }
 
 // checkout פורטל — הכרעת S1 (מסגרת אשראי = תשלום תקף ל-D2) ושני מוצאי D7
