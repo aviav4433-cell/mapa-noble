@@ -1,5 +1,7 @@
 // ============================================================
 //  MAPA-NOBLE ERP — Backend v4.0 (Google Apps Script)
+//  אצווה B44: סריקת העמסה מרובה (נסרק רק כשכל המארזים נסרקו) · מועד יעד אוטומטי
+//             מתנאי הספק בהוצאה עתידית · תזכורת חוב לפי מועד פירעון (B43) — canary v4.34-B44
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -2006,10 +2008,16 @@ function handle(action, p, db, user) {
       if (!p.category || !p.amount) return { ok: false, error: 'שדות חובה חסרים' };
       // B28: תאריך תשלום משוער הוא שדה חובה — בלעדיו אי אפשר להציג מה צריך לשלם ומתי
       if (!isDateStr(p.due_date)) return { ok: false, error: 'תאריך תשלום משוער הוא שדה חובה' };
+      // B44: ספק הוא רשות. אם נבחר — חייב להיות קיים, כדי שהחוב ישויך לספק אמיתי.
+      // העמודה supplier_id כבר קיימת בטבלה (B42) — אין שינוי סכימה.
+      var feSupId = String(p.supplier_id || '').trim();
+      if (feSupId && !db.suppliers.some(function (s) { return s.id === feSupId; }))
+        return { ok: false, error: 'ספק לא נמצא' };
       db.futureExpenses.push({
         id: genId('FEXP'), source: 'אחר', ref_id: '', employee_id: p.employee_id || '', category: p.category,
         description: p.description || '', amount: Number(p.amount) || 0, due_date: String(p.due_date),
         urgency: ['רגיל', 'דחוף', 'קריטי'].indexOf(p.urgency) > -1 ? p.urgency : 'רגיל', status: 'ממתין', created_at: nowTs(),
+        supplier_id: feSupId, vat_amount: '',
         deleted: '', delete_reason: '', deleted_by: '', deleted_at: ''
       });
       writeTable('future_expenses', db.futureExpenses);
@@ -5119,7 +5127,7 @@ var B4_TEMPLATES = {
   },
   debt_reminder: {
     subject: 'תזכורת תשלום — יתרת חוב פתוחה',
-    body: 'שלום {customer_name},\nקיימת יתרת חוב פתוחה בסך {amount} ₪ (מעל {days} ימים ממועד ההחזרה).\nניתן להסדיר את התשלום דרך הפורטל האישי או בפנייה למשרד.\nתודה, {business_name}'
+    body: 'שלום {customer_name},\nקיימת יתרת חוב פתוחה בסך {amount} ₪ (מעל {days} ימים ממועד הפירעון).\nניתן להסדיר את התשלום דרך הפורטל האישי או בפנייה למשרד.\nתודה, {business_name}'
   },
   credit_overlimit: {
     subject: 'התראה: חריגת מסגרת אשראי — לקוח {customer_name}',
@@ -5209,26 +5217,28 @@ function b4ScanReturnReminders(db) {
 }
 
 // תזכורת חוב פתוח — הזמנות שעברו X ימים ממועד ההחזרה ועדיין לא שולמו במלואן (חוזרת אחת לשבוע לכל הזמנה)
+// B44: סריקת תזכורות החוב עברה ל-b43Receivables ואינה נשענת יותר על payment_status.
+// הרשימה נשמרת כי היא מתעדת מהם סטטוסי החוב במערכת.
 var B4_DEBT_STATUSES = ['ממתין לתשלום', 'ממתין לתשלום הפרש', 'ממתין לאישור חריגה', 'תשלום בהמשך', 'שולם חלקית', 'באשראי מסגרת'];
+// B44: הספירה עברה ממועד ההחזרה למועד הפירעון שנקבע ב-B43.
+// המקור היחיד ליתרות ולמועדים הוא b43Receivables — אותה פונקציה שמזינה את מסך התזרים,
+// כך שמה שהלקוח מקבל במייל תואם בדיוק למה שאבי רואה על המסך.
+// מבנה ההתראה, ה-opt-out והדדופ השבועי לא השתנו.
 function b4ScanDebtReminders(db) {
   var afterDays = Number(b2Setting(db, 'notify_debt_after_days')) || 7;
   var todayMs = new Date(today()).getTime();
-  db.orders.filter(function (o) {
-    if (B4_DEBT_STATUSES.indexOf(o.payment_status) === -1) return false;
-    if (!o.end_date) return false;
-    var days = Math.floor((todayMs - new Date(o.end_date).getTime()) / 86400000);
-    return days >= afterDays;
-  }).forEach(function (o) {
-    var c = db.customers.find(function (x) { return x.id === o.customer_id; });
+  var weekBucket = Math.floor(todayMs / (7 * 86400000)); // תזכורת אחת לשבוע, לא כל יום
+  b43Receivables(db).forEach(function (r) {
+    if (!isDateStr(r.due_date)) return;
+    if (!(r.amount_ag > 0)) return;
+    var days = Math.floor((todayMs - new Date(r.due_date).getTime()) / 86400000);
+    if (days < afterDays) return;
+    var c = db.customers.find(function (x) { return x.id === r.customer_id; });
     if (!c || !c.email || b4OptedOut(c)) return;
-    var balAg = Math.max(0, b2OrderBalanceAg(db, o.id));
-    if (balAg <= 0) return;
-    var days = Math.floor((todayMs - new Date(o.end_date).getTime()) / 86400000);
-    var weekBucket = Math.floor(todayMs / (7 * 86400000)); // תזכורת אחת לשבוע, לא כל יום
     b4Queue(db, 'debt_reminder', c.email, 'email', {
-      customer_name: c.name || '', amount: agIls(balAg).toFixed(2), days: days,
+      customer_name: c.name || '', amount: agIls(r.amount_ag).toFixed(2), days: days,
       business_name: b2Setting(db, 'business_name') || 'MAPA-NOBLE'
-    }, 'DEBT-' + o.id + '-' + weekBucket);
+    }, 'DEBT-' + r.entity_type + '-' + r.entity_id + '-' + weekBucket);
   });
 }
 
@@ -6130,10 +6140,32 @@ function b34LoadScan(db, p, user) {
       }
     }
   }
-  d.scan_status = 'נסרק'; d.scan_ack = '';
+  // B44: כשלהזמנה משויכים מארזים — 'נסרק' נקבע רק כשכולם נסרקו לתוך המשלוח הזה.
+  // אין מארזים משויכים (או שזה איסוף) → התנהגות B34 המקורית, בלי שינוי.
+  var prog = b44ScanProgress(db, d);
+  var partial = prog.total > 0 && prog.done < prog.total;
+  d.scan_status = partial ? 'חלקי' : 'נסרק';
+  d.scan_ack = '';
   d.scan_by = String(user || '');   // B41b: מי סרק — רק סריקת הנהג המשובץ נחשבת תיעוד
   writeTable('deliveries', db.deliveries);
-  return { ok: true, delivery: d, label: label, auditNote: 'B34 סריקת העמסה · משלוח ' + d.id + ' · ' + label + ' · ' + (user || '') };
+  return {
+    ok: true, delivery: d, label: label,
+    scanned: prog.done, expected: prog.total, complete: !partial,
+    auditNote: 'B34 סריקת העמסה · משלוח ' + d.id + ' · ' + label +
+      (prog.total > 0 ? ' · ' + prog.done + '/' + prog.total + ' מארזים' : '') + ' · ' + (user || '')
+  };
+}
+
+// B44: התקדמות סריקת ההעמסה של משלוח — כמה מהמארזים המשויכים להזמנה כבר נסרקו למשלוח הזה.
+// total=0 פירושו "אין מארזים משויכים" — אז אין ספירה והתנהגות הסריקה נשארת כפי שהייתה.
+// איסוף מוחרג במכוון: תיעוד האיסוף של B41 מסתמך על scan_status==='נסרק' אחרי סריקה בודדת.
+function b44ScanProgress(db, d) {
+  if (!d || !d.order_id || d.kind === 'איסוף') return { total: 0, done: 0 };
+  var all = db.cases.filter(function (c) {
+    return c.active !== 'לא' && String(c.order_id || '') === String(d.order_id);
+  });
+  var done = all.filter(function (c) { return String(c.delivery_id || '') === String(d.id); });
+  return { total: all.length, done: done.length };
 }
 
 // אישור מנהל/משרד בדיעבד ליציאה ללא סריקה
