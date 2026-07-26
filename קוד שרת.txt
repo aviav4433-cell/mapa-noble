@@ -1,7 +1,8 @@
 // ============================================================
 //  MAPA-NOBLE ERP — Backend v4.0 (Google Apps Script)
 //  אצווה B44: סריקת העמסה מרובה (נסרק רק כשכל המארזים נסרקו) · מועד יעד אוטומטי
-//             מתנאי הספק בהוצאה עתידית · תזכורת חוב לפי מועד פירעון (B43) — canary v4.34-B44
+//             מתנאי הספק בהוצאה עתידית · תזכורת חוב לפי מועד פירעון (B43)
+//             B45 — כלל אחיד: כל סכום נקלט ומוצג לפני מע"מ — canary v4.35-B45
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -6518,11 +6519,13 @@ function b42VatRate(db) {
 }
 
 // אימות מקדים לפני כל כתיבה: תשלום במזומן דורש יתרה מספיקה בקופה.
+// B45: costAgorot נקלט נטו — הבדיקה מול הקופה חייבת להיות על הסכום כולל מע"מ.
 function b42PreCheckExpense(db, costAgorot, p) {
   if (!(costAgorot > 0) || !p.expense_paid) return { ok: true };
   if (String(p.expense_method || '').indexOf('מזומן') === -1) return { ok: true };
   var bal = cashBalanceSrv(db);
-  var gross = Math.round(costAgorot) / 100;
+  var netPre = Math.round(costAgorot) / 100;
+  var gross = Math.round(netPre * (1 + b42VatRate(db)) * 100) / 100;
   if (gross > bal + 0.01)
     return { ok: false, error: 'אין מספיק מזומן בקופה (יתרה: ' + bal + ' ₪). בחר אמצעי תשלום אחר' };
   return { ok: true };
@@ -6531,13 +6534,16 @@ function b42PreCheckExpense(db, costAgorot, p) {
 // עלות של שלב/טיפול → הוצאה, במנגנון ההוצאות הקיים בלבד. אין מנגנון מקביל.
 //   ברירת מחדל  — חוב שטרם שולם: שורה ב-future_expenses, וממשיכה בזרם payFutureExpense הרגיל.
 //   סומן "שולם" — נסגר מיד באותם צעדים בדיוק: expense_payments + expenses + סטטוס 'שולם'.
-// הסכום מוזן תמיד כולל מע"מ ומפוצל לנטו + מע"מ (הכרעת אבי).
+// B45: הסכום מוזן תמיד *לפני* מע"מ, והמע"מ מתווסף עליו — בהתאם לכלל האחיד
+// שכל סכום במערכת הוא נטו (כך עובדים גם פריטים, הזמנות, חשבוניות ורכש).
+// זהו היפוך של ההתנהגות שנקבעה ב-B44, שהניחה בטעות את הכלל ההפוך.
+// החוב לספק (future_expenses.amount) נשאר ברוטו — זה מה שמשלמים בפועל.
 function b42CreateExpense(db, ev, prov, p, user) {
-  var gross = Math.round(Number(ev.cost_agorot) || 0) / 100;
-  if (!(gross > 0)) return { ok: true, fexp_id: '', expense_id: '' };
+  var net = Math.round(Number(ev.cost_agorot) || 0) / 100;
+  if (!(net > 0)) return { ok: true, fexp_id: '', expense_id: '' };
   var rate = b42VatRate(db);
-  var net = Math.round((gross / (1 + rate)) * 100) / 100;
-  var vatAmt = Math.round((gross - net) * 100) / 100;
+  var vatAmt = Math.round(net * rate * 100) / 100;
+  var gross = Math.round((net + vatAmt) * 100) / 100;
   var cat = String(p.expense_category || 'תחזוקה').trim() || 'תחזוקה';
   var supId = (prov && prov.supplier_id) ? prov.supplier_id : '';
   var who = prov ? (prov.company || prov.name) : '';
