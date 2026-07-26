@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.40-B48 · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.41-B49 · 26.07.2026</div>
   </div>
 </div>
 
@@ -1777,7 +1777,10 @@ function collectListModal(){
       '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td><td></td></tr></table></div>'
       +'<div class="muted" style="font-size:12px;margin-top:6px">לחיצה על שם הלקוח — פירוט החוב. "גבה" — רישום קבלה מיידי.</div>'
     : '<div class="card empty">אין חובות פתוחים — הכל נגבה 🎉</div>')+
-    '<div style="margin-top:12px"><button class="btn ghost" onclick="closeModal()">סגור</button></div>');
+    '<div style="margin-top:12px" class="row">'+
+      '<button class="btn ghost" onclick="closeModal()">סגור</button>'+
+      (rows.length?'<button class="btn ghost" onclick="closeModal();goReport(\'aging\')">→ דוח חובות לפי גיל</button>':'')+
+    '</div>');
 }
 /* שורות החוב של לקוח, מהישן לחדש — אותה הקצאה שהשרת עושה */
 function collectDocRows(cid){
@@ -4537,7 +4540,9 @@ function custTabFinance(cid){
     '<div class="section-title" style="margin-top:10px"><h3>חשבוניות ('+invs.length+') · יתרה לגבייה: '+ils(bal)+'</h3>'+
       (bal>0.01?'<div class="row" style="gap:6px">'+
         '<button class="btn ghost sm" onclick="collectCustModal(\''+cid+'\')">פירוט החוב</button>'+
-        (CAN_EDIT?'<button class="btn sm" onclick="collectPayForm(\''+cid+'\')">גבה תשלום</button>':'')+'</div>':'')+'</div>'+
+        (CAN_EDIT?'<button class="btn sm" onclick="collectPayForm(\''+cid+'\')">גבה תשלום</button>':'')+
+        '<button class="btn ghost sm" onclick="closeModal();goReport(\'aging\',{customer_id:\''+cid+'\'})">דוח גיל חובות</button>'+
+        '</div>':'')+'</div>'+
     (invs.length? invs.map(function(v){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="printInvoice(\''+v.id+'\')"><div class="grow">חשבונית '+esc(v.number)+' · '+esc(v.date)+'</div><div><b>'+ils(v.total)+'</b></div><span class="chip '+esc(v.status)+'">'+esc(v.status)+'</span></div>'; }).join('') : '<div class="muted">אין חשבוניות עדיין</div>')+
     '<div class="section-title" style="margin-top:10px"><h3>תשלומים שהתקבלו ('+pays.length+')</h3></div>'+
     (pays.length? '<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th></tr>'+
@@ -5413,27 +5418,104 @@ async function doB4RunNow(){
   if(r) toast('הסריקה הושלמה — נוספו לתור: '+r.queued+' · נשלחו: '+r.sent);
 }
 
-/* ================= דוחות ================= */
+/* ================= B49: מרכז דוחות — קטלוג + פרמטרים + דריל-דאון ================= */
+/* רישום דוחות אחד. דוח חדש (B50) = רשומה כאן + REPORT_RENDERERS[id] + פונקציית render.
+   'container' = ה-div שהפונקציה הקיימת כותבת אליו (נשמרים כפי שהיו — בלי לשכפל לוגיקה).
+   'params' עם id מפורש (rf_*) שומר תאימות לפונקציה הישנה שקוראת ישירות מה-DOM;
+   פרמטרים בלי id מקבלים rp_<reportId>_<key> ומועברים כאובייקט לפונקציית ה-render. */
+var REPORT_ID = '', REPORT_PARAMS = {};
 var LAST_REPORT = null;
+var REPORTS_CATALOG = [
+  {id:'orders', title:'דוח הזמנות', desc:'רשימת הזמנות מסוננת לפי תאריך, לקוח, סטטוס וסוג', group:'תפעול', roles:null, container:'repRes', autoRun:false,
+   params:[
+     {key:'from', id:'rf_from', type:'date', label:'מתאריך'},
+     {key:'to', id:'rf_to', type:'date', label:'עד תאריך'},
+     {key:'customer_id', id:'rf_cust', type:'customer', label:'לקוח'},
+     {key:'status', id:'rf_status', type:'select', label:'סטטוס', options:['הצעת מחיר','טיוטה','מאושרת','סופקה','הוחזרה','הושלמה','בוטלה']},
+     {key:'type', id:'rf_type', type:'select', label:'סוג', options:['השכרה','כביסה']}
+   ]},
+  {id:'summary', title:'הכנסות מול הוצאות', desc:'סיכום חודשי (לפני מע"מ), יתרות לקוחות לגבייה ומלאי מתחת למינימום', group:'כספים', roles:null, container:'repSummary', autoRun:true, params:[]},
+  {id:'aging', title:'חובות לקוחות לפי גיל', desc:'לפי ימי איחור מעבר למועד הפירעון. ניתן לסנן ללקוח בודד', group:'כספים', roles:null, container:'repAging', autoRun:true,
+   params:[{key:'customer_id', type:'customer', label:'לקוח (אופציונלי)', allLabel:'כל הלקוחות'}]},
+  {id:'exceptions', title:'דשבורד חריגים', desc:'חמישה סוגי חריגים הדורשים תשומת לב מנהל', group:'ניהול', roles:null, container:'repExceptions', autoRun:true, params:[]},
+  {id:'noble', title:'ביצועי מכבסה', desc:'עובדים ומכונות — קליטות, משקל והכנסות (טווח ימים בתוך הדוח עצמו)', group:'מכבסה', roles:null, container:'repNoble', autoRun:true, params:[]}
+];
+/* פונקציית render לכל דוח — עטיפה דקה על הפונקציות הקיימות, בלי לשכפל לוגיקה */
+var REPORT_RENDERERS = {
+  orders: function(){ runOrdersReport(); },
+  summary: function(){ loadSummary(); },
+  aging: function(p){ loadAgingReport(p.customer_id||''); },
+  exceptions: function(){ loadExceptionsDashboard(); },
+  noble: function(){ renderNobleReports(); }
+};
+var REPORT_GROUPS_ORDER = ['כספים','תפעול','מכבסה','ניהול'];
+function reportAllowed(entry){ if(!entry.roles) return true; return ROLE==='מנהל' || entry.roles.includes(ROLE); }
+/* אייקון קטגוריה — משתמש חוזר באייקוני NAV_GROUPS הקיימים, בלי לצייר אייקון חדש */
+function reportGroupIcon(label){
+  var map = {'כספים':'רכש וכספים','תפעול':'מכירות ומשלוחים','מכבסה':'ייצור ומכבסה','ניהול':'מערכת'};
+  var g = NAV_GROUPS.find(function(x){ return x[1]===map[label]; });
+  return g? g[0] : '';
+}
+function repFieldId(entry,p){ return p.id || ('rp_'+entry.id+'_'+p.key); }
+function repParamsForm(entry){
+  if(!entry.params || !entry.params.length) return '';
+  return '<div class="card"><div class="grid3">'+
+    entry.params.map(function(p){
+      var eid = repFieldId(entry,p);
+      if(p.type==='date') return '<div class="frow"><label>'+esc(p.label)+'</label><input id="'+eid+'" type="date"></div>';
+      if(p.type==='customer') return '<div class="frow"><label>'+esc(p.label)+'</label><select id="'+eid+'"><option value="">'+esc(p.allLabel||'כל הלקוחות')+'</option>'+DB.customers.map(function(c){ return '<option value="'+c.id+'">'+esc(c.name)+'</option>'; }).join('')+'</select></div>';
+      if(p.type==='select') return '<div class="frow"><label>'+esc(p.label)+'</label><select id="'+eid+'"><option value="">'+esc(p.allLabel||'הכל')+'</option>'+(p.options||[]).map(function(o){ return '<option>'+esc(o)+'</option>'; }).join('')+'</select></div>';
+      return '<div class="frow"><label>'+esc(p.label)+'</label><input id="'+eid+'" type="text"></div>';
+    }).join('')+
+    '<div class="frow"><label>&nbsp;</label><button class="btn" style="width:100%" onclick="runReport(\''+entry.id+'\')">'+(entry.runLabel||'הפק דוח')+'</button></div>'+
+    '</div></div>';
+}
+function runReport(id){
+  var entry = REPORTS_CATALOG.find(function(c){ return c.id===id; }); if(!entry) return;
+  var params = {};
+  (entry.params||[]).forEach(function(p){ var f = el(repFieldId(entry,p)); if(f) params[p.key]=f.value; });
+  Object.keys(params).forEach(function(k){ if(!params[k]) delete params[k]; });
+  REPORT_PARAMS = params;
+  var fn = REPORT_RENDERERS[id]; if(fn) fn(params);
+}
+/* נקודת הכניסה היחידה לדריל-דאון ממסכים אחרים (לוח בקרה, כרטיס לקוח) */
+function goReport(id, params){
+  REPORT_ID = id;
+  REPORT_PARAMS = params || {};
+  go('reports');
+}
+function repBack(){ REPORT_ID=''; REPORT_PARAMS={}; rReports(); }
 function rReports(){
-  el('main').innerHTML = '<div class="section-title"><h2>דוחות</h2></div>'+
-    '<div class="card"><div class="grid3">'+
-    '<div class="frow"><label>מתאריך</label><input id="rf_from" type="date"></div>'+
-    '<div class="frow"><label>עד תאריך</label><input id="rf_to" type="date"></div>'+
-    '<div class="frow"><label>לקוח</label><select id="rf_cust"><option value="">כל הלקוחות</option>'+DB.customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>סטטוס</label><select id="rf_status"><option value="">הכל</option>'+['הצעת מחיר','טיוטה','מאושרת','סופקה','הוחזרה','הושלמה','בוטלה'].map(s=>'<option>'+s+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>סוג</label><select id="rf_type"><option value="">הכל</option><option>השכרה</option><option>כביסה</option></select></div>'+
-    '<div class="frow"><label>&nbsp;</label><button class="btn" style="width:100%" onclick="runOrdersReport()">הפק דוח</button></div>'+
-    '</div></div>'+
-    '<div id="repRes"></div>'+
-    '<div id="repSummary"></div>'+
-    '<div id="repAging"></div>'+
-    '<div id="repExceptions"></div>'+
-    '<div id="repNoble"></div>';
-  loadSummary();
-  loadAgingReport();      // B9/E3
-  loadExceptionsDashboard(); // B9/E4
-  renderNobleReports(); // NC3: ביצועי מכבסה — מחושב מקומית
+  if(!REPORT_ID){
+    var cats = REPORTS_CATALOG.filter(reportAllowed);
+    var html = '<div class="section-title"><h2>דוחות</h2></div>';
+    REPORT_GROUPS_ORDER.forEach(function(g){
+      var items = cats.filter(function(c){ return c.group===g; });
+      if(!items.length) return;
+      html += '<h3 style="margin:16px 0 8px">'+esc(g)+'</h3><div class="eqgrid">'+
+        items.map(function(c){
+          return '<div class="eqtile" onclick="goReport(\''+c.id+'\')">'+
+            '<div class="eq-ic">'+reportGroupIcon(c.group)+'</div>'+
+            '<div class="eq-t">'+esc(c.title)+'</div>'+
+            '<div class="eq-s">'+esc(c.desc)+'</div></div>';
+        }).join('')+'</div>';
+    });
+    if(!cats.length) html += '<div class="card empty">אין דוחות זמינים לתפקיד זה</div>';
+    el('main').innerHTML = html;
+    return;
+  }
+  var entry = REPORTS_CATALOG.find(function(c){ return c.id===REPORT_ID; });
+  if(!entry || !reportAllowed(entry)){ REPORT_ID=''; return rReports(); }
+  el('main').innerHTML = '<div class="section-title"><h2>'+esc(entry.title)+'</h2>'+
+    '<button class="btn ghost sm" onclick="repBack()">→ חזרה לקטלוג</button></div>'+
+    (entry.desc? '<p class="muted" style="margin-bottom:10px">'+esc(entry.desc)+'</p>':'')+
+    repParamsForm(entry)+
+    '<div id="'+entry.container+'"></div>';
+  (entry.params||[]).forEach(function(p){
+    var f = el(repFieldId(entry,p));
+    if(f && REPORT_PARAMS[p.key]!=null) f.value = REPORT_PARAMS[p.key];
+  });
+  if(entry.autoRun) runReport(entry.id);
 }
 async function loadSummary(){
   var r = await api('reports',{});
@@ -5448,13 +5530,22 @@ async function loadSummary(){
     '<h3 style="margin:16px 0 8px">מלאי מתחת למינימום</h3><div class="card">'+
     (r.lowStock.length?'<table><tr><th>פריט</th><th>זמין</th><th>מינימום</th></tr>'+r.lowStock.map(l=>'<tr><td>'+esc(l.item)+'</td><td style="color:var(--danger)">'+l.available+'</td><td>'+l.min+'</td></tr>').join('')+'</table>':'<div class="empty">הכל מעל המינימום ✓</div>')+'</div>';
 }
-/* B9/E3: דוח חובות לפי גיל — שוטף / 30+ / 60+ / 90+ (90+ באדום). קריאה בלבד, מחושב בשרת באגורות. */
-async function loadAgingReport(){
+/* B9/E3: דוח חובות לפי גיל — שוטף / 30+ / 60+ / 90+ (90+ באדום). קריאה בלבד, מחושב בשרת באגורות.
+   B49: customerId אופציונלי — סינון ל שורת לקוח בודד (דריל-דאון מכרטיס הלקוח), מחושב מקומית מתוך
+   אותה תשובת שרת — אין קריאה נוספת ואין שינוי בחישוב עצמו. */
+async function loadAgingReport(customerId){
   var box = el('repAging'); if(!box) return;
   box.innerHTML = '<h3 style="margin:16px 0 8px">דוח חובות לפי גיל</h3><div class="card empty">טוען...</div>';
   var r = await api('b9AgingReport',{});
   if(!r.ok){ box.innerHTML=''; return; }
-  var rows = r.rows||[], t = r.totals||{current_ag:0,d30_ag:0,d60_ag:0,d90_ag:0,total_ag:0};
+  var rows = r.rows||[];
+  if(customerId) rows = rows.filter(function(x){ return x.customer_id===customerId; });
+  var t;
+  if(customerId){
+    t = rows.reduce(function(a,x){ ['current_ag','d30_ag','d60_ag','d90_ag','total_ag'].forEach(function(k){ a[k]=(a[k]||0)+(Number(x[k])||0); }); return a; }, {current_ag:0,d30_ag:0,d60_ag:0,d90_ag:0,total_ag:0});
+  } else {
+    t = r.totals||{current_ag:0,d30_ag:0,d60_ag:0,d90_ag:0,total_ag:0};
+  }
   box.innerHTML = '<h3 style="margin:16px 0 8px">דוח חובות לפי גיל <span class="muted" style="font-weight:400;font-size:12.5px">· לפי ימי איחור מעבר למועד הפירעון</span></h3><div class="card">'+
     (rows.length?
       '<table><tr><th>לקוח</th><th>טרם פירעון</th><th>1-30 באיחור</th><th>31-60</th><th>60+</th><th>סה&quot;כ</th></tr>'+
