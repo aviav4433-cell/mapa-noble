@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.38-B46 · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.39-B48a · 26.07.2026</div>
   </div>
 </div>
 
@@ -821,6 +821,33 @@ function toast(msg, err){
   clearTimeout(t._h); t._h=setTimeout(function(){ t.style.display='none'; }, 3500);
 }
 function esc(s){ return String(s==null?'':s).replace(/</g,'&lt;'); }
+/* ===== B48a: "האם הלחיצה קרתה בתוך אזור מסוים" — עמיד לרינדור מחדש =====
+   שורש הבאג של B47: navToggle מציב NAV_DD וקורא ל-renderNav, שמחליף את
+   innerHTML של #nav — עדיין בתוך אותו קליק. הכפתור שנלחץ מתנתק מה-DOM,
+   הקליק ממשיך להתפשט ל-document, ושם closest('#nav') על צומת מנותק מחזיר
+   null. המאזין פירש זאת כלחיצה מחוץ לתפריט וסגר מיד: החלונית נפתחה ונסגרה
+   באותו קליק.
+   התיקון: composedPath() נקבע בזמן הדיספאץ' ולכן משמר את שרשרת ההורים
+   המקורית גם אחרי שה-DOM התחלף. נפילה חלופית לדפדפן ותיק: צומת שכבר אינו
+   מחובר למסמך אינו "לחיצה מבחוץ" — הוא ההוכחה שהרינדור מחדש הוא שהזיז אותו.
+   כל מאזין "סגור בלחיצה מבחוץ" חייב לעבור דרך כאן — לא דרך closest ישיר. */
+function evtInside(e, sel){
+  if(!e) return false;
+  try{
+    var p = e.composedPath ? e.composedPath() : null;
+    if(p && p.length){
+      for(var i=0;i<p.length;i++){
+        var n = p[i];
+        if(n && n.nodeType===1 && n.matches && n.matches(sel)) return true;
+      }
+      return false;
+    }
+  }catch(_e){}
+  var t = e.target;
+  if(!t || t.nodeType!==1 || !t.closest) return false;
+  if(t.isConnected === false) return true; // התנתק ברינדור מחדש — לא מבחוץ
+  return !!t.closest(sel);
+}
 // תצוגת חותמת זמן: תאריך + שעה (HH:MM) אם קיימת, אחרת רק תאריך — תואם לאחור לרשומות ישנות
 function fmtTs(ts){
   var s = String(ts==null?'':ts);
@@ -929,7 +956,9 @@ function toggleMore(btn,ev){
   closeMore();
   if(!wasOn) pop.classList.add('on');
 }
-document.addEventListener('click', function(e){ if(!e.target.closest('.more-wrap')) closeMore(); });
+/* B48a: דרך evtInside — היום toggleMore עוצר את ההתפשטות ולכן הדפוס לא נשבר כאן,
+   אבל אותו כשל בדיוק ימתין למי שיסיר את stopPropagation או יוסיף רינדור מחדש. */
+document.addEventListener('click', function(e){ if(!evtInside(e,'.more-wrap')) closeMore(); });
 function sel(id, arr, labelFn, valFn){
   return '<select id="'+id+'">'+arr.map(x=>'<option value="'+(valFn?valFn(x):x.id)+'">'+esc(labelFn(x))+'</option>').join('')+'</select>';
 }
@@ -1427,10 +1456,13 @@ function navToggle(name){
 }
 function closeNavDD(){ if(!NAV_DD) return; NAV_DD=''; if(el('nav')) renderNav(); }
 /* סגירה בלחיצה מחוץ לתפריט — אותו דפוס כמו .more-wrap. אין נגיעה ב-DB,
-   ולכן בטוח גם בפורטל ובחנות (שם #nav קיים אך ריק ומוסתר). */
+   ולכן בטוח גם בפורטל ובחנות (שם #nav קיים אך ריק ומוסתר).
+   B48a: הבדיקה עוברת דרך evtInside ולא דרך closest ישיר — ראה ההסבר שם.
+   זה התיקון של הבאג החוסם: הכותרת שנלחצת מתנתקת מה-DOM ברינדור המחדש
+   שהיא עצמה יזמה, ולכן נראתה למאזין כלחיצה מחוץ לתפריט. */
 document.addEventListener('click', function(e){
   if(!NAV_DD) return;
-  if(e.target && e.target.closest && e.target.closest('#nav')) return;
+  if(evtInside(e,'#nav')) return;
   closeNavDD();
 });
 document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeNavDD(); });
