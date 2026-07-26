@@ -211,6 +211,11 @@ tr:hover td{background:#F8FAFC}
 .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
 .tabs button{background:#fff;border:1px solid #D7DEE8;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;color:#475569}
 .tabs button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+/* B42: טאבי התחזוקה נבדלים ויזואלית מטאבי הציוד — קבוצה אחרת, תפקיד אחר */
+.tabs .tabsep{width:1px;background:#CDD5E0;margin:2px 8px;align-self:stretch}
+.tabs button.mnt{background:#F1F8F9;border-color:#B8D6DA;color:var(--teal-d)}
+.tabs button.mnt.on{background:var(--teal);border-color:var(--teal);color:#fff}
+.tabs .tabbadge{display:inline-block;min-width:18px;padding:0 5px;margin-right:5px;border-radius:9px;background:var(--danger);color:#fff;font-size:11px;line-height:18px;text-align:center}
 .scanbox{font-size:22px;text-align:center;letter-spacing:2px}
 /* ===== פעולות בתוך שורה ===== */
 .rowact{display:inline-flex;gap:6px;align-items:center}
@@ -366,7 +371,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.31-B41b · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.32-B42 · 26.07.2026</div>
   </div>
 </div>
 
@@ -7009,8 +7014,10 @@ function rAssets(){
     var cond = String(c.condition||'תקינה');
     var bad = cond!=='תקינה';
     var col = bad?'var(--danger)':(c.status==='פנויה'?'var(--ok)':'var(--amber)');
+    var fltC = b42FaultOf('עגלה', c.id);   // B42
+    if(fltC) col = 'var(--danger)';
     return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(c.id)+'" onclick="openCart(\''+esc(c.id)+'\')">'+
-      (bad?'<span class="eq-flag" style="color:var(--danger)">⚠</span>':'')+
+      (fltC?'<span class="eq-flag" style="color:var(--danger)" title="תקלה פתוחה">🛠</span>':(bad?'<span class="eq-flag" style="color:var(--danger)">⚠</span>':''))+
       '<div class="eq-ic">'+b39Icon('cart',44)+'</div>'+
       '<div class="eq-t">'+esc(c.id)+'</div>'+
       '<div class="eq-s">'+esc(c.location||'ללא מיקום')+'</div>'+
@@ -7024,8 +7031,10 @@ function rAssets(){
     var due = m.next_service && m.next_service<=soon;
     var stCol = m.status==='פעילה'?'var(--ok)':(m.status==='בתיקון'?'var(--amber)':'var(--danger)');
     var col = m.status==='פעילה'? (due?'var(--amber)':'var(--ok)') : stCol;
+    var fltM = b42FaultOf('מכונה', m.id);   // B42
+    if(fltM) col = 'var(--danger)';
     return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(m.id)+(m.model?' · '+esc(m.model):'')+'" onclick="openMach(\''+esc(m.id)+'\')">'+
-      (due?'<span class="eq-flag" style="color:var(--amber)">🔧</span>':'')+
+      (fltM?'<span class="eq-flag" style="color:var(--danger)" title="תקלה פתוחה">🛠</span>':(due?'<span class="eq-flag" style="color:var(--amber)">🔧</span>':''))+
       '<div class="eq-ic">'+b39Icon(kind,44)+'</div>'+
       '<div class="eq-t">'+esc(m.type||'מכונה')+'</div>'+
       '<div class="eq-s">'+esc(m.id)+'</div>'+
@@ -7034,13 +7043,31 @@ function rAssets(){
       (due?'<span class="eq-chip" style="background:var(--amber)">טיפול קרוב</span>':'')+'</div></div>';
   };
   var bad = (DB.carts||[]).filter(c=>String(c.condition||'תקינה')!=='תקינה');
-  el('main').innerHTML =
-    '<div class="section-title"><h2>עגלות</h2><button class="btn ghost sm" onclick="cartForm()">+ עגלה</button></div>'+
-    (bad.length?'<div class="card" style="background:#FDECEA;border-color:var(--danger);padding:8px 10px;font-size:13px">⚠ '+bad.length+' עגלות מסומנות כלא תקינות: '+bad.map(c=>esc(c.id)).join(', ')+'</div>':'')+
-    (DB.carts.length?'<div class="eqgrid">'+DB.carts.map(cartCard).join('')+'</div>':'<div class="card empty">אין עגלות — לחץ "+ עגלה"</div>')+
-    '<div class="section-title"><h2>מכונות</h2><button class="btn ghost sm" onclick="machForm()">+ מכונה</button></div>'+
-    (DB.machines.length?'<div class="eqgrid">'+DB.machines.map(machCard).join('')+'</div>':'<div class="card empty">אין מכונות — לחץ "+ מכונה"</div>');
+  /* B42: שני טאבי ציוד ושני טאבי תחזוקה, מופרדים ויזואלית — תפקיד שונה, קבוצה שונה */
+  if(['faults','visits'].includes(ASSET_TAB) && !b42Can()) ASSET_TAB='carts';
+  var openF = b42Can()? b42OpenFaults().length : 0;
+  var tabs = '<div class="tabs">'+
+    '<button class="'+(ASSET_TAB==='carts'?'on':'')+'" onclick="b42SetTab(\'carts\')">עגלות</button>'+
+    '<button class="'+(ASSET_TAB==='machines'?'on':'')+'" onclick="b42SetTab(\'machines\')">מכונות</button>'+
+    (b42Can()?'<span class="tabsep"></span>'+
+      '<button class="mnt '+(ASSET_TAB==='faults'?'on':'')+'" onclick="b42SetTab(\'faults\')">תקלות פתוחות'+
+        (openF?'<span class="tabbadge">'+openF+'</span>':'')+'</button>'+
+      '<button class="mnt '+(ASSET_TAB==='visits'?'on':'')+'" onclick="b42SetTab(\'visits\')">ביקורי טכנאי</button>':'')+
+    '</div>';
+  var body;
+  if(ASSET_TAB==='machines')
+    body = '<div class="section-title"><h2>מכונות</h2><button class="btn ghost sm" onclick="machForm()">+ מכונה</button></div>'+
+      (DB.machines.length?'<div class="eqgrid">'+DB.machines.map(machCard).join('')+'</div>':'<div class="card empty">אין מכונות — לחץ "+ מכונה"</div>');
+  else if(ASSET_TAB==='faults') body = b42FaultsHtml();
+  else if(ASSET_TAB==='visits') body = b42VisitsHtml();
+  else
+    body = '<div class="section-title"><h2>עגלות</h2><button class="btn ghost sm" onclick="cartForm()">+ עגלה</button></div>'+
+      (bad.length?'<div class="card" style="background:#FDECEA;border-color:var(--danger);padding:8px 10px;font-size:13px">⚠ '+bad.length+' עגלות מסומנות כלא תקינות: '+bad.map(c=>esc(c.id)).join(', ')+'</div>':'')+
+      (DB.carts.length?'<div class="eqgrid">'+DB.carts.map(cartCard).join('')+'</div>':'<div class="card empty">אין עגלות — לחץ "+ עגלה"</div>');
+  el('main').innerHTML = '<div class="section-title"><h2>עגלות ומכונות</h2></div>'+tabs+body;
 }
+var ASSET_TAB = 'carts';
+function b42SetTab(t){ ASSET_TAB = t; rAssets(); window.scrollTo(0,0); }
 /* --- כרטיס עגלה --- */
 function openCart(cid){
   var c = (DB.carts||[]).find(x=>x.id===cid); if(!c) return;
@@ -7059,10 +7086,12 @@ function openCart(cid){
       '<tr><th>תאריך רכישה</th><td>'+esc(c.purchase_date||'—')+'</td></tr>'+
       '<tr><th>משימה נוכחית</th><td>'+(task? esc(item(task.item_id))+' × '+esc(task.qty)+' · '+esc(task.stage) : 'אין')+'</td></tr>'+
     '</table>'+
+    b42FaultBanner('עגלה', c.id)+
     (c.notes?'<div class="doc-meta" style="margin-top:10px">הערה קבועה:</div><div class="sub" style="white-space:pre-wrap">'+esc(c.notes)+'</div>':'')+
     '<div style="text-align:center;margin-top:12px">'+safeBarcode(code)+'<div class="muted" style="font-size:11px">'+esc(code)+' — ברקוד אוטומטי לפי המזהה</div></div>'+
     '<div class="actrow" style="margin-top:12px">'+
       '<button class="btn pri" onclick="cartCondForm(\''+esc(c.id)+'\')">סמן מצב / העיר</button>'+
+      (b42Can()?'<button class="btn ghost" onclick="b42Menu(\'עגלה\',\''+esc(c.id)+'\')">תיקונים / תקלות</button>':'')+
       '<button class="btn ghost" onclick=\'cartForm('+JSON.stringify(c).replace(/'/g,"&#39;")+')\'>ערוך פרטים</button>'+
       '<button class="btn ghost" onclick="b39PrintLabel(\''+esc(code)+'\',\'עגלה '+esc(c.id)+'\')">הדפס ברקוד</button>'+
       notesBtn('cart',c.id)+
@@ -7101,6 +7130,7 @@ function openMach(mid){
       '<div class="sub">'+esc(m.id)+(m.manufacturer||m.model?' · '+esc(m.manufacturer||'')+' '+esc(m.model||''):'')+'</div></div>'+
       '<span class="chip" style="background:'+(m.status==='פעילה'?'var(--ok)':m.status==='בתיקון'?'var(--amber)':'var(--danger)')+'">'+esc(m.status||'')+'</span></div>'+
     (due?'<div class="card" style="background:#FFF7E6;border-color:#E8A33D;padding:8px 10px;font-size:12.5px;margin-top:10px">⚠ מועד הטיפול הבא ('+esc(m.next_service)+') בתוך פחות מ-30 יום</div>':'')+
+    b42FaultBanner('מכונה', m.id)+
     '<table style="margin-top:12px">'+
       '<tr><th>שלב אוטומטי</th><td>'+esc(m.auto_stage||'ללא — לא ברצפת הייצור')+'</td></tr>'+
       '<tr><th>מיקום</th><td>'+esc(m.location||'—')+'</td></tr>'+
@@ -7114,27 +7144,15 @@ function openMach(mid){
     '<div style="text-align:center;margin-top:12px">'+safeBarcode(code)+'<div class="muted" style="font-size:11px">'+esc(code)+' — ברקוד אוטומטי לפי המזהה</div></div>'+
     '<div class="actrow" style="margin-top:12px">'+
       '<button class="btn pri" onclick=\'machForm('+JSON.stringify(m).replace(/'/g,"&#39;")+')\'>ערוך מכונה</button>'+
-      '<button class="btn ghost" onclick="machServiceForm(\''+esc(m.id)+'\')">רישום טיפול</button>'+
+      (b42Can()?'<button class="btn ghost" onclick="b42Menu(\'מכונה\',\''+esc(m.id)+'\')">תיקונים / תקלות</button>':'')+
       '<button class="btn ghost" onclick="b39PrintLabel(\''+esc(code)+'\',\''+esc(m.type||'מכונה')+' '+esc(m.id)+'\')">הדפס ברקוד</button>'+
       notesBtn('machine',m.id)+
       (ROLE==='מנהל'?'<button class="btn ghost" style="color:var(--danger)" onclick="closeModal();delRecord(\'machines\',\''+esc(m.id)+'\',\'את המכונה\')">מחק מכונה</button>':'')+
     '</div>'+
     '<div style="margin-top:10px">'+linksSection('machine',m.id)+'</div>');
 }
-function machServiceForm(mid){
-  var m = (DB.machines||[]).find(x=>x.id===mid); if(!m) return;
-  openModal('<h2>רישום טיפול — '+esc(m.type||m.id)+'</h2>'+
-    '<div class="grid2"><div class="frow"><label>תאריך הטיפול שבוצע</label><input id="ms_last" type="date" value="'+esc(m.last_service||ymdLocal())+'"></div>'+
-    '<div class="frow"><label>מועד הטיפול הבא</label><input id="ms_next" type="date" value="'+esc(m.next_service||'')+'"></div></div>'+
-    '<div class="frow"><label>סטטוס המכונה</label><select id="ms_stat">'+['פעילה','בתיקון','מושבתת'].map(s=>'<option'+(m.status===s?' selected':'')+'>'+s+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>מה בוצע</label><textarea id="ms_note" rows="3">'+esc(m.notes||'')+'</textarea></div>'+
-    '<div class="row"><button class="btn" onclick="machServiceSave(\''+esc(m.id)+'\')">שמור</button>'+
-    '<button class="btn ghost" onclick="openMach(\''+esc(m.id)+'\')">ביטול</button></div>');
-}
-async function machServiceSave(mid){
-  var r = await act('update',{table:'machines',id:mid,row:{last_service:el('ms_last').value, next_service:el('ms_next').value, status:el('ms_stat').value, notes:el('ms_note').value}},'הטיפול נרשם');
-  if(r) openMach(mid);
-}
+/* B42: machServiceForm/machServiceSave הוחלפו בתפריט "תיקונים / תקלות" (b42Menu → b42ServiceForm),
+   שמבצע בדיוק את אותו עדכון ובנוסף רושם את הטיפול ביומן עם ספק, עלות ומסמכים. */
 /* --- טפסים --- */
 function cartForm(c){
   c = c||{};
@@ -7198,6 +7216,539 @@ async function saveMach(id){
   if(id) r = await act('update',{table:'machines',id:id,row:row},'המכונה עודכנה');
   else { row.id = el('f_mid').value; r = await act('create',{table:'machines',row:row},'המכונה נוספה'); }
   if(r) closeModal();
+}
+
+
+/* ================= B42: תקלות, טיפולים וביקורי טכנאי =================
+   חל על מכונות ועל עגלות כאחד. ההבדל היחיד ביניהן הוא שדה המצב:
+     מכונה → status (פעילה/בתיקון/מושבתת)   עגלה → condition (תקינה/דורשת טיפול/מושבתת)
+   כל הידע הזה מרוכז ב-b42Meta ואסור לפזר אותו במקומות נוספים.
+   הרשאה: מנהל ומשרד בלבד. הסתרת הכפתורים כאן היא נוחות — האכיפה האמיתית בשרת. */
+var B42_NEXT_STEPS = ['ממתין לטכנאי','הוזמן חלק חילוף','בטיפול פנימי','ממתין להצעת מחיר','ממתין להחלטת הנהלה','אחר'];
+var B42_OUTCOMES = ['תוקנה','הושבתה סופית','לא הייתה תקלה'];
+var B42_EXP_CATS = ['תחזוקה','רכש מלאי','כימיקלים','דלק ורכב','חשמל ומים','אחר'];
+var B42_METHODS = ['העברה','אשראי','שיק','מזומן'];
+
+function b42Can(){ return ROLE==='מנהל' || ROLE==='משרד'; }
+function b42Meta(type){
+  if(type==='עגלה') return {type:'עגלה', arr:'carts', field:'condition', states:['תקינה','דורשת טיפול','מושבתת'], onFault:'דורשת טיפול'};
+  return {type:'מכונה', arr:'machines', field:'status', states:['פעילה','בתיקון','מושבתת'], onFault:'בתיקון'};
+}
+function b42Row(type,id){ return (DB[b42Meta(type).arr]||[]).find(function(x){ return String(x.id)===String(id); }); }
+function b42Label(type,id){
+  var r = b42Row(type,id);
+  if(!r) return (type||'')+' '+(id||'');
+  return type==='עגלה' ? ('עגלה '+r.id) : (String(r.type||'מכונה')+' '+r.id);
+}
+function b42State(type,id){ var r=b42Row(type,id); return r? String(r[b42Meta(type).field]||'') : ''; }
+function b42Providers(){ return (DB.serviceProviders||[]).filter(function(x){ return x.active!=='לא'; }); }
+function b42ProvName(id){
+  var p=(DB.serviceProviders||[]).find(function(x){ return x.id===id; });
+  if(!p) return '';
+  return p.company ? (p.company + (p.name && p.name!==p.company ? ' · '+p.name : '')) : p.name;
+}
+function b42Faults(){ return (DB.assetFaults||[]).slice().sort(function(a,b){ return String(b.reported_at||'').localeCompare(String(a.reported_at||'')); }); }
+function b42OpenFaults(){ return b42Faults().filter(function(f){ return f.status==='פתוחה'; }); }
+function b42FaultOf(type,id){ return b42OpenFaults().find(function(f){ return f.asset_type===type && String(f.asset_id)===String(id); }); }
+function b42Events(filter){
+  return (DB.faultEvents||[]).filter(filter||function(){return true;})
+    .slice().sort(function(a,b){ return String(b.ts||'').localeCompare(String(a.ts||'')); });
+}
+function b42AssetEvents(type,id){ return b42Events(function(e){ return e.asset_type===type && String(e.asset_id)===String(id); }); }
+function b42Agor(v){ return ils((Number(v)||0)/100); }
+function b42SumCost(evs){ return evs.reduce(function(s,e){ return s + (Number(e.cost_agorot)||0); },0); }
+function b42Docs(ev){
+  return String(ev.doc_urls||'').split('|').filter(Boolean).map(function(x){
+    var q=x.split('::'); return {kind:q[0]||'כללי', name:q[1]||'מסמך', url:q[2]||''};
+  });
+}
+async function b42Reload(){ var g = await api('getAll'); if(g && g.ok) DB = g.db; }
+
+/* ---------- בורר איש מקצוע עם ＋ להוספה מתוך הטופס (דפוס B39) ---------- */
+function b42ProvPicker(selId, cur, label){
+  var list = b42Providers();
+  return '<div class="frow"><label>'+(label||'איש מקצוע / חברת שירות')+'</label><div class="row" style="gap:6px">'+
+    '<select id="'+selId+'" style="flex:1"><option value="">— בחר —</option>'+
+      list.map(function(o){ return '<option value="'+esc(o.id)+'"'+(cur===o.id?' selected':'')+'>'+
+        esc(o.company||o.name)+(o.domain?' · '+esc(o.domain):'')+'</option>'; }).join('')+'</select>'+
+    '<button type="button" class="btn ghost sm" title="הוספת איש מקצוע" onclick="b42ToggleProvAdd(\''+selId+'\')">＋</button>'+
+    '</div><div id="'+selId+'_add" style="display:none;margin-top:8px"></div></div>';
+}
+function b42ToggleProvAdd(selId){
+  var box = el(selId+'_add'); if(!box) return;
+  if(box.style.display!=='none'){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='block';
+  box.innerHTML = '<div class="card" style="padding:10px">'+
+    '<div class="muted" style="font-size:12px;margin-bottom:6px">איש מקצוע חדש נרשם אוטומטית גם כספק, כדי שחוב אליו ייכנס לרשימת החובות לספקים.</div>'+
+    '<div class="grid2">'+
+    '<div class="frow"><label>שם איש הקשר</label><input id="'+selId+'_nm" placeholder="למשל: יוסי כהן"></div>'+
+    '<div class="frow"><label>חברה (רשות)</label><input id="'+selId+'_co" placeholder="למשל: קירור הצפון בע\u0022מ"></div>'+
+    '<div class="frow"><label>תחום</label><input id="'+selId+'_dom" placeholder="חשמל / קירור / אינסטלציה"></div>'+
+    '<div class="frow"><label>טלפון</label><input id="'+selId+'_ph"></div>'+
+    '<div class="frow"><label>מייל</label><input id="'+selId+'_em"></div>'+
+    '<div class="frow"><label>ח.פ / עוסק</label><input id="'+selId+'_vat"></div></div>'+
+    '<div class="frow"><label>הערות</label><input id="'+selId+'_nt"></div>'+
+    '<button type="button" class="btn sm" onclick="b42SaveProv(\''+selId+'\')">הוסף לרשימה</button></div>';
+}
+async function b42SaveProv(selId){
+  var nm = (el(selId+'_nm').value||'').trim();
+  if(!nm) return toast('שם איש הקשר חובה', true);
+  var r = await apiBusy('b42SaveProvider',{
+    name:nm, company:el(selId+'_co').value, domain:el(selId+'_dom').value,
+    phone:el(selId+'_ph').value, email:el(selId+'_em').value, vat_id:el(selId+'_vat').value, notes:el(selId+'_nt').value
+  });
+  if(!r||!r.ok) return toast((r&&r.error)||'השמירה נכשלה', true);
+  (DB.serviceProviders=DB.serviceProviders||[]).push(r.provider);
+  if(r.supplier) (DB.suppliers=DB.suppliers||[]).push(r.supplier);
+  var sel = el(selId);
+  if(sel){
+    var op=document.createElement('option');
+    op.value=r.provider.id; op.textContent=(r.provider.company||r.provider.name)+(r.provider.domain?' · '+r.provider.domain:'');
+    sel.insertBefore(op, sel.options[1]||null); sel.value=r.provider.id;
+  }
+  var box=el(selId+'_add'); if(box){ box.style.display='none'; box.innerHTML=''; }
+  toast(r.supplier_linked ? 'נוסף וקושר לספק קיים באותו שם' : 'איש המקצוע נוסף (ונרשם גם כספק)');
+}
+
+/* ---------- בלוק עלות + מסמכים, משותף לכל הטפסים ---------- */
+function b42CostHtml(pfx){
+  return '<div class="card" style="padding:10px;margin:10px 0;background:#FBFCFD">'+
+    '<div class="doc-meta" style="margin-bottom:6px">עלות ומסמכים — הכל רשות</div>'+
+    '<div class="grid2">'+
+    '<div class="frow"><label>עלות בשלב הזה (₪, <b>כולל מע\u0022מ</b>)</label>'+
+      '<input id="'+pfx+'_cost" type="number" min="0" step="0.01" placeholder="0" oninput="b42CostToggle(\''+pfx+'\')"></div>'+
+    '<div class="frow"><label>קטגוריית הוצאה</label><select id="'+pfx+'_cat">'+
+      B42_EXP_CATS.map(function(c){ return '<option>'+c+'</option>'; }).join('')+'</select></div></div>'+
+    '<div id="'+pfx+'_exp" style="display:none">'+
+      '<div class="frow"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">'+
+        '<input type="checkbox" id="'+pfx+'_paid" onchange="b42PaidToggle(\''+pfx+'\')" style="width:auto">'+
+        '<span>התיקון כבר <b>שולם</b> (בלי סימון — נרשם כחוב שטרם שולם ברשימת ההוצאות העתידיות)</span></label></div>'+
+      '<div id="'+pfx+'_unpaidbox"><div class="frow"><label>תאריך תשלום משוער</label>'+
+        '<input id="'+pfx+'_due" type="date" value="'+esc(ymdLocal())+'"></div></div>'+
+      '<div id="'+pfx+'_paidbox" style="display:none"><div class="grid2">'+
+        '<div class="frow"><label>אמצעי תשלום</label><select id="'+pfx+'_meth">'+
+          B42_METHODS.map(function(m){ return '<option>'+m+'</option>'; }).join('')+'</select></div>'+
+        '<div class="frow"><label>תאריך התשלום</label><input id="'+pfx+'_paidat" type="date" value="'+esc(ymdLocal())+'"></div></div></div>'+
+      '<div class="frow"><label>מסמך הוצאה — קבלה / חשבונית</label>'+
+        '<input id="'+pfx+'_exdoc" type="file" accept="image/*,.pdf"></div>'+
+    '</div>'+
+    '<div class="frow"><label>מסמכים כלליים — אחריות, דוח טכנאי (אפשר כמה)</label>'+
+      '<input id="'+pfx+'_docs" type="file" accept="image/*,.pdf" multiple></div></div>';
+}
+function b42CostToggle(pfx){
+  var v = Number((el(pfx+'_cost')||{}).value||0);
+  var box = el(pfx+'_exp'); if(box) box.style.display = v>0 ? 'block' : 'none';
+}
+function b42PaidToggle(pfx){
+  var on = el(pfx+'_paid') && el(pfx+'_paid').checked;
+  if(el(pfx+'_paidbox')) el(pfx+'_paidbox').style.display = on?'block':'none';
+  if(el(pfx+'_unpaidbox')) el(pfx+'_unpaidbox').style.display = on?'none':'block';
+}
+function b42CostPayload(pfx){
+  var v = Number((el(pfx+'_cost')||{}).value||0);
+  if(!(v>0)) return {cost_agorot:0};
+  var paid = !!(el(pfx+'_paid') && el(pfx+'_paid').checked);
+  return {
+    cost_agorot: Math.round(v*100),
+    expense_category: (el(pfx+'_cat')||{}).value || 'תחזוקה',
+    expense_paid: paid,
+    expense_due_date: paid ? '' : ((el(pfx+'_due')||{}).value||''),
+    expense_method: paid ? ((el(pfx+'_meth')||{}).value||'העברה') : '',
+    expense_paid_at: paid ? ((el(pfx+'_paidat')||{}).value||'') : ''
+  };
+}
+async function b42File64(f){
+  return await new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ res(rd.result.split(',')[1]); }; rd.readAsDataURL(f); });
+}
+/* מעלה את מסמכי הטופס לאירוע שנוצר. כישלון בהעלאה לא מבטל את הרישום עצמו. */
+async function b42UploadDocs(pfx, eventId){
+  var jobs = [];
+  var ex = el(pfx+'_exdoc');
+  if(ex && ex.files && ex.files[0]) jobs.push({f:ex.files[0], kind:'הוצאה'});
+  var gen = el(pfx+'_docs');
+  if(gen && gen.files) for(var i=0;i<gen.files.length;i++) jobs.push({f:gen.files[i], kind:'כללי'});
+  if(!jobs.length) return;
+  for(var j=0;j<jobs.length;j++){
+    var f = jobs[j].f;
+    if(f.size > 4*1024*1024){ toast('הקובץ '+f.name+' גדול מ-4MB ולא הועלה', true); continue; }
+    toast('מעלה '+f.name+'...');
+    try{
+      var b64 = await b42File64(f);
+      var u = await api('b42UploadDoc',{event_id:eventId, base64:b64, mime:f.type, name:f.name, doc_kind:jobs[j].kind});
+      if(!u || !u.ok) toast((u&&u.error)||'העלאת '+f.name+' נכשלה', true);
+    }catch(e){ toast('העלאת '+f.name+' נכשלה', true); }
+  }
+}
+
+/* ---------- תפריט "תיקונים / תקלות" מכרטיס הנכס ---------- */
+function b42Menu(type, id){
+  var open = b42FaultOf(type,id);
+  var evs = b42AssetEvents(type,id);
+  var cost = b42SumCost(evs);
+  openModal('<h2>תיקונים / תקלות — '+esc(b42Label(type,id))+'</h2>'+
+    '<div class="sub" style="margin-bottom:10px">מצב נוכחי: <b>'+esc(b42State(type,id)||'—')+'</b>'+
+      (evs.length?' · '+evs.length+' רישומים · סה\u0022כ עלויות '+b42Agor(cost):'')+'</div>'+
+    (open?'<div class="card" style="background:#FDECEA;border-color:var(--danger);padding:10px;margin-bottom:10px">'+
+        '<b style="color:var(--danger)">⚠ תקלה פתוחה</b><div class="sub" style="white-space:pre-wrap;margin-top:4px">'+esc(open.description)+'</div>'+
+        '<div class="muted" style="font-size:12px;margin-top:4px">שלב הבא: '+esc(open.next_step)+' · דווח '+esc(open.reported_at||'')+' ע\u0022י '+esc(open.reported_by||'')+'</div>'+
+        '<div class="row" style="gap:6px;margin-top:8px">'+
+          '<button class="btn sm" onclick="b42FaultCard(\''+esc(open.id)+'\')">פתח את התקלה</button></div></div>':'')+
+    '<div class="actrow">'+
+      (open?'':'<button class="btn pri" onclick="b42FaultForm(\''+esc(type)+'\',\''+esc(id)+'\')">דיווח תקלה</button>')+
+      '<button class="btn ghost" onclick="b42ServiceForm(\''+esc(type)+'\',\''+esc(id)+'\')">רישום טיפול</button>'+
+      '<button class="btn ghost" onclick="b42History(\''+esc(type)+'\',\''+esc(id)+'\')">היסטוריה</button>'+
+      '<button class="btn ghost" onclick="'+(type==='עגלה'?'openCart':'openMach')+'(\''+esc(id)+'\')">חזרה לכרטיס</button>'+
+    '</div>');
+}
+
+/* ---------- דיווח תקלה ---------- */
+function b42FaultForm(type, id){
+  openModal('<h2>דיווח תקלה — '+esc(b42Label(type,id))+'</h2>'+
+    '<div class="muted" style="font-size:12.5px;margin-bottom:8px">עם השמירה '+
+      (type==='עגלה'?'העגלה תסומן "דורשת טיפול"':'המכונה תעבור לסטטוס "בתיקון"')+
+      ', ותיפתח משימה על שמך עם השלב הבא.</div>'+
+    '<div class="frow"><label>פירוט התקלה <b style="color:var(--danger)">*</b></label>'+
+      '<textarea id="bf_desc" rows="3" placeholder="מה קרה, מתי, מה הסימפטום"></textarea></div>'+
+    '<div class="frow"><label>מה נעשה עד כה מול איש מקצוע <b style="color:var(--danger)">*</b></label>'+
+      '<textarea id="bf_done" rows="2" placeholder="אם עדיין לא נעשה דבר — כתוב: טרם נעשה דבר"></textarea></div>'+
+    '<div class="grid2">'+
+    '<div class="frow"><label>השלב הבא <b style="color:var(--danger)">*</b></label><select id="bf_next">'+
+      B42_NEXT_STEPS.map(function(s){ return '<option>'+s+'</option>'; }).join('')+'</select></div>'+
+    '<div class="frow"><label>יעד למשימה (רשות)</label><input id="bf_due" type="date"></div></div>'+
+    '<div class="row" style="margin-top:10px"><button class="btn" onclick="b42DoReport(\''+esc(type)+'\',\''+esc(id)+'\')">דווח תקלה</button>'+
+    '<button class="btn ghost" onclick="b42Menu(\''+esc(type)+'\',\''+esc(id)+'\')">ביטול</button></div>');
+}
+async function b42DoReport(type,id){
+  var desc=(el('bf_desc').value||'').trim(), done=(el('bf_done').value||'').trim();
+  if(desc.length<3) return toast('פירוט התקלה חובה', true);
+  if(done.length<3) return toast('חובה לפרט מה נעשה עד כה (אפשר: טרם נעשה דבר)', true);
+  var r = await act('b42ReportFault',{asset_type:type, asset_id:id, description:desc, done_so_far:done,
+    next_step:el('bf_next').value, due_date:el('bf_due').value},'התקלה דווחה');
+  if(!r) return;
+  await b42Reload(); render();
+  b42FaultCard(r.fault.id);
+}
+
+/* ---------- כרטיס תקלה ---------- */
+function b42FaultCard(fid){
+  var f = (DB.assetFaults||[]).find(function(x){ return x.id===fid; }); if(!f) return;
+  var evs = b42Events(function(e){ return e.fault_id===fid; });
+  var cost = b42SumCost(evs);
+  var openF = f.status==='פתוחה';
+  openModal('<div class="row" style="align-items:center;gap:10px"><div class="grow">'+
+      '<h2 style="margin:0">תקלה — '+esc(b42Label(f.asset_type,f.asset_id))+'</h2>'+
+      '<div class="sub">'+esc(f.id)+' · דווחה '+esc(f.reported_at||'')+' ע\u0022י '+esc(f.reported_by||'')+'</div></div>'+
+      '<span class="chip" style="background:'+(openF?'var(--danger)':'var(--ok)')+'">'+esc(f.status)+'</span></div>'+
+    '<table style="margin-top:12px">'+
+      '<tr><th>פירוט</th><td style="white-space:pre-wrap">'+esc(f.description)+'</td></tr>'+
+      '<tr><th>נעשה עד כה</th><td style="white-space:pre-wrap">'+esc(f.done_so_far)+'</td></tr>'+
+      '<tr><th>שלב הבא</th><td>'+(openF?esc(f.next_step):'—')+'</td></tr>'+
+      '<tr><th>מצב הנכס</th><td>'+esc(b42State(f.asset_type,f.asset_id)||'—')+'</td></tr>'+
+      (openF?'':'<tr><th>תוצאה</th><td>'+esc(f.close_outcome||'')+' — '+esc(f.close_note||'')+
+        '<div class="muted" style="font-size:12px">'+esc(f.closed_at||'')+' · '+esc(f.closed_by||'')+'</div></td></tr>')+
+      '<tr><th>סה\u0022כ עלויות</th><td><b>'+b42Agor(cost)+'</b></td></tr>'+
+    '</table>'+
+    (openF?'<div class="actrow" style="margin-top:12px">'+
+      '<button class="btn pri" onclick="b42EventForm({fault_id:\''+esc(f.id)+'\'})">הוסף שלב / תיקון</button>'+
+      '<button class="btn ghost" onclick="b42CloseForm(\''+esc(f.id)+'\')">סגור תקלה</button>'+
+      (f.task_id?'<button class="btn ghost" onclick="closeModal();go(\'tasks\');openTask(\''+esc(f.task_id)+'\')">פתח משימה</button>':'')+
+      '</div>':'')+
+    '<div class="section-title" style="margin-top:14px"><h3>מהלך הטיפול</h3></div>'+
+    b42EventsHtml(evs));
+}
+function b42EventsHtml(evs){
+  if(!evs.length) return '<div class="card empty">אין רישומים</div>';
+  return evs.map(function(e){
+    var docs = b42Docs(e);
+    var col = e.event_type==='תקלה'?'var(--danger)':(e.event_type==='סגירה'?'var(--ok)':(e.event_type==='טיפול'?'var(--teal)':'var(--navy2)'));
+    return '<div class="card" style="padding:10px"><div class="row" style="align-items:flex-start;gap:8px">'+
+      '<span class="chip" style="background:'+col+'">'+esc(e.event_type)+'</span>'+
+      '<div class="grow"><div style="white-space:pre-wrap">'+esc(e.description)+'</div>'+
+      '<div class="muted" style="font-size:12px;margin-top:3px">'+esc(e.ts||'')+
+        (e.user?' · '+esc(e.user):'')+
+        (e.provider_id?' · '+esc(b42ProvName(e.provider_id)):'')+
+        (e.other_subject?' · נושא: '+esc(e.other_subject):'')+
+        (e.visit_id?' · ביקור '+esc(e.visit_id):'')+'</div>'+
+      (docs.length?'<div class="row" style="gap:6px;margin-top:5px;flex-wrap:wrap">'+docs.map(function(d){
+        return '<a class="btn ghost sm" target="_blank" href="'+esc(d.url)+'">'+(d.kind==='הוצאה'?'🧾 ':'📎 ')+esc(d.name)+'</a>'; }).join('')+'</div>':'')+
+      (e.fexp_id&&!e.expense_id?'<div class="muted" style="font-size:12px;color:var(--amber);margin-top:3px">חוב שטרם שולם — מופיע בהוצאות עתידיות</div>':'')+
+      (e.expense_id?'<div class="muted" style="font-size:12px;color:var(--ok);margin-top:3px">שולם — נרשם בהוצאות</div>':'')+
+      '</div>'+
+      (Number(e.cost_agorot)>0?'<div style="font-weight:700;white-space:nowrap">'+b42Agor(e.cost_agorot)+'</div>':'')+
+      '</div></div>';
+  }).join('');
+}
+
+/* ---------- שלב / פעולה ---------- */
+/* opts: {fault_id} | {asset_type,asset_id} | {visit_id} | {other:true} */
+function b42EventForm(opts){
+  opts = opts||{};
+  var f = opts.fault_id ? (DB.assetFaults||[]).find(function(x){ return x.id===opts.fault_id; }) : null;
+  var title = f ? ('שלב חדש בתקלה — '+b42Label(f.asset_type,f.asset_id))
+    : (opts.visit_id ? 'פעולה בביקור' : (opts.other ? 'פעולה בנושא אחר (תשתיות / מבנה)'
+    : 'פעולה — '+b42Label(opts.asset_type,opts.asset_id)));
+  var back = f ? 'b42FaultCard(\''+esc(f.id)+'\')' : (opts.visit_id ? 'b42VisitCard(\''+esc(opts.visit_id)+'\')'
+    : (opts.other ? 'closeModal()' : 'b42Menu(\''+esc(opts.asset_type)+'\',\''+esc(opts.asset_id)+'\')'));
+  var assetPick = '';
+  if(opts.visit_id){
+    var machs = (DB.machines||[]).map(function(m){ return '<option value="מכונה|'+esc(m.id)+'">'+esc(String(m.type||'מכונה')+' '+m.id)+'</option>'; }).join('');
+    var carts = (DB.carts||[]).map(function(c){ return '<option value="עגלה|'+esc(c.id)+'">עגלה '+esc(c.id)+'</option>'; }).join('');
+    assetPick = '<div class="frow"><label>על מה בוצעה הפעולה</label><select id="be_asset" onchange="b42EvtAssetChg()">'+
+      '<option value="">— אחר: תשתיות / מבנה —</option>'+machs+carts+'</select></div>'+
+      '<div class="frow" id="be_otherwrap"><label>נושא הפעולה</label><input id="be_other" placeholder="למשל: תאורה באזור הקיפול"></div>';
+  } else if(opts.other){
+    assetPick = '<div class="frow"><label>נושא הפעולה <b style="color:var(--danger)">*</b></label>'+
+      '<input id="be_other" placeholder="למשל: דוד מים, תאורה, דלת המחסן"></div>';
+  }
+  openModal('<h2>'+esc(title)+'</h2>'+
+    assetPick+
+    '<div class="frow"><label>מה נעשה בשלב הזה <b style="color:var(--danger)">*</b></label>'+
+      '<textarea id="be_desc" rows="3"></textarea></div>'+
+    b42ProvPicker('be_prov','', 'איש מקצוע / חברת שירות (רשות)')+
+    (f?'<div class="frow"><label>עדכון השלב הבא</label><select id="be_next">'+
+      B42_NEXT_STEPS.map(function(s){ return '<option'+(f.next_step===s?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></div>':'')+
+    b42CostHtml('be')+
+    '<div class="row"><button class="btn" onclick=\'b42DoEvent('+JSON.stringify(opts).replace(/'/g,"&#39;")+')\'>שמור</button>'+
+    '<button class="btn ghost" onclick="'+back+'">ביטול</button></div>');
+}
+function b42EvtAssetChg(){
+  var v = (el('be_asset')||{}).value||'';
+  var w = el('be_otherwrap'); if(w) w.style.display = v? 'none':'block';
+}
+async function b42DoEvent(opts){
+  opts = opts||{};
+  var desc=(el('be_desc').value||'').trim();
+  if(desc.length<3) return toast('פירוט מה נעשה חובה', true);
+  var pay = {event_type: opts.fault_id? 'שלב' : (opts.visit_id? 'ביקור':'טיפול'), description:desc,
+    provider_id: (el('be_prov')||{}).value||''};
+  if(opts.fault_id){ pay.fault_id=opts.fault_id; if(el('be_next')) pay.next_step=el('be_next').value; }
+  if(opts.visit_id){
+    pay.visit_id = opts.visit_id;
+    var sel=(el('be_asset')||{}).value||'';
+    if(sel){ var q=sel.split('|'); pay.asset_type=q[0]; pay.asset_id=q[1]; }
+    else { pay.other_subject=(el('be_other')||{}).value||''; if(!String(pay.other_subject).trim()) return toast('נושא הפעולה חובה', true); }
+  }
+  if(opts.other){ pay.other_subject=(el('be_other')||{}).value||''; if(String(pay.other_subject).trim().length<2) return toast('נושא הפעולה חובה', true); }
+  if(opts.asset_type){ pay.asset_type=opts.asset_type; pay.asset_id=opts.asset_id; }
+  var cp = b42CostPayload('be');
+  for(var k in cp) pay[k]=cp[k];
+  var r = await act('b42AddEvent', pay, 'נרשם');
+  if(!r) return;
+  await b42UploadDocs('be', r.event.id);
+  await b42Reload(); render();
+  if(opts.fault_id) b42FaultCard(opts.fault_id);
+  else if(opts.visit_id) b42VisitCard(opts.visit_id);
+  else if(opts.asset_type) b42Menu(opts.asset_type, opts.asset_id);
+  else closeModal();
+}
+
+/* ---------- רישום טיפול (המנגנון הקיים, מורחב) ---------- */
+function b42ServiceForm(type, id){
+  var r = b42Row(type,id); if(!r) return;
+  var meta = b42Meta(type);
+  openModal('<h2>רישום טיפול — '+esc(b42Label(type,id))+'</h2>'+
+    (type==='מכונה'?'<div class="grid2">'+
+      '<div class="frow"><label>תאריך הטיפול שבוצע</label><input id="bs_last" type="date" value="'+esc(r.last_service||ymdLocal())+'"></div>'+
+      '<div class="frow"><label>מועד הטיפול הבא</label><input id="bs_next" type="date" value="'+esc(r.next_service||'')+'"></div></div>':'')+
+    '<div class="frow"><label>'+(type==='עגלה'?'מצב תקינות':'סטטוס המכונה')+'</label><select id="bs_state">'+
+      meta.states.map(function(s){ return '<option'+(String(r[meta.field]||'')===s?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></div>'+
+    '<div class="frow"><label>מה בוצע <b style="color:var(--danger)">*</b></label>'+
+      '<textarea id="bs_desc" rows="3" placeholder="תיאור הטיפול שבוצע — נשמר ביומן ובחתכי העלויות"></textarea></div>'+
+    '<div class="frow"><label>הערה קבועה על הנכס (מוצגת בכרטיס)</label><textarea id="bs_notes" rows="2">'+esc(r.notes||'')+'</textarea></div>'+
+    b42ProvPicker('bs_prov','', 'איש מקצוע / חברת שירות (רשות)')+
+    b42CostHtml('bs')+
+    '<div class="row"><button class="btn" onclick="b42DoService(\''+esc(type)+'\',\''+esc(id)+'\')">שמור</button>'+
+    '<button class="btn ghost" onclick="b42Menu(\''+esc(type)+'\',\''+esc(id)+'\')">ביטול</button></div>');
+}
+async function b42DoService(type,id){
+  var desc=(el('bs_desc').value||'').trim();
+  if(desc.length<3) return toast('פירוט מה בוצע חובה', true);
+  var pay = {asset_type:type, asset_id:id, description:desc, state:el('bs_state').value,
+    notes:el('bs_notes').value, provider_id:(el('bs_prov')||{}).value||''};
+  if(type==='מכונה'){ pay.last_service=el('bs_last').value; pay.next_service=el('bs_next').value; }
+  var cp = b42CostPayload('bs');
+  for(var k in cp) pay[k]=cp[k];
+  var r = await act('b42SaveService', pay, 'הטיפול נרשם');
+  if(!r) return;
+  await b42UploadDocs('bs', r.event.id);
+  await b42Reload(); render();
+  b42Menu(type,id);
+}
+
+/* ---------- סגירת תקלה ---------- */
+function b42CloseForm(fid){
+  var f=(DB.assetFaults||[]).find(function(x){ return x.id===fid; }); if(!f) return;
+  var meta = b42Meta(f.asset_type);
+  var map = {'תוקנה':meta.states[0], 'הושבתה סופית':'מושבתת', 'לא הייתה תקלה':(f.prev_state||meta.states[0])};
+  openModal('<h2>סגירת תקלה — '+esc(b42Label(f.asset_type,f.asset_id))+'</h2>'+
+    '<div class="frow"><label>תוצאת הסגירה <b style="color:var(--danger)">*</b></label>'+
+      '<select id="bc_out" onchange="b42CloseHint()">'+B42_OUTCOMES.map(function(o){ return '<option>'+o+'</option>'; }).join('')+'</select></div>'+
+    '<div class="card" id="bc_hint" style="padding:8px 10px;font-size:13px;background:#F1F7F4;border-color:var(--ok)"></div>'+
+    '<div class="frow" style="margin-top:8px"><label>פירוט הסגירה <b style="color:var(--danger)">*</b></label>'+
+      '<textarea id="bc_note" rows="3" placeholder="מה בסופו של דבר תוקן / למה נסגרה"></textarea></div>'+
+    '<div class="row"><button class="btn" onclick="b42DoClose(\''+esc(fid)+'\')">סגור תקלה</button>'+
+    '<button class="btn ghost" onclick="b42FaultCard(\''+esc(fid)+'\')">ביטול</button></div>');
+  window.__b42CloseMap = map; window.__b42CloseType = f.asset_type;
+  b42CloseHint();
+}
+function b42CloseHint(){
+  var m = window.__b42CloseMap||{}, sel=el('bc_out'); if(!sel||!el('bc_hint')) return;
+  var st = m[sel.value]||'';
+  el('bc_hint').innerHTML = 'עם הסגירה '+(window.__b42CloseType==='עגלה'?'העגלה':'המכונה')+
+    ' תסומן <b>'+esc(st)+'</b>, והמשימה המקושרת תיסגר.';
+}
+async function b42DoClose(fid){
+  var note=(el('bc_note').value||'').trim();
+  if(note.length<3) return toast('פירוט הסגירה חובה', true);
+  var r = await act('b42CloseFault',{fault_id:fid, outcome:el('bc_out').value, close_note:note},'התקלה נסגרה');
+  if(!r) return;
+  await b42Reload(); render();
+  b42FaultCard(fid);
+}
+
+/* ---------- היסטוריה של נכס ---------- */
+function b42History(type,id){
+  var evs = b42AssetEvents(type,id);
+  var flts = b42Faults().filter(function(f){ return f.asset_type===type && String(f.asset_id)===String(id); });
+  openModal('<h2>היסטוריה — '+esc(b42Label(type,id))+'</h2>'+
+    '<div class="sub" style="margin-bottom:10px">'+flts.length+' תקלות · '+evs.length+' רישומים · סה\u0022כ עלויות <b>'+b42Agor(b42SumCost(evs))+'</b></div>'+
+    (flts.length?'<div class="section-title"><h3>תקלות</h3></div>'+flts.map(function(f){
+      return '<div class="card" style="padding:8px 10px;cursor:pointer" onclick="b42FaultCard(\''+esc(f.id)+'\')"><div class="row">'+
+        '<div class="grow"><b>'+esc(String(f.description||'').substring(0,80))+'</b>'+
+        '<div class="muted" style="font-size:12px">'+esc(f.reported_at||'')+' · '+esc(f.reported_by||'')+
+        (f.status==='סגורה'?' · '+esc(f.close_outcome||''):' · שלב הבא: '+esc(f.next_step||''))+'</div></div>'+
+        '<span class="chip" style="background:'+(f.status==='פתוחה'?'var(--danger)':'var(--ok)')+'">'+esc(f.status)+'</span></div></div>';
+    }).join(''):'')+
+    '<div class="section-title" style="margin-top:12px"><h3>כל הרישומים</h3></div>'+
+    b42EventsHtml(evs)+
+    '<div class="row" style="margin-top:10px"><button class="btn ghost" onclick="b42Menu(\''+esc(type)+'\',\''+esc(id)+'\')">חזרה</button>'+
+    '<button class="btn ghost" onclick="b42Cuts(\'asset\')">חתכי עלויות</button></div>');
+}
+
+/* ---------- ביקורי טכנאי ---------- */
+function b42VisitsHtml(){
+  var vs = (DB.technicianVisits||[]).slice().sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+  return '<div class="section-title"><h3>ביקורי טכנאי</h3>'+
+      (b42Can()?'<div class="row" style="gap:6px"><button class="btn ghost sm" onclick="b42Cuts(\'prov\')">חתכים</button>'+
+      '<button class="btn sm" onclick="b42VisitForm()">+ ביקור</button></div>':'')+'</div>'+
+    (vs.length? vs.map(function(v){
+      var acts = (DB.faultEvents||[]).filter(function(e){ return e.visit_id===v.id; });
+      var col = v.status==='בוצע'?'var(--ok)':(v.status==='מתוכנן'?'var(--amber)':'var(--muted)');
+      return '<div class="card" style="cursor:pointer" onclick="b42VisitCard(\''+esc(v.id)+'\')"><div class="row">'+
+        '<div class="grow"><b>'+esc(b42ProvName(v.provider_id)||'—')+'</b> <span class="muted">· '+esc(v.date||'')+'</span>'+
+        '<div class="muted" style="font-size:12.5px">'+acts.length+' פעולות'+
+          (b42SumCost(acts)>0?' · '+b42Agor(b42SumCost(acts)):'')+
+          (v.summary?' · '+esc(String(v.summary).substring(0,60)):'')+'</div></div>'+
+        '<span class="chip" style="background:'+col+'">'+esc(v.status||'')+'</span></div></div>';
+    }).join('') : '<div class="card empty">אין ביקורי טכנאי רשומים'+(b42Can()?' — לחץ "+ ביקור"':'')+'</div>');
+}
+function b42VisitForm(vid){
+  var v = vid ? (DB.technicianVisits||[]).find(function(x){ return x.id===vid; }) : null;
+  v = v||{};
+  openModal('<h2>'+(v.id?'עריכת ביקור':'ביקור טכנאי חדש')+'</h2>'+
+    '<div class="grid2">'+
+    '<div class="frow"><label>תאריך הביקור <b style="color:var(--danger)">*</b></label>'+
+      '<input id="bv_date" type="date" value="'+esc(v.date||ymdLocal())+'"></div>'+
+    '<div class="frow"><label>סטטוס</label><select id="bv_stat">'+
+      ['בוצע','מתוכנן','בוטל'].map(function(s){ return '<option'+(v.status===s?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></div></div>'+
+    b42ProvPicker('bv_prov', v.provider_id||'', 'איש מקצוע / חברת שירות')+
+    '<div class="frow"><label>סיכום הביקור</label><textarea id="bv_sum" rows="2">'+esc(v.summary||'')+'</textarea></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">אחרי השמירה אפשר לרשום תחת הביקור כמה פעולות — על מכונות, על עגלות או על תשתיות.</div>'+
+    '<button class="btn" onclick="b42DoVisit(\''+esc(v.id||'')+'\')">שמור</button>');
+}
+async function b42DoVisit(vid){
+  if(!(el('bv_prov')||{}).value) return toast('יש לבחור איש מקצוע', true);
+  var pay = {date:el('bv_date').value, provider_id:el('bv_prov').value,
+    summary:el('bv_sum').value, status:el('bv_stat').value};
+  if(vid) pay.id = vid;
+  var r = await act('b42SaveVisit', pay, 'הביקור נשמר');
+  if(!r) return;
+  await b42Reload(); render();
+  b42VisitCard(r.visit.id);
+}
+function b42VisitCard(vid){
+  var v=(DB.technicianVisits||[]).find(function(x){ return x.id===vid; }); if(!v) return;
+  var acts = b42Events(function(e){ return e.visit_id===vid; });
+  openModal('<div class="row" style="align-items:center;gap:10px"><div class="grow">'+
+      '<h2 style="margin:0">'+esc(b42ProvName(v.provider_id)||'ביקור')+'</h2>'+
+      '<div class="sub">'+esc(v.date||'')+' · '+esc(v.id)+'</div></div>'+
+      '<span class="chip" style="background:'+(v.status==='בוצע'?'var(--ok)':'var(--amber)')+'">'+esc(v.status||'')+'</span></div>'+
+    (v.summary?'<div class="sub" style="white-space:pre-wrap;margin-top:8px">'+esc(v.summary)+'</div>':'')+
+    '<div class="sub" style="margin-top:8px">'+acts.length+' פעולות · סה\u0022כ '+b42Agor(b42SumCost(acts))+'</div>'+
+    (b42Can()?'<div class="actrow" style="margin-top:10px">'+
+      '<button class="btn pri" onclick="b42EventForm({visit_id:\''+esc(vid)+'\'})">הוסף פעולה</button>'+
+      '<button class="btn ghost" onclick="b42VisitForm(\''+esc(vid)+'\')">ערוך ביקור</button></div>':'')+
+    '<div class="section-title" style="margin-top:12px"><h3>פעולות בביקור</h3></div>'+
+    (acts.length? b42EventsHtml(acts) : '<div class="card empty">טרם נרשמו פעולות בביקור</div>'));
+}
+
+/* ---------- תקלות פתוחות ---------- */
+function b42FaultsHtml(){
+  var open = b42OpenFaults();
+  var closed = b42Faults().filter(function(f){ return f.status!=='פתוחה'; }).slice(0,15);
+  return '<div class="section-title"><h3>תקלות פתוחות</h3>'+
+      (b42Can()?'<button class="btn ghost sm" onclick="b42Cuts(\'day\')">חתכים</button>':'')+'</div>'+
+    (open.length? open.map(function(f){
+      return '<div class="card" style="cursor:pointer;border-right:4px solid var(--danger)" onclick="b42FaultCard(\''+esc(f.id)+'\')"><div class="row">'+
+        '<div class="grow"><b>'+esc(b42Label(f.asset_type,f.asset_id))+'</b>'+
+        '<div style="white-space:pre-wrap;font-size:13.5px">'+esc(String(f.description||'').substring(0,120))+'</div>'+
+        '<div class="muted" style="font-size:12px">דווח '+esc(f.reported_at||'')+' · '+esc(f.reported_by||'')+'</div></div>'+
+        '<span class="chip" style="background:var(--amber)">'+esc(f.next_step||'')+'</span></div></div>';
+    }).join('') : '<div class="card empty">אין תקלות פתוחות — הכל תקין</div>')+
+    (closed.length?'<div class="section-title" style="margin-top:14px"><h3>נסגרו לאחרונה</h3></div>'+
+      closed.map(function(f){
+        return '<div class="card" style="padding:8px 10px;cursor:pointer" onclick="b42FaultCard(\''+esc(f.id)+'\')"><div class="row">'+
+          '<div class="grow"><b>'+esc(b42Label(f.asset_type,f.asset_id))+'</b> <span class="muted">· '+esc(f.close_outcome||'')+'</span>'+
+          '<div class="muted" style="font-size:12px">'+esc(f.closed_at||'')+' · '+esc(f.closed_by||'')+'</div></div>'+
+          '<span class="chip" style="background:var(--ok)">סגורה</span></div></div>';
+      }).join(''):'');
+}
+
+/* ---------- חתכים (קריאה בלבד, מהנתונים שנוצרו) ---------- */
+var B42_CUT = 'prov';
+function b42Cuts(which){
+  B42_CUT = which||B42_CUT;
+  var tabs = [['prov','לפי איש מקצוע'],['day','לפי יום'],['asset','לפי מכונה / עגלה'],['exp','לפי הוצאה']];
+  openModal('<h2>חתכי תחזוקה</h2>'+
+    '<div class="tabs">'+tabs.map(function(t){
+      return '<button class="'+(B42_CUT===t[0]?'on':'')+'" onclick="b42Cuts(\''+t[0]+'\')">'+t[1]+'</button>'; }).join('')+'</div>'+
+    b42CutBody());
+}
+function b42CutBody(){
+  var evs = (DB.faultEvents||[]).filter(function(e){ return Number(e.cost_agorot)>0 || e.event_type!=='תקלה'; });
+  var groups = {}, order = [];
+  var keyOf = function(e){
+    if(B42_CUT==='prov') return b42ProvName(e.provider_id) || 'ללא איש מקצוע';
+    if(B42_CUT==='day')  return String(e.ts||'').substring(0,10) || '—';
+    if(B42_CUT==='asset') return e.asset_id ? b42Label(e.asset_type,e.asset_id) : (e.other_subject||'תשתיות / אחר');
+    return e.expense_id ? 'שולם' : (e.fexp_id ? 'חוב שטרם שולם' : 'ללא עלות');
+  };
+  evs.forEach(function(e){
+    var k = keyOf(e);
+    if(!groups[k]){ groups[k]={n:0,cost:0,rows:[]}; order.push(k); }
+    groups[k].n++; groups[k].cost += (Number(e.cost_agorot)||0); groups[k].rows.push(e);
+  });
+  if(!order.length) return '<div class="card empty">אין עדיין נתוני תחזוקה להצגה</div>';
+  order.sort(function(a,b){ return groups[b].cost - groups[a].cost; });
+  var total = order.reduce(function(s,k){ return s+groups[k].cost; },0);
+  return '<div class="sub" style="margin-bottom:8px">סה\u0022כ '+b42Agor(total)+' על פני '+evs.length+' רישומים</div>'+
+    '<div style="overflow-x:auto"><table><tr><th>'+
+      (B42_CUT==='prov'?'איש מקצוע':(B42_CUT==='day'?'תאריך':(B42_CUT==='asset'?'נכס':'מצב ההוצאה')))+
+      '</th><th>רישומים</th><th>עלות</th></tr>'+
+    order.map(function(k){
+      return '<tr><td>'+esc(k)+'</td><td>'+groups[k].n+'</td><td><b>'+b42Agor(groups[k].cost)+'</b></td></tr>';
+    }).join('')+'</table></div>';
+}
+
+/* באנר תקלה פתוחה בכרטיס הנכס */
+function b42FaultBanner(type, id){
+  var f = b42FaultOf(type, id);
+  if(!f) return '';
+  return '<div class="card" style="background:#FDECEA;border-color:var(--danger);padding:8px 10px;font-size:12.5px;margin-top:10px">'+
+    '<b style="color:var(--danger)">🛠 תקלה פתוחה</b> — '+esc(String(f.description||'').substring(0,90))+
+    '<div class="muted" style="font-size:12px;margin-top:3px">שלב הבא: '+esc(f.next_step||'')+' · דווח '+esc(f.reported_at||'')+'</div>'+
+    (b42Can()?'<button class="btn sm" style="margin-top:6px" onclick="b42FaultCard(\''+esc(f.id)+'\')">פתח את התקלה</button>':'')+
+    '</div>';
 }
 
 /* ================= NC1: רצפת ייצור NOBLE ================= */
