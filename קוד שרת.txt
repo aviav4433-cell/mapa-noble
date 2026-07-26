@@ -106,7 +106,14 @@
 //              חוסמים כעת גם בסטטוס 'מוכן' (קודם רק 'במשלוח'/'נמסר').
 //  אצווה B40: כביסת MAPA — עגלה ומכונה חובה בכל מעבר שלב (אכיפה בשרת) · הכרעת מידוף בסיום
 //              (release_mode/shelf_code) · פיצול משימה (parent_task_id) · טבלה חדשה laundry_task_events
-//  אצווה B40b: תיקוני מסירה — יישור חישוב הזמינות בממשק מול availableQty בשרת. canary: v4.29-B40b
+//  אצווה B40b: תיקוני מסירה — יישור חישוב הזמינות בממשק מול availableQty בשרת.
+//  אצווה B41: קליטת החזרה שלא עברה דרך הנהג — מותרת, אך מחייבת פירוט סיבה שנרשם על נסיעת
+//              האיסוף (עמודות חדשות deliveries.manual_intake_reason / manual_intake_by) ·
+//              אכיפה בשרת בשני מסלולי הקליטה (receiveReturn ו-returnByWeight) ·
+//              פעולה חדשה b41CloseStalePickups לסגירת איסופים שנקלטו ונשארו פתוחים.
+//  אצווה B41b: תיעוד איסוף נחשב רק כשהנהג המשובץ עצמו סרק/צילם מהחשבון שלו
+//              (עמודות חדשות deliveries.photo_by / scan_by) · אריחי ציוד ריבועיים.
+//              canary: v4.31-B41b
 //  אחרי הדבקה: (1) חובה להריץ setupDatabase פעם אחת מהעורך (עמודות חדשות ל-deliveries)
 //              (2) חובה להגדיר ScriptProperties בשם SUPER_ADMIN_ID עם ה-id של העובד אבי (ראה הוראות במסירה)
 //              (3) Deploy → Manage deployments → Edit → New version → Deploy
@@ -136,7 +143,7 @@ var TABLES = {
   // B10: נוסף removal_ack (סימון "טופל" להסרת כתובת בדשבורד ההנהלה) — בסוף בלבד (מיגרציה בטוחה)
   // B16: נוסף signature_url (חתימת לקוח למסירה) — בסוף בלבד (מיגרציה בטוחה)
   // B34: נוספו trip_id, trip_order (שיוך לנסיעה), scan_status ('נסרק'/'ללא סריקה'), scan_ack (אישור מנהל בדיעבד) — בסוף בלבד (מיגרציה בטוחה)
-  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url', 'trip_id', 'trip_order', 'scan_status', 'scan_ack'],
+  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url', 'trip_id', 'trip_order', 'scan_status', 'scan_ack', 'manual_intake_reason', 'manual_intake_by', 'photo_by', 'scan_by'],   // B41/B41b: קליטה ידנית ללא סריקת נהג · מי צילם ומי סרק
   // B1: נוספו type, allocation_number, pdf_url, draft_note לחשבוניות
   invoices: ['id', 'number', 'order_id', 'customer_id', 'date', 'subtotal', 'vat_rate', 'vat', 'total', 'status', 'type', 'allocation_number', 'pdf_url', 'draft_note'],
   // B2: עמודות חדשות בסוף בלבד (מיגרציה בטוחה). amount נשאר בש"ח לתאימות; חישובים באגורות בשרת בלבד.
@@ -233,7 +240,7 @@ var DEFAULT_SETTINGS = {
 };
 
 var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
-var MANAGER_ONLY = ['delete', 'b38FixPickups', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = ['delete', 'b38FixPickups', 'b41CloseStalePickups', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -537,6 +544,66 @@ function b38EnsureOrderDeliveries(db, o) {
 // עד כה שינוי תאריך החזרה בהזמנה לא עדכן את רשומת האיסוף, ולכן ההזמנה
 // לא הופיעה ב"אמור לחזור היום". רשומה שכבר בוצעה/בוטלה לעולם לא נוגעים בה.
 var B38_OPEN_DELIV = ['מתוכנן', 'בדרך'];
+
+// ============================================================
+// B41 — קליטת החזרה שלא עברה דרך הנהג
+// ------------------------------------------------------------
+// נסיעת איסוף נחשבת "טופלה ע"י הנהג" רק אם הנהג אישר אותה בשטח:
+// סריקת העמסה/איסוף (scan_status='נסרק') או צילום האיסוף (photo_url) —
+// זה בדיוק מה שמסך הנהג דורש ב-driverCollectPickup לפני סימון "נאסף".
+// איסוף שנשאר 'מתוכנן' בלי סריקה ובלי צילום = ההנהלה קולטת בלי שהנהג נגע בו.
+// ההחלטה: לא חוסמים — קולטים, אבל מחייבים פירוט סיבה שנרשם על הנסיעה
+// (manual_intake_reason / manual_intake_by) וביומן הפעולות.
+// ============================================================
+// B41b (הכרעת אבי): צילום או סריקה נחשבים תיעוד איסוף **רק אם הנהג המשובץ
+// עצמו ביצע אותם מהחשבון שלו**. צילום או סריקה של ההנהלה — מחייבים סיבה.
+// רשומה ותיקה שאין בה photo_by/scan_by נחשבת "לא מתועדת" — הכיוון הבטוח.
+function b41DriverHandled(d) {
+  var drv = String(d.driver || '').trim();
+  if (!drv) return false;
+  var scanned = String(d.scan_status || '') === 'נסרק' && String(d.scan_by || '').trim() === drv;
+  var shot = String(d.photo_url || '').trim() !== '' && String(d.photo_by || '').trim() === drv;
+  return scanned || shot;
+}
+function b41Pickups(db, orderId) {
+  return (db.deliveries || []).filter(function (d) {
+    return d.order_id === orderId && String(d.kind) === 'איסוף';
+  });
+}
+function b41IntakeState(db, orderId) {
+  var o = (db.orders || []).find(function (x) { return x.id === orderId; }) || {};
+  var expects = b38PlannedDeliveries(o).some(function (pl) { return pl.kind === 'איסוף'; });
+  var picks = b41Pickups(db, orderId);
+  var open = picks.filter(function (d) { return B5_OPEN_STATUSES.indexOf(String(d.status)) > -1; });
+  var anyHandled = picks.some(b41DriverHandled);
+  return {
+    expects: expects, picks: picks, open: open, anyHandled: anyHandled,
+    unhandled: open.filter(function (d) { return !b41DriverHandled(d); }),
+    needsReason: expects && !anyHandled
+  };
+}
+// שער הקליטה. מחזיר אובייקט שגיאה כשחסרה סיבה, אחרת מסמן את הנסיעות ומחזיר {ok:true}.
+// חשוב: הסימון הוא בזיכרון בלבד — הכתיבה לגיליון נעשית אצל הקורא, ורק אם הקליטה הצליחה.
+function b41IntakeGate(db, orderId, reason, user, todayStr) {
+  var st = b41IntakeState(db, orderId);
+  if (!st.needsReason) return { ok: true, applied: false, reason: '' };
+  var txt = String(reason == null ? '' : reason).trim();
+  if (txt.length < 3) {
+    return {
+      ok: false, need_scan_reason: true, has_pickup: st.open.length > 0,
+      error: 'האיסוף לא תועד ע"י הנהג המשובץ (סריקה או צילום מהחשבון שלו) — יש לפרט מדוע ההחזרה נקלטת דרך ההנהלה (לפחות 3 תווים)'
+    };
+  }
+  if (txt.length > 300) txt = txt.slice(0, 300);
+  var stamp = String(user || '') + ' · ' + todayStr;
+  st.unhandled.forEach(function (d) {
+    d.manual_intake_reason = txt;
+    d.manual_intake_by = stamp;
+    d.note = (d.note ? d.note + ' · ' : '') + 'נקלט ע"י ההנהלה ללא סריקת נהג (' + stamp + '): ' + txt;
+  });
+  return { ok: true, applied: true, reason: txt, marked: st.unhandled.length };
+}
+
 function b38SyncOrderDeliveries(db, o, oldStart, oldEnd) {
   var startMoved = String(oldStart == null ? '' : oldStart) !== String(o.start_date == null ? '' : o.start_date);
   var endMoved = String(oldEnd == null ? '' : oldEnd) !== String(o.end_date == null ? '' : o.end_date);
@@ -1050,6 +1117,25 @@ function handle(action, p, db, user) {
       return { ok: true, bypass: !!vChk.bypass, auditNote: 'אישור מנהל אומת' };
     }
 
+    // B41: ריפוי נתונים — איסוף שנשאר פתוח אף שההזמנה כבר הוחזרה/הושלמה.
+    // נוצר לפני תיקון B39 (אז נסגרו רק איסופים בסטטוס 'מתוכנן'), וממשיך להופיע
+    // גם במסך המשלוחים וגם במסלול של הנהג. מנהל בלבד. אינו נוגע בנתוני ההזמנה.
+    case 'b41CloseStalePickups': {
+      var closed41 = 0;
+      (db.deliveries || []).forEach(function (d) {
+        if (String(d.kind) !== 'איסוף') return;
+        if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+        var o41 = (db.orders || []).find(function (x) { return x.id === d.order_id; });
+        if (!o41 || ['הוחזרה', 'הושלמה'].indexOf(String(o41.status)) === -1) return;
+        d.status = 'בוצע';
+        d.eta_text = '';
+        if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
+        closed41++;
+      });
+      if (closed41) writeTable('deliveries', db.deliveries);
+      return { ok: true, closed: closed41, auditNote: 'B41 סגירת איסופים שנקלטו · ' + closed41 + ' נסיעות' };
+    }
+
     // B38: סנכרון איסופים — משלים רשומות איסוף חסרות ומיישר תאריכים שנותקו.
     // מנהל בלבד. קיים כדי לרפא הזמנות ותיקות שאושרו לפני האוטומציה,
     // או שתאריך ההחזרה שלהן שונה בלי שרשומת האיסוף זזה.
@@ -1294,8 +1380,12 @@ function handle(action, p, db, user) {
       return { ok: true, delivery: spNew, auditNote: 'פיצול משלוח ' + spDv.id + ' → ' + spNew.id + ' (' + moved.join(', ') + ')' };
     }
     case 'receiveReturn': {
+      // B41: קליטה שלא עברה דרך הנהג — מותרת, אך מחייבת פירוט סיבה שנרשם על נסיעת האיסוף.
+      var g41 = b41IntakeGate(db, p.order_id, p.no_scan_reason, user, today());
+      if (!g41.ok) return g41;
       var r3 = receiveReturn(db, p.order_id, p.returns, today(), genId);
       if (r3.ok) {
+        if (g41.applied) r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B41 קליטה ללא סריקת נהג · סיבה: ' + g41.reason;
         writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
         writeTable('stock_moves', db.stockMoves); writeTable('laundry_tasks', db.laundryTasks);
         writeTable('laundry_task_events', db.laundryTaskEvents || []);
@@ -2255,6 +2345,9 @@ function handle(action, p, db, user) {
         else needCount.push({ line_id: l2.id, item: it3.name, reason: 'סטייה ' + (Math.round(devPct * 10) / 10) + '% מעל המותר (' + dev2 + '%) — נדרשת ספירה ידנית', measured: measured });
       }
       if (needCount.length) return { ok: false, need_count: needCount, error: 'נדרשת ספירה ידנית לחלק מהפריטים' };
+      // B41: אותה אכיפה בדיוק כמו במסלול הקליטה ללא שקילה — שני המסלולים מתנהגים זהה.
+      var g41w = b41IntakeGate(db, ow.id, p.no_scan_reason, user, today());
+      if (!g41w.ok) return g41w;
       var rr = receiveReturn(db, ow.id, returns2, today(), genId);
       if (!rr.ok) return rr;
       olines.forEach(function (l3) { if (weights[l3.id] !== undefined) l3.returned_weight = weights[l3.id]; });
@@ -2264,7 +2357,10 @@ function handle(action, p, db, user) {
       // B39 (ליקוי 2): גם כאן — כל איסוף בסטטוס פתוח נסגר, לא רק 'מתוכנן'.
       db.deliveries.forEach(function (d) { if (d.order_id === ow.id && d.kind === 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1) { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
       writeTable('deliveries', db.deliveries);
-      return { ok: true, shortages: rr.shortages, shortage_charge: rr.shortage_charge };
+      return {
+        ok: true, shortages: rr.shortages, shortage_charge: rr.shortage_charge,
+        auditNote: g41w.applied ? ('B41 קליטה בשקילה ללא סריקת נהג · הזמנה ' + (ow.order_number || ow.id) + ' · סיבה: ' + g41w.reason) : undefined
+      };
     }
     // C3: צילום נהג באספקה — נשמר ב-Drive ומקושר למשלוח
     case 'deliverPhoto': {
@@ -2278,8 +2374,10 @@ function handle(action, p, db, user) {
       var fD = fldD.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), p.mime, 'אספקה_' + dvP.id));
       fD.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       dvP.photo_url = fD.getUrl();
+      // B41b: מי העלה את הצילום. רק צילום של הנהג המשובץ עצמו נחשב תיעוד איסוף.
+      dvP.photo_by = String(user || '');
       writeTable('deliveries', db.deliveries);
-      return { ok: true, url: dvP.photo_url };
+      return { ok: true, url: dvP.photo_url, photo_by: dvP.photo_by };
     }
     // B16: חתימת לקוח (proof of delivery) — PNG מ-canvas, נשמר ב-Drive ומקושר למשלוח
     case 'deliverSignature': {
@@ -5547,6 +5645,7 @@ function b34LoadScan(db, p, user) {
     }
   }
   d.scan_status = 'נסרק'; d.scan_ack = '';
+  d.scan_by = String(user || '');   // B41b: מי סרק — רק סריקת הנהג המשובץ נחשבת תיעוד
   writeTable('deliveries', db.deliveries);
   return { ok: true, delivery: d, label: label, auditNote: 'B34 סריקת העמסה · משלוח ' + d.id + ' · ' + label + ' · ' + (user || '') };
 }
