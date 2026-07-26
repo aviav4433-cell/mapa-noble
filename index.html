@@ -386,7 +386,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.34-B44 · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.35-B45 · 26.07.2026</div>
   </div>
 </div>
 
@@ -827,6 +827,42 @@ function ils(n){ return '₪' + Number(n||0).toLocaleString('he-IL',{maximumFrac
 // תצוגת מחיר כולל מע"מ (18%) — לתצוגה בלבד, אינו משנה ערכים שמורים או חישובי שרת
 var VAT_RATE = 0.18;
 function ilsVat(n){ return ils(Number(n||0)*(1+VAT_RATE)); }
+/* ===== B45: כלל תצוגת הכסף האחיד =====
+   כל סכום במערכת מוצג נטו (לפני מע"מ) כמספר הראשי, ולצידו בכתב קטן הסכום
+   כולל מע"מ. תצוגה בלבד — אינו משנה ערכים שמורים, סכימה או חישובי שרת.
+   חריג יחיד: מסמך חשבונית/קבלה, שבו הסה"כ הוא כולל מע"מ מעצם הגדרתו. */
+function b45Gross(net){ return Math.round((Number(net)||0)*(1+vatRateFE())*100)/100; }
+function b45Net(gross){ return Math.round(((Number(gross)||0)/(1+vatRateFE()))*100)/100; }
+function b45Incl(net){ return 'כולל מע\u0022מ '+ils(b45Gross(net)); }
+/* נטו ראשי + כולל מע"מ בשורה נפרדת קטנה מתחתיו */
+function b45Money(net){
+  return '<b>'+ils(net)+'</b><div class="muted" style="font-size:10.5px;font-weight:400">'+b45Incl(net)+'</div>';
+}
+/* נטו ראשי + כולל מע"מ באותה שורה */
+function b45MoneyInline(net){
+  return ils(net)+' <span class="muted" style="font-size:11px">('+b45Incl(net)+')</span>';
+}
+/* B45: מחוון "סוללה" — מיום היווצרות החוב עד מועד הפירעון, מלא לפי הימים שעברו */
+function b45Bar(startYmd, dueYmd){
+  if(!dueYmd) return '<div class="muted" style="font-size:10.5px;margin-top:3px">ללא מועד — אין ספירה</div>';
+  var DAY=864e5, t=ymdLocal();
+  var due=new Date(dueYmd+'T00:00:00').getTime(), now=new Date(t+'T00:00:00').getTime();
+  var st = (startYmd && b43IsYmd(startYmd)) ? new Date(String(startYmd)+'T00:00:00').getTime() : (due-30*DAY);
+  if(!(st<due)) st = due-DAY;
+  var total=Math.max(1,Math.round((due-st)/DAY));
+  var left =Math.round((due-now)/DAY);
+  var pct  =Math.max(0,Math.min(100,Math.round(((now-st)/DAY)/total*100)));
+  var late = left<0;
+  var col  = late? 'var(--danger)' : (pct>=80? '#C98A12' : 'var(--teal,#1f7a6b)');
+  var txt  = late? ('⚠ '+Math.abs(left)+' ימי איחור')
+           : (left===0? 'היום — היום האחרון' : ('נותרו '+left+' מתוך '+total+' ימים'));
+  return '<div style="margin-top:4px;min-width:112px" title="'+esc(startYmd||'')+' ← '+esc(dueYmd)+'">'+
+    '<div style="display:flex;align-items:center;gap:2px">'+
+      '<div style="flex:1;height:9px;border:1.5px solid #CBD3DC;border-radius:3px;background:#F2F5F8;padding:1px">'+
+        '<div style="height:100%;width:'+(late?100:pct)+'%;background:'+col+';border-radius:2px"></div></div>'+
+      '<div style="width:2.5px;height:5px;background:#CBD3DC;border-radius:0 2px 2px 0"></div></div>'+
+    '<div style="font-size:10.5px;margin-top:2px;font-weight:400;color:'+(late?'var(--danger)':'var(--muted,#6b7683)')+'">'+txt+'</div></div>';
+}
 function orderTotal(oid){ var o=DB.orders.find(x=>x.id===oid)||{}; return DB.orderLines.filter(l=>l.order_id===oid).reduce((s,l)=>s+Number(l.qty)*Number(l.unit_price),0)+Number(o.delivery_fee||0)+Number(o.shortage_charge||0); }
 function orderPaid(oid){ return DB.payments.filter(p=>p.order_id===oid).reduce((s,p)=>s+Number(p.amount),0); }
 function orderBalance(oid){
@@ -1590,7 +1626,9 @@ function collectMissingInv(cid, docKind, docId){
   if(docKind==='order') os = os.filter(o=>String(o.id)===String(docId));
   return os.filter(o=>!DB.invoices.some(v=>v.order_id===o.id && v.status!=='בוטלה'));
 }
-function vatRateFE(){ var v=parseFloat(setting('vat_rate')); return (v>0&&v<1)? v : VAT_RATE; }
+function vatRateFE(){ var v=parseFloat(setting('vat_rate'));
+  if(!(v>0&&v<1) && typeof SHOP!=='undefined' && SHOP && SHOP.vat_rate) v=parseFloat(SHOP.vat_rate); /* B45: מצב חנות — ההגדרות לא נטענות */
+  return (v>0&&v<1)? v : VAT_RATE; }
 function projInvTotal(oid){ return Math.round(orderTotal(oid)*(1+vatRateFE())*100)/100; }
 
 /* חלון הגביה. docKind ריק = כל החוב (FIFO); אחרת מסמך בודד. */
@@ -3165,14 +3203,24 @@ function finIncomeMonth(){
     .reduce((s,v)=>s+Number(v.subtotal||0),0);
 }
 // הוצאות שנרשמו בפועל בחודש הנוכחי — כולל מע"מ
+/* B45: היה מחזיר ברוטו (amount+vat) בעוד "הכנסות החודש" נטו — השוואה בין
+   תפוחים לתפוזים. עכשיו נטו, כמו כל שאר המערכת. */
 function finExpensesMonth(){
+  var mk = finMonthKey();
+  return (DB.expenses||[]).filter(x=>String(x.date||'').slice(0,7)===mk)
+    .reduce((s,x)=>s+Number(x.amount||0),0);
+}
+function finExpensesMonthGross(){
   var mk = finMonthKey();
   return (DB.expenses||[]).filter(x=>String(x.date||'').slice(0,7)===mk)
     .reduce((s,x)=>s+Number(x.amount||0)+Number(x.vat||0),0);
 }
 function finCustomerDebt(){ return (DB.customers||[]).reduce(function(s,c){ var b=custBalance(c.id); return s+(b>0?b:0); },0); }
-function finFutureTotal(){ return fexpOpen().reduce((s,x)=>s+fexpRemain(x),0); }
-function finSupplierTotal(){ return fexpOpen().filter(x=>x.supplier_id).reduce((s,x)=>s+fexpRemain(x),0); }
+/* B45: מוצג נטו. שכר אינו נושא מע"מ ולכן b43FexpNet מחזיר אותו כמות שהוא. */
+function finFutureTotal(){ return fexpOpen().reduce((s,x)=>s+b43FexpNet(x,fexpRemain(x)),0); }
+function finFutureTotalGross(){ return fexpOpen().reduce((s,x)=>s+fexpRemain(x),0); }
+function finSupplierTotal(){ return fexpOpen().filter(x=>x.supplier_id).reduce((s,x)=>s+b43FexpNet(x,fexpRemain(x)),0); }
+function finSupplierTotalGross(){ return fexpOpen().filter(x=>x.supplier_id).reduce((s,x)=>s+fexpRemain(x),0); }
 function finPayrollTotal(){ return fexpOpen().filter(x=>x.source==='payroll').reduce((s,x)=>s+fexpRemain(x),0); }
 /* ================= B43: מועדי תשלום · תזרים דו-כיווני =================
    תמונת מצב אחת: מה אמור להיכנס ומה אמור לצאת, ומתי — עם הבלטה של מה שכבר עבר את המועד.
@@ -3253,6 +3301,8 @@ function b43ReceivablesFE(){
       label: inv? ('חשבונית '+inv.number) : ('הזמנה '+(o.order_number||o.id)),
       who: cust(o.customer_id), customer_id: o.customer_id, order_id: o.id, invoice_id: inv?inv.id:'',
       doc_date: docDate, terms: terms, overridden: over,
+      /* B45: יתרה מול חשבונית היא ברוטו (inv.total); הזמנה בלי חשבונית היא נטו */
+      net_amount: inv? b43NetPart(bal, inv) : bal,
       due_date: over? String(host.due_date) : b43DueFrom(docDate, terms), amount: bal });
   });
   (DB.invoices||[]).filter(v=>!v.order_id && v.status!=='בוטלה').forEach(function(v){
@@ -3264,9 +3314,17 @@ function b43ReceivablesFE(){
     rows.push({ side:'in', entity_type:'invoice', entity_id: v.id,
       label:'חשבונית '+v.number, who: cust(v.customer_id), customer_id: v.customer_id, order_id:'', invoice_id: v.id,
       doc_date: docDate, terms: terms, overridden: over,
+      net_amount: b43NetPart(bal, v),
       due_date: over? String(v.due_date) : b43DueFrom(docDate, terms), amount: bal });
   });
   return rows;
+}
+/* B45: החלק הנטו מתוך יתרה של חשבונית — יחסי לסה"כ המסמך, כדי שתשלום חלקי
+   יתחלק נכון בין הקרן למע"מ. נופל חזרה לחלוקה לפי vat_rate אם חסרים נתונים. */
+function b43NetPart(bal, inv){
+  var tot = Number((inv&&inv.total)||0), sub = Number((inv&&inv.subtotal)||0);
+  if(tot>0 && sub>0) return Math.round(bal*(sub/tot)*100)/100;
+  return b45Net(bal);
 }
 /* יוצא: ההוצאות העתידיות הפתוחות — אותו מקור בדיוק שמסך "הוצאות עתידיות" עובד מולו */
 function b43PayablesFE(){
@@ -3276,8 +3334,20 @@ function b43PayablesFE(){
       label: x.description || (x.source==='payroll'?'יתרת שכר לתשלום':(x.category||'')),
       who: x.supplier_id? supp(x.supplier_id) : (emp? emp.name : (x.category||'')),
       urgency: x.urgency||'רגיל', overridden:false, terms:'',
+      /* B45: מועד היווצרות החוב (למחוון), והחלק הנטו מתוך היתרה.
+         שכר אינו נושא מע"מ ולכן מסומן novat. */
+      doc_date: String(x.created_at||'').slice(0,10),
+      novat: String(x.source||'')==='payroll',
+      net_amount: b43FexpNet(x, fexpRemain(x)),
       due_date: b43IsYmd(x.due_date)? String(x.due_date):'', amount: fexpRemain(x) };
   }).filter(r=>r.amount>0.01);
+}
+/* B45: החלק הנטו מתוך יתרת הוצאה עתידית. אם נשמר vat_amount — הסכום ברוטו
+   והנטו יחסי; אם לא — הסכום כבר נטו (כך נקלטות הוצאות ידניות ושכר). */
+function b43FexpNet(fe, remain){
+  var tot = Number(fe.amount||0), vat = Number(fe.vat_amount||0);
+  if(vat>0 && tot>0) return Math.round(remain*((tot-vat)/tot)*100)/100;
+  return remain;
 }
 function b43Bucket(due, t, wk, m30){
   if(!due) return 'nodate';
@@ -3430,9 +3500,8 @@ function b43FlowHtml(){
     var late = !!(r.due_date && r.due_date<t), isToday = r.due_date===t;
     var col = late? 'var(--danger)' : (isToday? '#8a5a1f' : '');
     var days = r.due_date? Math.round((new Date(r.due_date).getTime()-new Date(t).getTime())/864e5) : 0;
-    var when = !r.due_date? '<span style="color:var(--amber)">ללא מועד</span>'
-      : esc(r.due_date)+(late? '<div style="font-size:11px;color:var(--danger)">⚠ '+Math.abs(days)+' ימי איחור</div>'
-        : (isToday? '<div style="font-size:11px;color:#8a5a1f">היום</div>' : ''));
+    var when = (!r.due_date? '<span style="color:var(--amber)">ללא מועד</span>' : esc(r.due_date))
+      + b45Bar(r.doc_date, r.due_date);   /* B45: מחוון הימים שנותרו */
     var acts = '';
     if(r.side==='in'){
       if(CAN_EDIT) acts += '<button class="btn sm" onclick="collectPayForm(\''+r.customer_id+'\',\''+(r.order_id?'order':'invoice')+'\',\''+(r.order_id||r.invoice_id)+'\')">גבה</button>';
@@ -3448,7 +3517,9 @@ function b43FlowHtml(){
       '<td style="white-space:nowrap;color:'+col+';font-weight:'+(late||isToday?'700':'400')+'">'+when+'</td>'+
       '<td>'+esc(r.who||'')+'</td>'+
       '<td>'+esc(r.label||'')+note+'</td>'+
-      '<td class="tot" style="white-space:nowrap">'+ils(r.amount)+'</td>'+
+      '<td class="tot" style="white-space:nowrap">'+
+        (r.novat? '<b>'+ils(r.amount)+'</b><div class="muted" style="font-size:10.5px;font-weight:400">ללא מע\u0022מ</div>'
+                : b45Money(Number(r.net_amount!==undefined? r.net_amount : r.amount)))+'</td>'+
       '<td><div class="row" style="gap:4px;flex-wrap:nowrap">'+acts+'</div></td></tr>';
   };
   var table = function(title, rows, empty){
@@ -3456,7 +3527,7 @@ function b43FlowHtml(){
       .sort(function(a,b){ return String(a.due_date||'9999-12-31').localeCompare(String(b.due_date||'9999-12-31')); });
     return '<h3 style="margin:14px 0 8px">'+title+
       ' <span class="muted" style="font-weight:400;font-size:12.5px">· '+list.length+' רשומות · '+ils(b43Sum(list))+'</span></h3>'+
-      (list.length? '<div class="card"><table><tr><th>מועד</th><th>מי</th><th>מסמך / תיאור</th><th>סכום</th><th></th></tr>'+
+      (list.length? '<div class="card"><table><tr><th>מועד ומחוון</th><th>מי</th><th>מסמך / תיאור</th><th>סכום (לפני מע\u0022מ)</th><th></th></tr>'+
         list.map(rowHtml).join('')+'</table></div>' : '<div class="card empty">'+esc(empty)+'</div>');
   };
 
@@ -3472,7 +3543,9 @@ function b43FlowHtml(){
     bar+
     table('לגבייה — לפי מועד פירעון', rec, 'אין יתרות לגבייה בטווח שנבחר')+
     table('לתשלום — לפי מועד היעד', pay, 'אין תשלומים בטווח שנבחר')+
-    '<div class="muted" style="font-size:12px;margin-top:8px">מועד הפירעון של חוב לקוח מחושב מתאריך המסמך ומתנאי התשלום שבכרטיס הלקוח. מנהל רשאי לדחות או להקדים מועד — כל שינוי נרשם עם שם המשנה, המועד הקודם והסיבה, וניתן לצפייה בכפתור 🕘 שבשורה.</div>';
+    '<div class="muted" style="font-size:12px;margin-top:8px">הסכומים מוצגים <b>לפני מע\u0022מ</b>, ומתחת לכל אחד הסכום כולל מע\u0022מ. '+
+      'המחוון שליד המועד מתמלא מיום היווצרות החוב ועד מועד הפירעון. '+
+      'מועד הפירעון של חוב לקוח מחושב מתאריך המסמך ומתנאי התשלום שבכרטיס הלקוח. מנהל רשאי לדחות או להקדים מועד — כל שינוי נרשם עם שם המשנה, המועד הקודם והסיבה, וניתן לצפייה בכפתור 🕘 שבשורה.</div>';
 }
 
 // מעבר לטאב בתוך מסך כספים
@@ -3481,15 +3554,19 @@ function finCard(val,label,onclick,alert){
   return '<div class="kpi click'+(alert?' alert':'')+'" onclick="'+onclick+'" title="לחץ לפירוט">'+
     '<div class="v">'+val+'</div><div class="l">'+label+'</div></div>';
 }
+/* B45: ערך כרטיס — נטו כמספר הראשי ומתחתיו הסכום בפועל כולל מע"מ */
+function finKpi(net, gross){
+  return ils(net)+'<div class="muted" style="font-size:10.5px;font-weight:400;margin-top:2px">כולל מע\u0022מ '+ils(gross)+'</div>';
+}
 function finSummaryHtml(){
   var futTot = finFutureTotal(), debt = finCustomerDebt();
   return '<div class="gridkpi" style="margin-bottom:14px">'+
-    finCard(ils(finIncomeMonth()),'הכנסות החודש',"finIncomeBreakdown()",false)+
-    finCard(ils(debt),'חובות לקוחות',"collectListModal()",debt>0)+
-    finCard(ils(finExpensesMonth()),'הוצאות החודש',"finExpBreakdown()",false)+
-    finCard(ils(futTot),'הוצאות צפויות',"goFin('future')",futTot>0)+
-    finCard(ils(finSupplierTotal()),'יתרות לספקים',"finSupplierBreakdown()",false)+
-    finCard(ils(finPayrollTotal()),'יתרות שכר',"finPayrollBreakdown()",false)+
+    finCard(finKpi(finIncomeMonth(), b45Gross(finIncomeMonth())),'הכנסות החודש (לפני מע\u0022מ)',"finIncomeBreakdown()",false)+
+    finCard(ils(debt)+'<div class="muted" style="font-size:10.5px;font-weight:400;margin-top:2px">כולל מע\u0022מ</div>','חובות לקוחות',"collectListModal()",debt>0)+
+    finCard(finKpi(finExpensesMonth(), finExpensesMonthGross()),'הוצאות החודש (לפני מע\u0022מ)',"finExpBreakdown()",false)+
+    finCard(finKpi(futTot, finFutureTotalGross()),'הוצאות צפויות (לפני מע\u0022מ)',"goFin('future')",futTot>0)+
+    finCard(finKpi(finSupplierTotal(), finSupplierTotalGross()),'יתרות לספקים (לפני מע\u0022מ)',"finSupplierBreakdown()",false)+
+    finCard(ils(finPayrollTotal()),'יתרות שכר (ללא מע\u0022מ)',"finPayrollBreakdown()",false)+
     '</div>';
 }
 
@@ -3535,17 +3612,18 @@ function finIncomeBreakdown(){
       '<td class="tot">'+ils(v.subtotal)+'</td></tr>').join(''),
     tot, 'אין חשבוניות בחודש זה');
 }
-// הוצאות החודש — ההוצאות שנרשמו בפועל (כולל מע"מ)
+// הוצאות החודש — B45: הסכום הראשי לפני מע"מ, ולצידו הסכום ששולם בפועל
 function finExpBreakdown(){
   var mk = finMonthKey();
   var list = (DB.expenses||[]).filter(x=>String(x.date||'').slice(0,7)===mk)
     .slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  var tot = list.reduce((s,x)=>s+Number(x.amount||0)+Number(x.vat||0),0);
-  finBdModal('הוצאות החודש — '+mk, list.length+' רשומות · כולל מע"מ',
-    '<tr><th>תאריך</th><th>קטגוריה</th><th>ספק</th><th>אסמכתא</th><th>סכום</th></tr>',
+  var tot = list.reduce((s,x)=>s+Number(x.amount||0),0);
+  finBdModal('הוצאות החודש — '+mk, list.length+' רשומות · הסכומים לפני מע"מ',
+    '<tr><th>תאריך</th><th>קטגוריה</th><th>ספק</th><th>אסמכתא</th><th>לפני מע"מ</th><th>כולל מע"מ</th></tr>',
     list.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.category)+'</td><td>'+esc(supp(x.supplier_id))+'</td>'+
       '<td>'+(x.attachment_url?'<a href="'+esc(x.attachment_url)+'" target="_blank">פתח</a>':'—')+'</td>'+
-      '<td class="tot">'+ils(Number(x.amount||0)+Number(x.vat||0))+'</td></tr>').join(''),
+      '<td class="tot">'+ils(x.amount)+'</td>'+
+      '<td class="muted">'+ils(Number(x.amount||0)+Number(x.vat||0))+'</td></tr>').join(''),
     tot, 'אין הוצאות בחודש זה');
 }
 // יתרות לספקים — לפי ספק, לחיצה פותחת את כרטיס הספק
@@ -4064,36 +4142,39 @@ function laundryPayForm(vid){
 function expForm(){
   openModal('<h2>הוצאה חדשה</h2>'+
     '<div class="grid2"><div class="frow"><label>קטגוריה</label><select id="f_ecat"><option>רכש מלאי</option><option>כימיקלים</option><option>דלק ורכב</option><option>שכירות</option><option>חשמל ומים</option><option>תחזוקה</option><option>שכר</option><option>אחר</option></select></div>'+
-    '<div class="frow"><label>סכום (₪, <b>כולל מע\u0022מ</b>)</label><input id="f_eamt" type="number" min="0" step="0.01" oninput="b44ExpSplit()"></div></div>'+
-    '<div id="f_esplit" class="muted" style="font-size:12.5px;margin:-4px 0 10px">הסכום מוזן כולל מע\u0022מ והמערכת מפצלת אותו לנטו + מע\u0022מ.</div>'+
+    '<div class="frow"><label>סכום (₪, <b>לפני מע\u0022מ</b>)</label><input id="f_eamt" type="number" min="0" step="0.01" oninput="b44ExpSplit()"></div></div>'+
+    '<div id="f_esplit" class="muted" style="font-size:12.5px;margin:-4px 0 10px">הסכום מוזן לפני מע\u0022מ. המערכת מוסיפה את המע\u0022מ ומציגה אותו כאן.</div>'+
     '<div class="frow"><label>ספק (רשות)</label><select id="f_esup"><option value="">—</option>'+DB.suppliers.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>הערה</label><input id="f_enote"></div>'+
     '<div class="frow"><label>צרף קבלה / חשבונית (תמונה או PDF)</label><input id="f_efile" type="file" accept="image/*,.pdf"></div>'+
     '<button class="btn" onclick="saveExp()">שמור</button>');
 }
-/* B44: הצגה חיה של הפיצול, כדי שלא תהיה אי-הבנה לגבי מה נכנס לספרים */
-function b44SplitVat(gross){
-  var g = Math.round((Number(gross)||0)*100)/100;
-  if(!(g>0)) return {gross:0, net:0, vat:0};
+/* B45 (החליף את b44SplitVat): הסכום המוזן הוא נטו, והמע"מ מתווסף עליו —
+   בהתאם לכלל שכל סכום במערכת הוא לפני מע"מ. שם הפונקציה נשמר כדי לא
+   לשבור קריאות קיימות. */
+function b44SplitVat(net){
+  var v = Math.round((Number(net)||0)*100)/100;
+  if(!(v>0)) return {gross:0, net:0, vat:0, rate:vatRateFE()};
   var rate = vatRateFE();
-  var net = Math.round((g/(1+rate))*100)/100;
-  return {gross:g, net:net, vat:Math.round((g-net)*100)/100, rate:rate};
+  var vat = Math.round(v*rate*100)/100;
+  return {net:v, vat:vat, gross:Math.round((v+vat)*100)/100, rate:rate};
 }
 function b44ExpSplit(){
   var box = el('f_esplit'); if(!box) return;
   var sp = b44SplitVat((el('f_eamt')||{}).value);
-  box.innerHTML = sp.gross>0
-    ? 'מתוך '+ils(sp.gross)+' — נטו <b>'+ils(sp.net)+'</b> · מע\u0022מ <b>'+ils(sp.vat)+'</b> ('+Math.round(sp.rate*100)+'%)'
-    : 'הסכום מוזן כולל מע\u0022מ והמערכת מפצלת אותו לנטו + מע\u0022מ.';
+  box.innerHTML = sp.net>0
+    ? 'נטו <b>'+ils(sp.net)+'</b> · מע\u0022מ <b>'+ils(sp.vat)+'</b> ('+Math.round(sp.rate*100)+'%) — <b>סה\u0022כ לתשלום '+ils(sp.gross)+'</b>'
+    : 'הסכום מוזן לפני מע\u0022מ. המערכת מוסיפה את המע\u0022מ ומציגה אותו כאן.';
 }
-/* B44 (תיקון): עד כה הסכום המוזן טופל כנטו ונוסף עליו מע"מ בשיעור קשיח 0.18.
-   הכלל במערכת (וכבר ב-B42) הוא שכל סכום מוזן כולל מע"מ — כאן הוא מפוצל
-   לנטו + מע"מ לפי vat_rate שבהגדרות. חל על רישומים חדשים בלבד. */
+/* B45 (תיקון של B44): B44 הפך את הטופס לקליטת ברוטו, בהנחה שגויה שזה הכלל
+   במערכת. בפועל כל שאר המערכת — פריטים, הזמנות, חשבוניות, רכש — עובדת נטו
+   ומוסיפה מע"מ. הטופס יושר לכלל: הסכום המוזן הוא נטו, המע"מ מחושב לפי
+   vat_rate שבהגדרות. חל על רישומים חדשים בלבד; רשומות קיימות לא נגעו. */
 async function saveExp(){
   var amt = Number(el('f_eamt').value);
   if(!(amt>0)) return toast('סכום חובה', true);
   var sp = b44SplitVat(amt);
-  var r = await act('create',{table:'expenses',row:{date:ymdLocal(),category:el('f_ecat').value,supplier_id:el('f_esup').value,amount:sp.net,vat:sp.vat,note:el('f_enote').value}},'ההוצאה נרשמה — נטו '+ils(sp.net)+' + מע\u0022מ '+ils(sp.vat));
+  var r = await act('create',{table:'expenses',row:{date:ymdLocal(),category:el('f_ecat').value,supplier_id:el('f_esup').value,amount:sp.net,vat:sp.vat,note:el('f_enote').value}},'ההוצאה נרשמה — נטו '+ils(sp.net)+' + מע\u0022מ '+ils(sp.vat)+' = '+ils(sp.gross));
   if(!r) return;
   var f = el('f_efile').files[0];
   if(f){
@@ -4414,7 +4495,7 @@ function rItems(){
         (i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:none">':'')+
         '<div class="grow"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+(i.barcode?' · ⎘'+esc(i.barcode):'')+'</span>'+
         (typeLine?'<div class="muted" style="font-size:11.5px">'+esc(typeLine)+'</div>':'')+locLine+
-        '<div class="muted">השכרה '+ilsVat(i.rent_price)+' · כביסה '+ilsVat(i.wash_price)+' <span style="font-size:11px">(כולל מע"מ)</span>'+(low?' · <b style="color:var(--danger)">מתחת למינימום!</b>':'')+'</div></div>'+
+        '<div class="muted">השכרה '+ils(i.rent_price)+' · כביסה '+ils(i.wash_price)+' <span style="font-size:11px">(לפני מע"מ · כולל: '+ils(b45Gross(i.rent_price))+' / '+ils(b45Gross(i.wash_price))+')</span>'+(low?' · <b style="color:var(--danger)">מתחת למינימום!</b>':'')+'</div></div>'+
         /* B40: כל מספר במסך המלאי הוא כפתור — לחיצה פותחת "איפה נמצא" עם פירוט לחיץ */
         '<div style="text-align:center;cursor:pointer" title="איפה נמצא" onclick="openItemWhere(\''+i.id+'\')"><div class="big">'+total+'</div><div class="muted">מלאי כולל</div></div>'+
         (out?'<div style="text-align:center;cursor:pointer" title="אצל מי" onclick="openItemWhere(\''+i.id+'\')"><div class="big" style="color:var(--danger)">'+out+'</div><div class="muted">אצל לקוחות</div></div>':'')+
@@ -6551,7 +6632,7 @@ function renderShop(){
     '<p style="text-align:center">הזמנת מפות ומפיות לאירוע</p>'+
     '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="s_start" type="date"></div>'+
     '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="s_end" type="date"></div></div>'+
-    SHOP.items.map(i=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ilsVat(i.price)+' ליח\' (כולל מע"מ)</span></div>'+
+    SHOP.items.map(i=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\' <span style="font-size:11px">(לפני מע"מ · '+b45Incl(i.price)+')</span></span></div>'+
       '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="sqty" style="width:70px;text-align:center" oninput="shopTotal()"></div>').join('')+
     '<div id="shopSum" style="margin:10px 0;font-size:15px;text-align:center;background:var(--linen);border-radius:8px;padding:10px">בחר פריטים לצפייה במחיר</div>'+
     '<h3 style="color:var(--navy);margin:6px 0">הפרטים שלך</h3>'+
@@ -6983,7 +7064,7 @@ function renderPortal(){
     '<h3 style="color:var(--navy);margin-bottom:8px">הזמנה חדשה</h3>'+
     '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="p_start" type="date"></div>'+
     '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="p_end" type="date"></div></div>'+
-    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ilsVat(i.price)+' ליח\' (כולל מע"מ)</span></div>'+
+    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\' <span style="font-size:11px">(לפני מע"מ · '+b45Incl(i.price)+')</span></span></div>'+
       '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="pqty" style="width:70px;text-align:center"></div>').join('')+
     '<div class="frow" style="margin-top:8px"><input id="p_notes" placeholder="הערות (רשות)"></div>'+
     '<div id="pAvailWarn"></div>'+
@@ -7752,8 +7833,9 @@ function b42CostHtml(pfx){
   return '<div class="card" style="padding:10px;margin:10px 0;background:#FBFCFD">'+
     '<div class="doc-meta" style="margin-bottom:6px">עלות ומסמכים — הכל רשות</div>'+
     '<div class="grid2">'+
-    '<div class="frow"><label>עלות בשלב הזה (₪, <b>כולל מע\u0022מ</b>)</label>'+
-      '<input id="'+pfx+'_cost" type="number" min="0" step="0.01" placeholder="0" oninput="b42CostToggle(\''+pfx+'\')"></div>'+
+    '<div class="frow"><label>עלות בשלב הזה (₪, <b>לפני מע\u0022מ</b>)</label>'+
+      '<input id="'+pfx+'_cost" type="number" min="0" step="0.01" placeholder="0" oninput="b42CostToggle(\''+pfx+'\')">'+
+      '<div id="'+pfx+'_costvat" class="muted" style="font-size:11.5px;margin-top:3px"></div></div>'+
     '<div class="frow"><label>קטגוריית הוצאה</label><select id="'+pfx+'_cat">'+
       B42_EXP_CATS.map(function(c){ return '<option>'+c+'</option>'; }).join('')+'</select></div></div>'+
     '<div id="'+pfx+'_exp" style="display:none">'+
@@ -7776,6 +7858,8 @@ function b42CostHtml(pfx){
 function b42CostToggle(pfx){
   var v = Number((el(pfx+'_cost')||{}).value||0);
   var box = el(pfx+'_exp'); if(box) box.style.display = v>0 ? 'block' : 'none';
+  var hb = el(pfx+'_costvat');   /* B45: העלות מוזנת נטו — מציגים את הסכום הסופי */
+  if(hb) hb.innerHTML = v>0 ? ('מע\u0022מ '+ils(Math.round(v*vatRateFE()*100)/100)+' — סה\u0022כ לספק <b>'+ils(b45Gross(v))+'</b>') : '';
   if(v>0) b44ProvDue(pfx+'_prov');   /* B44: מרענן את המועד המוצע כשהבלוק נפתח */
 }
 function b42PaidToggle(pfx){
