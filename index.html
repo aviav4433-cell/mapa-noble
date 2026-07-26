@@ -386,7 +386,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.35-B45 · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.36-B45a · 26.07.2026</div>
   </div>
 </div>
 
@@ -893,7 +893,10 @@ function sel(id, arr, labelFn, valFn){
   return '<select id="'+id+'">'+arr.map(x=>'<option value="'+(valFn?valFn(x):x.id)+'">'+esc(labelFn(x))+'</option>').join('')+'</select>';
 }
 
-function setting(k){ var s=(DB.settings||[]).find(x=>x.key===k); return s?String(s.value):''; }
+/* B45a — תיקון קריטי: DB הוא null במצב פורטל ובמצב חנות (getAll לא נקרא שם).
+   כל גישה ל-DB.settings שם זרקה TypeError. b45Gross → vatRateFE → setting
+   נקראת מתצוגת המחירים בפורטל ובחנות, ולכן הן נשברו לגמרי ב-B45. */
+function setting(k){ var s=((DB&&DB.settings)||[]).find(x=>x.key===k); return s?String(s.value):''; }
 var THEMES = {
   'טורקיז': {}, // ברירת המחדל
   'כחול':  {'--teal':'#1D4ED8','--teal-d':'#1E40AF','--navy':'#0F2557','--navy2':'#1B3A7A'},
@@ -6609,12 +6612,13 @@ async function printMeeting(mid){
 var SHOP = null;
 async function showShop(){
   el('login').innerHTML = '<div class="box"><div class="logo">MAPA<span>·</span>NOBLE</div><p>טוען קטלוג...</p></div>';
-  try{
-    var r = await api('portalCatalog',{});
-    if(!r.ok) throw 0;
-    SHOP = r;
-    renderShop();
-  }catch(e){ el('login').innerHTML = '<div class="box"><p>שגיאת חיבור — נסה שוב מאוחר יותר</p></div>'; }
+  var r;   /* B45a: כמו בפורטל — תעבורה ותצוגה מופרדות */
+  try{ r = await api('portalCatalog',{}); }
+  catch(e){ el('login').innerHTML = '<div class="box"><p>שגיאת חיבור — נסה שוב מאוחר יותר</p></div>'; return; }
+  if(!r || !r.ok){ el('login').innerHTML = '<div class="box"><p>'+esc((r&&r.error)||'הקטלוג אינו זמין כרגע')+'</p></div>'; return; }
+  SHOP = r;
+  try{ renderShop(); }
+  catch(e){ el('login').innerHTML = '<div class="box"><p>שגיאה בהצגת החנות: '+esc((e&&e.message)||String(e))+'</p></div>'; }
 }
 function shopTotal(){
   var sub = 0;
@@ -7047,14 +7051,17 @@ function showPortalLogin(){
     '<button style="background:none;color:var(--muted);margin-top:10px;font-size:13px;text-decoration:underline" onclick="location.reload()">חזרה לכניסת צוות</button>'+
     '<div id="loginErr"></div></div>';
 }
+/* B45a: הקריאה לשרת והרינדור הופרדו. קודם שניהם ישבו באותו try, ולכן כל
+   תקלת תצוגה הוצגה למשתמש כ"שגיאת חיבור" — וזה בדיוק מה שהסתיר את הבאג. */
 async function portalLogin(){
   el('loginErr').textContent = 'מתחבר...';
-  try{
-    var r = await api('portalGetData',{code:el('pcode').value});
-    if(!r.ok){ el('loginErr').textContent = r.error; return; }
-    PORTAL = { code: el('pcode').value.toUpperCase(), data: r };
-    renderPortal();
-  }catch(e){ el('loginErr').textContent = 'שגיאת חיבור'; }
+  var r;
+  try{ r = await api('portalGetData',{code:el('pcode').value}); }
+  catch(e){ el('loginErr').textContent = 'שגיאת חיבור'; return; }
+  if(!r || !r.ok){ el('loginErr').textContent = (r&&r.error) || 'שגיאה לא ידועה'; return; }
+  PORTAL = { code: el('pcode').value.toUpperCase(), data: r };
+  try{ renderPortal(); }
+  catch(e){ el('loginErr').textContent = 'שגיאה בהצגת הפורטל: '+((e&&e.message)||e); }
 }
 function renderPortal(){
   var d = PORTAL.data;
