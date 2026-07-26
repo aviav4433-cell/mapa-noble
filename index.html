@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.39-B48a · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.40-B48 · 26.07.2026</div>
   </div>
 </div>
 
@@ -1741,15 +1741,26 @@ function kpi(v,l,alert,view,ico){
   return '<div class="kpi'+(alert?' alert':'')+(canGo?' click':'')+'"'+(canGo?' onclick="go(\''+view+'\')" title="לחץ למעבר למסך"':'')+'>'+
     (ico?'<div class="ico">'+ico+'</div>':'')+'<div class="v">'+v+'</div><div class="l">'+l+'</div></div>';
 }
-function custBalance(cid){
-  var b = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).reduce((s,o)=>s+orderBalance(o.id),0);
-  // NC3: חשבוניות מכבסה מרוכזות (ללא הזמנה) נכנסות ליתרת הלקוח
-  DB.invoices.filter(v=>v.customer_id===cid && !v.order_id && v.status!=='בוטלה').forEach(function(v){
-    var paid = DB.payments.filter(p=>p.invoice_id===v.id).reduce((s,p)=>s+Number(p.amount||0),0);
-    b += Math.max(0, Number(v.total)-paid);
+/* B48: יתרת לקוח — תאום מדויק של customerBalance/b48BalancesAg בשרת.
+   מקור אחד: שורות החוב הקנוניות (b43ReceivablesFE) + איבר זיכוי על יתרת
+   הזמנה שלילית. החישוב באגורות כמו בשרת, כדי שלא ייווצר פער עיגול בין
+   המסך למספר שהשרת מחזיר. בדיקת הצלבה אוטומטית שומרת על השוויון. */
+function b48BalancesAgFE(){
+  /* מטמון על אובייקט ה-DB עצמו: כל רענון מחליף את DB באובייקט חדש ולכן
+     המטמון נמחק מאליו. בלעדיו custBalance בלולאה על כל הלקוחות היה בונה
+     את כל שורות החוב מחדש לכל לקוח. */
+  if(DB && DB._b48Bal) return DB._b48Bal;
+  var m = {};
+  var add = function(cid, ag){ if(!cid) return; m[cid] = (m[cid]||0) + ag; };
+  b43ReceivablesFE().forEach(function(r){ add(r.customer_id, toAg(r.amount)); });
+  (DB.orders||[]).filter(o=>!['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).forEach(function(o){
+    var ag = toAg(orderBalance(o.id));
+    if(ag < 0) add(o.customer_id, ag);
   });
-  return b;
+  if(DB) DB._b48Bal = m;
+  return m;
 }
+function custBalance(cid){ return fromAg(b48BalancesAgFE()[cid] || 0); }
 /* ===== B31: גביה מלקוח — פירוט חוב + גביה בפועל =====
    מסלולי הכסף:
    • חוב כולל  → b2ProcessPayment (הקצאה FIFO, קבלה אחת, idempotency)
@@ -3500,7 +3511,9 @@ function b43ReceivablesFE(){
   var rows = [];
   (DB.orders||[]).filter(o=>!['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).forEach(function(o){
     var bal = Math.round(orderBalance(o.id)*100)/100;
-    if(!(bal>0.01)) return;
+    /* B48: הסף יושר לשרת (balAg > 0). קודם היה 0.01 ₪ ולכן יתרה של אגורה
+       בודדת נעלמה מהתזרים אך נספרה בדוח הגיל — פער של שורה שלמה בין מסכים. */
+    if(!(bal>0)) return;
     var inv = (DB.invoices||[]).find(v=>v.order_id===o.id && v.status!=='בוטלה');
     var host = inv||o;
     var docDate = String((inv? inv.date : (o.end_date||o.start_date||o.created_at))||'').slice(0,10);
@@ -3516,7 +3529,7 @@ function b43ReceivablesFE(){
   (DB.invoices||[]).filter(v=>!v.order_id && v.status!=='בוטלה').forEach(function(v){
     var paid = (DB.payments||[]).filter(p=>p.invoice_id===v.id).reduce((s,p)=>s+Number(p.amount||0),0);
     var bal = Math.round((Number(v.total||0)-paid)*100)/100;
-    if(!(bal>0.01)) return;
+    if(!(bal>0)) return;   /* B48: אותו סף כמו בשרת */
     var docDate = String(v.date||'').slice(0,10);
     var terms = b43CustTerms(v.customer_id), over = b43IsYmd(v.due_date);
     rows.push({ side:'in', entity_type:'invoice', entity_id: v.id,
@@ -4681,14 +4694,26 @@ async function approveB3(cid){
 }
 
 /* ================= פריטים ומלאי ================= */
+/* B48: מסנן מחסן למסך המלאי. ריק = כל המחסנים. מוצג רק כשמוגדרים מחסנים,
+   בדיוק כמו שאר בוררי המחסן במערכת. נשמר בין רינדורים באותו משתנה מסך. */
+var ITEMS_WH = '';
+function itemsSetWh(v){ ITEMS_WH = String(v||''); rItems(); }
 function rItems(){
-  el('main').innerHTML = '<div class="section-title"><h2>פריטים ומלאי</h2><div><button class="btn ghost sm" onclick="moveForm()">+ תנועת מלאי</button> <button class="btn" onclick="itemForm()">+ פריט</button></div></div>'+
+  var whSel = (DB.warehouses&&DB.warehouses.length)
+    ? '<select onchange="itemsSetWh(this.value)" title="סינון לפי מחסן" style="max-width:180px"><option value=""'+(ITEMS_WH?'':' selected')+'>כל המחסנים</option>'+
+      DB.warehouses.filter(w=>w.active!=='לא').map(w=>'<option value="'+esc(w.id)+'"'+(ITEMS_WH===w.id?' selected':'')+'>'+esc(w.name)+'</option>').join('')+'</select> '
+    : '';
+  /* המסנן חל רק כשקיים מחסן נבחר — אחרת undefined, וההתנהגות זהה לקודם */
+  var whArg = (DB.warehouses&&DB.warehouses.length&&ITEMS_WH)? ITEMS_WH : undefined;
+  el('main').innerHTML = '<div class="section-title"><h2>פריטים ומלאי</h2><div>'+whSel+'<button class="btn ghost sm" onclick="moveForm()">+ תנועת מלאי</button> <button class="btn" onclick="itemForm()">+ פריט</button></div></div>'+
     (DB.items.length? DB.items.map(function(i){
-      var total = DB.stockMoves.filter(m=>m.item_id===i.id).reduce((s,m)=>s+Number(m.qty),0);
-      var wash = DB.laundryTasks.filter(t=>t.item_id===i.id&&t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty),0);
       /* B40: פירוק המלאי — אצל לקוחות / משוריין / בכביסה / זמין */
-      var bd = b40ItemBreakdown(i.id), out = bd.outQ, avail = Math.max(0, bd.availQ);
-      var low = i.min_stock!=='' && (total-wash)<Number(i.min_stock);
+      var bd = b40ItemBreakdown(i.id, whArg), out = bd.outQ, avail = Math.max(0, bd.availQ);
+      var total = bd.total, wash = bd.washQ;
+      /* B48 (הכרעת אבי): ההתראה נמדדת מול הפנוי שמוצג ליד — סה"כ פחות מה
+         שכבר התחייבנו עליו, כולל הזמנות עתידיות. קודם נמדדה מול סה"כ פחות
+         כביסה בלבד, ולכן פריט שכולו מובטח ללקוח נראה תקין. */
+      var low = i.min_stock!=='' && avail<Number(i.min_stock);
       var typeLine = [i.category,i.subtype].filter(Boolean).join(' · ');
       /* B35: איפה הפריט מאוחסן בפועל — מחושב מיומן תנועות האריזה, לא משדה ידני */
       var locs = b35ItemLocs(i.id);
@@ -4744,17 +4769,22 @@ var B40_RESERVED_STATUSES = ['מאושרת'];     // משוריין, טרם יצ
      ההחזרה שלה עבר.
    התוצאה כאן תמיד קטנה או שווה למספר של השרת. זה הכיוון הבטוח: המסך לעולם
    לא מבטיח מלאי שכבר התחייבנו עליו. */
-function b40ItemBreakdown(iid){
-  var total = (DB.stockMoves||[]).filter(m=>m.item_id===iid).reduce((s,m)=>s+Number(m.qty||0),0);
+/* B48: פרמטר רשות wh — כשהמשתמש בוחר מחסן במסך המלאי, כל הפירוק מסונן אליו.
+   שדות הסינון זהים לשרת: stock_moves.warehouse_id · orders.warehouse_id ·
+   laundry_tasks.warehouse_id. wh===undefined = כל המחסנים (התנהגות קודמת). */
+function b40ItemBreakdown(iid, wh){
+  var inWh = function(v){ return wh===undefined || String(v||'')===String(wh||''); };
+  var total = (DB.stockMoves||[]).filter(m=>m.item_id===iid && inWh(m.warehouse_id)).reduce((s,m)=>s+Number(m.qty||0),0);
   var out = [], reserved = [], laundry = [];
   (DB.orderLines||[]).filter(l=>l.item_id===iid).forEach(function(l){
     var o = (DB.orders||[]).find(x=>x.id===l.order_id); if(!o) return;
     if(String(o.type)!=='השכרה') return;
+    if(!inWh(o.warehouse_id)) return;
     if(B40_OUT_STATUSES.indexOf(String(o.status))>-1) out.push({line:l, order:o});
     else if(B40_RESERVED_STATUSES.indexOf(String(o.status))>-1) reserved.push({line:l, order:o});
   });
-  (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage!=='מוכן').forEach(t=>laundry.push(t));
-  var ready = (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage==='מוכן' &&
+  (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage!=='מוכן' && inWh(t.warehouse_id)).forEach(t=>laundry.push(t));
+  var ready = (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage==='מוכן' && inWh(t.warehouse_id) &&
     String(t.done_date||'')>=ymdLocal(new Date(Date.now()-7*864e5)));
   var sum = a=>a.reduce((s,x)=>s+Number((x.line?x.line.qty:x.qty)||0),0);
   var outQ=sum(out), resQ=sum(reserved), washQ=sum(laundry);
@@ -4766,7 +4796,10 @@ function b40ItemBreakdown(iid){
 }
 function openItemWhere(iid){
   var it = (DB.items||[]).find(x=>x.id===iid); if(!it) return;
-  var b = b40ItemBreakdown(iid);
+  /* B48: המודאל מציג בדיוק את מה שהאריח שנלחץ מציג — אותו מסנן מחסן */
+  var whArg = (DB.warehouses&&DB.warehouses.length&&ITEMS_WH)? ITEMS_WH : undefined;
+  var whName = whArg? ((DB.warehouses||[]).find(w=>w.id===whArg)||{}).name : '';
+  var b = b40ItemBreakdown(iid, whArg);
   var bar = function(label, qty, color){
     if(!qty) return '';
     var pct = b.total>0? Math.round(qty/b.total*100) : 0;
@@ -4775,7 +4808,8 @@ function openItemWhere(iid){
       '<div style="width:70px;text-align:left"><b>'+qty+'</b> ('+pct+'%)</div></div>';
   };
   openModal('<h2>איפה נמצא — '+esc(it.name)+'</h2>'+
-    '<div class="muted" style="margin-bottom:10px">'+esc(it.size||'')+' '+esc(it.color||'')+' · מלאי כולל <b>'+b.total+'</b> יח\'</div>'+
+    '<div class="muted" style="margin-bottom:10px">'+esc(it.size||'')+' '+esc(it.color||'')+' · מלאי כולל <b>'+b.total+'</b> יח\''+
+      (whName? ' · מחסן <b>'+esc(whName)+'</b>' : '')+'</div>'+
     bar('אצל לקוחות', b.outQ, 'var(--danger)')+
     bar('משוריין', b.resQ, 'var(--amber)')+
     bar('בכביסה', b.washQ, 'var(--teal)')+
