@@ -122,6 +122,22 @@ body.driver-mode .more-pop{left:auto;right:0}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 @media(max-width:640px){.grid3{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}}
+/* ===== B41b: אריחי ציוד — ריבועים במקום מלבנים רחבים ===== */
+.eqgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-bottom:14px}
+.eqtile{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
+  box-shadow:var(--shadow);cursor:pointer;text-align:center;aspect-ratio:1/1;padding:14px 12px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;overflow:hidden;
+  transition:transform .13s ease,box-shadow .13s ease,border-color .13s ease}
+.eqtile:hover{transform:translateY(-3px);box-shadow:0 10px 22px rgba(15,35,60,.14);border-color:var(--eqc,var(--line))}
+.eqtile::before{content:'';position:absolute;top:0;inset-inline-start:0;width:100%;height:4px;background:var(--eqc,var(--line))}
+.eqtile .eq-ic{color:var(--eqc,var(--navy2,#1F4E78));line-height:0;margin-bottom:8px}
+.eqtile .eq-t{font-weight:700;font-size:15px;color:var(--navy);line-height:1.15;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eqtile .eq-s{color:var(--muted);font-size:11.5px;line-height:1.4;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eqtile .eq-b{margin-top:9px;display:flex;gap:4px;flex-wrap:wrap;justify-content:center}
+.eqtile .eq-chip{font-size:10.5px;padding:2px 9px;border-radius:999px;color:#fff;font-weight:600;white-space:nowrap}
+.eqtile .eq-flag{position:absolute;top:9px;inset-inline-end:10px;font-size:14px;line-height:1}
+@media(max-width:420px){.eqgrid{grid-template-columns:repeat(auto-fill,minmax(142px,1fr));gap:10px}
+  .eqtile{border-radius:14px;padding:10px 8px}.eqtile .eq-t{font-size:13.5px}}
 /* ===== KPI ===== */
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 18px;text-align:start;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:4px}
 .kpi .v{font-size:27px;font-weight:700;color:var(--navy);line-height:1.15;order:2}
@@ -350,7 +366,7 @@ body.driver-mode nav .dtab.on{color:#fff;box-shadow:inset 0 3px 0 var(--teal)}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.29-B40b · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.31-B41b · 26.07.2026</div>
   </div>
 </div>
 
@@ -1910,13 +1926,15 @@ async function addLine(oid){
 function returnForm(oid){
   var lines = DB.orderLines.filter(l=>l.order_id===oid);
   openModal('<h2>קבלת החזרה</h2><p class="muted" style="margin-bottom:12px">עדכן כמה חזר בפועל. חוסרים יירשמו כגריעת מלאי, והכמות שחזרה תיכנס לכביסה.</p>'+
+    b41IntakeBannerHtml(oid)+
     lines.map(l=>'<div class="frow"><label>'+esc(item(l.item_id))+' (יצאו '+l.qty+')</label><input type="number" id="ret_'+l.id+'" value="'+l.qty+'" min="0" max="'+l.qty+'"></div>').join('')+
     '<button class="btn" onclick="doReturn(\''+oid+'\')">קלוט החזרה</button>');
 }
 async function doReturn(oid){
+  var reason = b41ReasonGuard(oid); if(reason===null) return;   /* B41 */
   var returns = {};
   DB.orderLines.filter(l=>l.order_id===oid).forEach(l=>{ returns[l.id]=Number(el('ret_'+l.id).value); });
-  var r = await act('receiveReturn',{order_id:oid,returns:returns});
+  var r = await act('receiveReturn',{order_id:oid,returns:returns,no_scan_reason:reason});
   if(r){ closeModal(); toast(r.shortages&&r.shortages.length?'נקלט. חוסרים נגרעו מהמלאי אוטומטית':'נקלט. הפריטים נכנסו לכביסה'); go('laundry'); }
 }
 /* B2: מסך תשלום D9 — סכום הזמנה, חוב קודם, גרף ניצול, קיזוז חוב אופציונלי, קבלה מיידית (D15) */
@@ -2185,6 +2203,88 @@ function isPickup(d){ return d.kind==='איסוף'; }
 function kindChip(d){
   return '<span class="chip" style="background:'+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+';color:#fff">'+(isPickup(d)?'⬅ איסוף':'➡ אספקה')+'</span>';
 }
+/* ============================================================
+   B41 — קליטת החזרה שלא עברה דרך הנהג
+   נסיעת איסוף נחשבת "טופלה ע"י הנהג" רק אם הנהג אישר אותה בשטח: סריקה
+   (scan_status='נסרק') או צילום האיסוף (photo_url) — בדיוק מה שמסך הנהג
+   דורש לפני סימון "נאסף". אחרת ההנהלה קולטת בלי שהנהג נגע בזה: מותר,
+   אבל חובה לפרט סיבה. ההגדרות כאן זהות לאלה שבשרת — האכיפה עצמה בשרת.
+   ============================================================ */
+/* B41b (הכרעת אבי): רק הנהג המשובץ עצמו, מהחשבון שלו. צילום או סריקה של
+   ההנהלה אינם תיעוד איסוף. רשומה ותיקה בלי photo_by/scan_by = לא מתועדת. */
+function b41DriverHandled(d){
+  var drv = String(d.driver||'').trim(); if(!drv) return false;
+  var scanned = String(d.scan_status||'')==='נסרק' && String(d.scan_by||'').trim()===drv;
+  var shot = String(d.photo_url||'').trim()!=='' && String(d.photo_by||'').trim()===drv;
+  return scanned || shot;
+}
+function b41IntakeState(oid){
+  var o = (DB.orders||[]).find(x=>x.id===oid)||{};
+  var expects = b38PlannedForOrder(o).some(pl=>pl.kind==='איסוף');
+  var picks = (DB.deliveries||[]).filter(d=>d.order_id===oid && d.kind==='איסוף');
+  var anyHandled = picks.some(b41DriverHandled);
+  return {expects:expects, picks:picks, anyHandled:anyHandled, needsReason: expects && !anyHandled};
+}
+/* איסוף שנקלט בפועל — או שנסגר, או שההזמנה כבר הוחזרה/הושלמה.
+   התנאי השני מכסה רשומות שנשארו פתוחות מלפני תיקון B39. */
+function b41PickupReceived(d){
+  if(d.status==='בוצע') return true;
+  var oo = (DB.orders||[]).find(x=>x.id===d.order_id);
+  return !!oo && (oo.status==='הוחזרה' || oo.status==='הושלמה');
+}
+var B41_REASONS = ['הנהג לא סרק ולא צילם בשטח','הלקוח החזיר בעצמו / איסוף עצמי','תקלה במכשיר של הנהג','נאסף ע"י עובד אחר','אחר — פרט'];
+var B41_LAST_REASON = '';
+function b41IntakeBannerHtml(oid){
+  var st = b41IntakeState(oid);
+  if(!st.expects) return '';
+  if(st.anyHandled){
+    var h = st.picks.filter(b41DriverHandled)[0]||{};
+    return '<div class="card" style="border-right:5px solid var(--ok,#3a9d5c);margin-bottom:10px">'+
+      '<b style="color:var(--ok,#3a9d5c)">✓ האיסוף תועד ע"י הנהג</b>'+
+      '<div class="muted" style="font-size:12.5px">'+esc(h.driver||'נהג')+' · '+esc(h.date||'')+
+      (String(h.scan_status||'')==='נסרק'&&String(h.scan_by||'')===String(h.driver||'')?' · נסרק ע"י הנהג':'')+
+      (h.photo_url&&String(h.photo_by||'')===String(h.driver||'')?' · צולם ע"י הנהג בשטח':'')+'</div></div>';
+  }
+  return '<div class="card" style="border-right:5px solid var(--danger);margin-bottom:10px">'+
+    '<b style="color:var(--danger)">⚠ האיסוף לא תועד ע"י הנהג המשובץ</b>'+
+    '<div class="muted" style="font-size:12.5px">'+
+      (st.picks.length? b41WhyNotHandled(st.picks[0])
+                      : 'אין להזמנה נסיעת איסוף מתועדת.')+
+      ' אפשר לקלוט — אבל חובה לציין מדוע הקליטה נעשית דרך ההנהלה. הסיבה תישמר על נסיעת האיסוף וביומן הפעולות.</div>'+
+    '<div class="frow" style="margin-top:8px"><label>סיבה (חובה)</label>'+
+    '<select id="b41_sel" onchange="b41ReasonPick()"><option value="">— בחר סיבה —</option>'+
+      B41_REASONS.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><input id="b41_reason" maxlength="300" placeholder="פירוט" value="'+esc(B41_LAST_REASON)+'"></div></div>';
+}
+/* B41b: מסביר בדיוק למה הנסיעה אינה נחשבת מתועדת — כדי שלא ייראה שרירותי */
+function b41WhyNotHandled(d){
+  var drv = String(d.driver||'').trim();
+  if(!drv) return 'לנסיעת האיסוף לא שובץ נהג כלל.';
+  if(String(d.photo_url||'').trim()!=='' && String(d.photo_by||'').trim()!==drv)
+    return 'קיים צילום, אבל הוא הועלה ע"י '+(d.photo_by? esc(d.photo_by) : 'מישהו אחר')+' ולא ע"י הנהג '+esc(drv)+' מהחשבון שלו.';
+  if(String(d.scan_status||'')==='נסרק' && String(d.scan_by||'').trim()!==drv)
+    return 'קיימת סריקה, אבל היא בוצעה ע"י '+(d.scan_by? esc(d.scan_by) : 'מישהו אחר')+' ולא ע"י הנהג '+esc(drv)+'.';
+  return 'הנהג '+esc(drv)+' לא סרק ולא צילם את האיסוף במסך שלו.';
+}
+function b41ReasonPick(){
+  var s = el('b41_sel'), t = el('b41_reason'); if(!s||!t) return;
+  t.value = (s.value && s.value.indexOf('אחר')!==0)? s.value : '';
+  t.focus();
+}
+/* מחזיר את הסיבה, '' כשאינה נדרשת, או null כשהיא נדרשת וחסרה (אז נעצרים) */
+function b41ReasonGuard(oid){
+  if(!b41IntakeState(oid).needsReason) return '';
+  var t = el('b41_reason');
+  var v = t? String(t.value||'').trim() : '';
+  if(v.length<3){ toast('יש לציין סיבה לקליטה ללא סריקת נהג (לפחות 3 תווים)', true); if(t) t.focus(); return null; }
+  B41_LAST_REASON = v;
+  return v;
+}
+/* סימון על כרטיס משלוח שנקלט ידנית */
+function b41ManualLine(d){
+  return d.manual_intake_reason
+    ? '<div style="margin-top:3px;color:var(--danger);font-weight:600;font-size:12.5px">⚠ נקלט ע"י ההנהלה — ללא סריקת נהג</div>' : '';
+}
 /* B29: שורות הפריטים של הזמנה — לתצוגת "מה להעלות לרכב" */
 function dispatchLinesHtml(oid){
   var ls = DB.orderLines.filter(l=>l.order_id===oid);
@@ -2202,13 +2302,8 @@ function dispatchTodayHtml(){
   /* B39 (ליקוי 2): החזרה שכבר נקלטה יורדת מהרשימה הפעילה ועוברת לבלוק מקופל.
      "נקלטה" = רשומת האיסוף נסגרה (בוצע), או שההזמנה עצמה כבר בסטטוס
      הוחזרה/הושלמה — התנאי השני מכסה רשומות ישנות שנשארו פתוחות מלפני התיקון. */
-  var b39Received = function(d){
-    if(d.status==='בוצע') return true;
-    var oo = DB.orders.find(x=>x.id===d.order_id);
-    return !!oo && (oo.status==='הוחזרה' || oo.status==='הושלמה');
-  };
-  var back = backAll.filter(d=>!b39Received(d));
-  var backDone = backAll.filter(b39Received);
+  var back = backAll.filter(d=>!b41PickupReceived(d));       /* B41: הבדיקה עברה לפונקציה משותפת */
+  var backDone = backAll.filter(b41PickupReceived);
   var collectedOf = function(d){ return d.status==='בוצע' || !!d.photo_url; }; /* B30: נאסף = צולם ע"י הנהג או נקלט */
   var card = function(d, mode){
     var o = DB.orders.find(x=>x.id===d.order_id)||{};
@@ -2223,6 +2318,7 @@ function dispatchTodayHtml(){
       /* B33: שם הנהג בשורה מודגשת משלו, כמו בכרטיס "כל המשלוחים" */
       (d.driver?'<div style="margin-top:3px;font-weight:700;color:var(--navy)">נהג: '+esc(d.driver)+'</div>'
               :'<div style="margin-top:3px;font-weight:700;color:var(--danger)">טרם שובץ נהג</div>')+
+      b41ManualLine(d)+
       '<div class="muted">'+esc(d.date||'')+(late?' <span style="color:var(--danger)">· באיחור</span>':'')+'</div></div>'+
       (mode==='back'? backChip
                     : '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>')+
@@ -2238,6 +2334,7 @@ function dispatchTodayHtml(){
     (backDone.length? '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--ok,#3a9d5c);font-weight:600;font-size:13px">✔ '+backDone.length+' החזרות נקלטו — הצג</summary>'+
       backDone.map(d=>card(d,'back')).join('')+'</details>' : '')+
     b38UnassignedHtml()+
+    b41StaleHtml()+
     b38UnsyncedReturnsHtml();
 }
 /* ============================================================
@@ -2309,6 +2406,27 @@ function b38UnassignedHtml(){
         '<button class="btn sm" onclick="driverForm(\''+d.id+'\')">שבץ נהג</button></div></div>';
     }).join('');
 }
+/* B41: איסוף שההזמנה שלו כבר הוחזרה/הושלמה אבל רשומת הנסיעה נשארה פתוחה.
+   נוצר לפני תיקון B39 (אז נסגרו רק איסופים בסטטוס 'מתוכנן', ואיסוף שהנהג
+   כבר סימן כנאסף נשאר ב'בדרך'). התוצאה: הנסיעה ממשיכה להופיע כאן וגם
+   במסלול של הנהג. הכפתור סוגר אותן ומנפיק מספר תעודה — בלי לגעת בהזמנה. */
+function b41StalePickups(){
+  return (DB.deliveries||[]).filter(d=>isPickup(d) && B5_OPEN_STATUSES.includes(d.status) && b41PickupReceived(d))
+    .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+}
+function b41StaleHtml(){
+  var rows = b41StalePickups();
+  if(!rows.length) return '';
+  return '<div class="section-title" style="margin-top:16px"><h3 style="color:var(--amber)">⚠ איסופים שנקלטו אך נשארו פתוחים</h3>'+
+    (ROLE==='מנהל'?'<button class="btn" onclick="b41CloseStale()">סגור אותם</button>':'<span class="muted">'+rows.length+'</span>')+'</div>'+
+    '<div class="muted" style="margin-bottom:6px">ההחזרה כבר נקלטה וההזמנה סגורה, אבל רשומת האיסוף נשארה פתוחה — ולכן היא ממשיכה להופיע כאן ובמסלול של הנהג. הסגירה מנפיקה מספר תעודה ואינה נוגעת בנתוני ההזמנה או במלאי.</div>'+
+    rows.map(delivCard).join('');
+}
+async function b41CloseStale(){
+  if(!confirm('לסגור '+b41StalePickups().length+' נסיעות איסוף שההחזרה שלהן כבר נקלטה?')) return;
+  var r = await act('b41CloseStalePickups',{});
+  if(r) toast('נסגרו '+r.closed+' נסיעות איסוף');
+}
 function b38UnsyncedReturnsHtml(){
   var rows = b38ReturnsNeedingAttention();
   var canFix = ROLE==='מנהל';
@@ -2338,7 +2456,10 @@ function rDeliveries(){
   /* B19d (L5): הרשימה הפתוחה כוללת גם משלוחים "בדרך" — לא רק "מתוכנן" */
   var OPEN_ST = ['מתוכנן','בדרך'];
   var openSup = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && !isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
-  var openPick = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
+  /* B41: איסוף שההזמנה שלו כבר הוחזרה אינו "פתוח" — הוא יורד לבלוק הריפוי מטה, אחרת
+     הוא נשאר בתצוגה לנצח (וגם במסלול של הנהג) גם אחרי שההחזרה כבר נקלטה. */
+  var openPickAll = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
+  var openPick = openPickAll.filter(d=>!b41PickupReceived(d));
   var done = DB.deliveries.filter(d=>!OPEN_ST.includes(d.status)).slice(-15).reverse();
   var tb = function(k,l){ return '<button class="btn '+(DELIV_TAB===k?'':'ghost')+' grow" onclick="DELIV_TAB=\''+k+'\';rDeliveries()">'+l+'</button>'; };
   var body;
@@ -2347,6 +2468,7 @@ function rDeliveries(){
       (openSup.length? openSup.map(delivCard).join(''):'<div class="card empty">אין אספקות פתוחות</div>')+
       '<div class="section-title"><h3>⬅ איסופים פתוחים (החזרות)</h3><span class="muted">'+openPick.length+'</span></div>'+
       (openPick.length? openPick.map(delivCard).join(''):'<div class="card empty">אין איסופים פתוחים</div>')+
+      b41StaleHtml()+
       (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
   var canPlan = ['מנהל','משרד'].includes(ROLE);
   el('main').innerHTML = '<div class="section-title"><h2>משלוחים</h2>'+
@@ -2718,7 +2840,7 @@ function delivCard(d){
     ? '<div style="margin-top:3px;font-weight:700;color:var(--navy)">נהג: '+esc(d.driver)+(vehD?' · רכב '+esc(vehD.plate||vehD.id):'')+'</div>'
     : '<div style="margin-top:3px;font-weight:700;color:var(--danger)">טרם שובץ נהג</div>';
   return '<div class="card" style="cursor:pointer;border-right:5px solid '+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+'" title="לחץ לפרטי המשלוח" onclick="if(!event.target.closest(\'button,a\'))openDelivery(\''+d.id+'\')"><div class="row"><div class="grow">'+kindChip(d)+' '+esc(cust(o.customer_id))+
-    drvLine+
+    drvLine+b41ManualLine(d)+
     '<div class="muted">'+esc(d.date)+'</div></div>'+
     (drv?contactBtns(drv.phone,''):'')+
     '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
@@ -2770,6 +2892,11 @@ function openDelivery(did){
       '<br>נהג: '+(d.driver?esc(d.driver)+(drv?' '+contactBtns(drv.phone,''):''):'<span style="color:var(--danger);font-weight:600">טרם שובץ</span>')+
       (d.vehicle_id?' · רכב '+esc(vehName(d.vehicle_id)):'')+
       (d.note_number?'<br>תעודה מס\' '+esc(d.note_number):'')+
+      /* B41: קליטה ידנית — מוצגת בגוף הכרטיס עם הסיבה ומי ביצע */
+      (d.manual_intake_reason?'<br><span style="color:var(--danger);font-weight:600">⚠ נקלט ע"י ההנהלה ללא סריקת נהג</span> · '+esc(d.manual_intake_reason)+(d.manual_intake_by?' ('+esc(d.manual_intake_by)+')':''):'')+
+      /* B41: איסוף פתוח שהנהג לא נגע בו — נאמר מראש, לפני שנכנסים לקליטה */
+      ((isReturn && B5_OPEN_STATUSES.includes(d.status) && !d.manual_intake_reason && !b41DriverHandled(d))?
+        '<br><span style="color:var(--danger);font-weight:600">⚠ האיסוף לא תועד ע"י הנהג המשובץ</span> — קליטה דרך ההנהלה תדרוש פירוט סיבה':'')+
     '</div>'+
     (lines.length?'<h3 style="margin-top:16px">פריטים בהזמנה</h3><table><tr><th>פריט</th><th>כמות</th></tr>'+
       lines.map(function(l){ return '<tr><td>'+esc(item(l.item_id))+'</td><td>'+esc(l.qty)+'</td></tr>'; }).join('')+'</table>':'<div class="muted" style="margin-top:12px">אין שורות פריטים להזמנה</div>')+
@@ -6064,7 +6191,9 @@ function renderReturn(needMap){
         ((need||l.unit_weight<=0)?'<div class="frow"><label style="color:var(--danger)">'+esc(need?need.reason:'ספירה ידנית — כמה חזרו?')+'</label><input id="rc_'+l.line_id+'" type="number" min="0" max="'+l.qty+'" placeholder="כמות שנספרה"></div>':'')+
         '</div></div>';
     }).join('')+
-    '<button class="btn" style="width:100%;margin-top:8px" onclick="submitReturn()">קלוט החזרה</button></div>';
+    '</div>'+
+    b41IntakeBannerHtml(r.order.id)+
+    '<button class="btn" style="width:100%" onclick="submitReturn()">קלוט החזרה</button>';
 }
 async function submitReturn(){
   var weights = {}, counts = {};
@@ -6072,7 +6201,8 @@ async function submitReturn(){
     var w = el('rw_'+l.line_id); if(w && w.value!=='') weights[l.line_id] = Number(w.value);
     var c = el('rc_'+l.line_id); if(c && c.value!=='') counts[l.line_id] = Number(c.value);
   });
-  var r = await act('returnByWeight',{order_id:RET.order.id,weights:weights,counts:counts});
+  var reason = b41ReasonGuard(RET.order.id); if(reason===null) return;   /* B41 */
+  var r = await act('returnByWeight',{order_id:RET.order.id,weights:weights,counts:counts,no_scan_reason:reason});
   if(!r){ return; }
   if(r.need_count){ // המקרה הזה חוזר כ-ok:false ולכן act הציג טוסט — נטפל ידנית
     return;
@@ -6874,35 +7004,42 @@ async function b39SaveLocation(selId){
 }
 /* --- מסך הציוד --- */
 function rAssets(){
+  /* B41b: אריח ריבועי — אייקון גדול, שם, שורת משנה אחת וצ'יפ סטטוס. פס הצבע עבר לראש האריח. */
   var cartCard = function(c){
     var cond = String(c.condition||'תקינה');
     var bad = cond!=='תקינה';
-    return '<div class="card" style="cursor:pointer;text-align:center;border-right:5px solid '+(bad?'var(--danger)':(c.status==='פנויה'?'var(--ok)':'var(--amber)'))+'" onclick="openCart(\''+esc(c.id)+'\')">'+
-      '<div style="color:'+(bad?'var(--danger)':'var(--navy2,#1F4E78)')+'">'+b39Icon('cart',40)+'</div>'+
-      '<div style="font-weight:700;margin-top:4px">'+esc(c.id)+'</div>'+
-      '<div class="muted" style="font-size:12px">'+esc(c.location||'ללא מיקום')+(c.tare_kg?' · תפוסה '+esc(c.tare_kg)+' ק"ג':'')+'</div>'+
-      '<div style="margin-top:6px"><span class="chip" style="background:'+(c.status==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(c.status||'')+'</span>'+
-      (bad?' <span class="chip" style="background:var(--danger)">⚠ '+esc(cond)+'</span>':'')+'</div></div>';
+    var col = bad?'var(--danger)':(c.status==='פנויה'?'var(--ok)':'var(--amber)');
+    return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(c.id)+'" onclick="openCart(\''+esc(c.id)+'\')">'+
+      (bad?'<span class="eq-flag" style="color:var(--danger)">⚠</span>':'')+
+      '<div class="eq-ic">'+b39Icon('cart',44)+'</div>'+
+      '<div class="eq-t">'+esc(c.id)+'</div>'+
+      '<div class="eq-s">'+esc(c.location||'ללא מיקום')+'</div>'+
+      (c.tare_kg?'<div class="eq-s">תפוסה '+esc(c.tare_kg)+' ק"ג</div>':'')+
+      '<div class="eq-b"><span class="eq-chip" style="background:'+(c.status==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(c.status||'')+'</span>'+
+      (bad?'<span class="eq-chip" style="background:var(--danger)">'+esc(cond)+'</span>':'')+'</div></div>';
   };
   var machCard = function(m){
     var kind = b39MachineKind(m);
     var soon = ymdLocal(new Date(Date.now()+30*864e5));
     var due = m.next_service && m.next_service<=soon;
-    return '<div class="card" style="cursor:pointer;text-align:center;border-right:5px solid '+(m.status==='פעילה'?(due?'var(--amber)':'var(--ok)'):'var(--danger)')+'" onclick="openMach(\''+esc(m.id)+'\')">'+
-      '<div style="color:'+(m.status==='פעילה'?'var(--navy2,#1F4E78)':'var(--danger)')+'">'+b39Icon(kind,40)+'</div>'+
-      '<div style="font-weight:700;margin-top:4px">'+esc(m.type||'מכונה')+'</div>'+
-      '<div class="muted" style="font-size:12px">'+esc(m.id)+(m.model?' · '+esc(m.model):'')+'</div>'+
-      '<div class="muted" style="font-size:12px">טיפול הבא: '+esc(m.next_service||'לא נקבע')+'</div>'+
-      '<div style="margin-top:6px"><span class="chip" style="background:'+(m.status==='פעילה'?'var(--ok)':m.status==='בתיקון'?'var(--amber)':'var(--danger)')+'">'+esc(m.status||'')+'</span>'+
-      (due?' <span class="chip" style="background:var(--amber)">טיפול קרוב</span>':'')+'</div></div>';
+    var stCol = m.status==='פעילה'?'var(--ok)':(m.status==='בתיקון'?'var(--amber)':'var(--danger)');
+    var col = m.status==='פעילה'? (due?'var(--amber)':'var(--ok)') : stCol;
+    return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(m.id)+(m.model?' · '+esc(m.model):'')+'" onclick="openMach(\''+esc(m.id)+'\')">'+
+      (due?'<span class="eq-flag" style="color:var(--amber)">🔧</span>':'')+
+      '<div class="eq-ic">'+b39Icon(kind,44)+'</div>'+
+      '<div class="eq-t">'+esc(m.type||'מכונה')+'</div>'+
+      '<div class="eq-s">'+esc(m.id)+'</div>'+
+      '<div class="eq-s">'+(m.next_service?'טיפול: '+esc(m.next_service):'טיפול לא נקבע')+'</div>'+
+      '<div class="eq-b"><span class="eq-chip" style="background:'+stCol+'">'+esc(m.status||'')+'</span>'+
+      (due?'<span class="eq-chip" style="background:var(--amber)">טיפול קרוב</span>':'')+'</div></div>';
   };
   var bad = (DB.carts||[]).filter(c=>String(c.condition||'תקינה')!=='תקינה');
   el('main').innerHTML =
     '<div class="section-title"><h2>עגלות</h2><button class="btn ghost sm" onclick="cartForm()">+ עגלה</button></div>'+
     (bad.length?'<div class="card" style="background:#FDECEA;border-color:var(--danger);padding:8px 10px;font-size:13px">⚠ '+bad.length+' עגלות מסומנות כלא תקינות: '+bad.map(c=>esc(c.id)).join(', ')+'</div>':'')+
-    (DB.carts.length?'<div class="grid3">'+DB.carts.map(cartCard).join('')+'</div>':'<div class="card empty">אין עגלות — לחץ "+ עגלה"</div>')+
+    (DB.carts.length?'<div class="eqgrid">'+DB.carts.map(cartCard).join('')+'</div>':'<div class="card empty">אין עגלות — לחץ "+ עגלה"</div>')+
     '<div class="section-title"><h2>מכונות</h2><button class="btn ghost sm" onclick="machForm()">+ מכונה</button></div>'+
-    (DB.machines.length?'<div class="grid3">'+DB.machines.map(machCard).join('')+'</div>':'<div class="card empty">אין מכונות — לחץ "+ מכונה"</div>');
+    (DB.machines.length?'<div class="eqgrid">'+DB.machines.map(machCard).join('')+'</div>':'<div class="card empty">אין מכונות — לחץ "+ מכונה"</div>');
 }
 /* --- כרטיס עגלה --- */
 function openCart(cid){
