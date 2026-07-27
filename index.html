@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.42-B49b · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.43-B49c · 27.07.2026</div>
   </div>
 </div>
 
@@ -1591,18 +1591,18 @@ function dashMoneyCards(today){
 function nobleDashCard(today){
   var all = DB.laundryIntakes||[];
   if(!all.length) return '';
-  var act = all.filter(i=>i.status!=='נמסר');
+  var act = b49cActiveIntakes(all); // B49c/L3: כביסה פנימית שהושלמה יורדת מהלוח
   var ready = act.filter(i=>['מוכן','במשלוח'].includes(i.status)).length;
   var inSet = internalIntakeSet(), incl = inclInternal(), kg = 0;
   (DB.laundryEvents||[]).forEach(function(e){ if(e.event_type==='שקילה' && String(e.ts).slice(0,10)===today && (incl||!inSet[e.intake_id])) kg+=Number(e.net_kg)||0; });
   var openCharge = act.reduce((s,i)=>s+(Number(i.total_charge)||0),0);
-  var delivered = all.filter(i=>String(i.delivered_ts||'').slice(0,10)===today).length;
+  var delivered = all.filter(i=>b49cCompletedTs(i).slice(0,10)===today).length; // B49c/L3
   var canFloor = allowedViews().some(v=>v[0]==='floor');
   var mini = function(v,l){ return '<div style="flex:1;min-width:105px;text-align:center;padding:8px 4px"><div style="font-size:22px;font-weight:700;color:var(--navy)">'+v+'</div><div class="muted" style="font-size:12px">'+l+'</div></div>'; };
   return '<div class="card" style="margin-top:14px"><div class="row" style="align-items:center;margin-bottom:4px"><h3 class="grow">מכבסה — תמונת מצב</h3>'+internalChk('render')+' '+
     (canFloor?'<button class="btn ghost sm" onclick="FLOOR_TAB=&quot;board&quot;;go(&quot;floor&quot;)">ללוח החי ←</button>':'')+'</div>'+
     '<div class="row" style="flex-wrap:wrap">'+
-    mini(act.length,'קליטות פעילות')+mini(ready,'מוכנות למשלוח')+mini(Math.round(kg*100)/100,'ק&quot;ג נשקל היום')+mini(delivered,'נמסרו היום')+mini(ils(openCharge),'לחיוב (פתוח)')+
+    mini(act.length,'קליטות פעילות')+mini(ready,'מוכנות למשלוח')+mini(Math.round(kg*100)/100,'ק&quot;ג נשקל היום')+mini(delivered,'הושלמו היום')+mini(ils(openCharge),'לחיוב (פתוח)')+
     '</div></div>';
 }
 /* גרף עמודות הכנסות — SVG טהור, ללא ספריות */
@@ -1990,6 +1990,23 @@ function creditBarHtml(cr){
 function inclInternal(){ return localStorage.getItem('mn_incl_internal')!=='0'; }
 function internalChk(fn){ return '<label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;font-weight:400"><input type="checkbox" style="width:auto" '+(inclInternal()?'checked':'')+' onchange="localStorage.setItem(\'mn_incl_internal\',this.checked?\'1\':\'0\');'+fn+'()"> כולל כביסה פנימית (MAPA)</label>'; }
 function internalIntakeSet(){ var s={}; (DB.laundryIntakes||[]).forEach(function(i){ if(i.internal==='כן') s[i.id]=1; }); return s; }
+/* ===== B49c — הכרעת L3: מתי קליטת מכבסה נחשבת "הושלמה" =====
+   מפות של MAPA חוזרות למפעל ואינן נמסרות ללקוח. עד B49c הדוחות ספרו ק"ג,
+   הכנסות וקליטות רק לפי delivered_ts — ולכן כביסה פנימית לא נספרה לעולם.
+   מעכשיו: כביסה פנימית נספרת בהגעה ל"מוכן" (ready_ts); כביסת לקוח חיצוני
+   נספרת רק במסירה בפועל, כי שם המסירה היא אירוע אמיתי ומחויב.
+   נקודה אחת בקוד — כל צרכן עובר דרכה. */
+function b49cCompletedTs(i){
+  if(!i) return '';
+  if(String(i.internal||'')==='כן') return String(i.ready_ts||i.delivered_ts||'');
+  return String(i.delivered_ts||'');
+}
+/* קליטות פעילות: פנימית שהגיעה ל"מוכן" הושלמה ואינה "ממתינה למשלוח" */
+function b49cActiveIntakes(list){
+  return ((list!==undefined?list:(DB&&DB.laundryIntakes))||[]).filter(function(i){
+    return i.status!=='נמסר' && !(String(i.internal||'')==='כן' && String(i.ready_ts||''));
+  });
+}
 
 /* ================= הזמנות ================= */
 function orderCard(o){
@@ -5767,7 +5784,8 @@ function nobleSummaryData(days){
   var since = Date.now() - days*864e5, incl = inclInternal();
   var kg=0, rev=0, del=0;
   (DB.laundryIntakes||[]).forEach(function(i){
-    var t = new Date(String(i.delivered_ts||'').replace(' ','T'));
+    // B49c/L3: פנימית נספרת בהגעה ל"מוכן", חיצונית — במסירה בפועל
+    var t = new Date(b49cCompletedTs(i).replace(' ','T'));
     if(isNaN(t.getTime()) || t.getTime()<since) return;
     del++;
     if(incl || i.internal!=='כן') kg+=Number(i.net_weight_kg)||0;
@@ -5783,7 +5801,7 @@ function biNobleCard(full){
   return '<div class="card"><div class="row" style="align-items:center;margin-bottom:6px"><h3 class="grow">ביצועי מכבסה (30 יום)</h3>'+
     '<button class="btn ghost sm" onclick="BI_TAB=\'noble\';rBi()">פירוט מלא ←</button></div>'+
     '<div class="row" style="flex-wrap:wrap">'+
-    biNobleMini(s.kg,'ק&quot;ג (קליטות שנמסרו)')+biNobleMini(ils(s.rev),'הכנסות (לפני מע&quot;מ)')+biNobleMini(s.del,'קליטות נמסרו')+
+    biNobleMini(s.kg,'ק&quot;ג (קליטות שהושלמו)')+biNobleMini(ils(s.rev),'הכנסות (לפני מע&quot;מ)')+biNobleMini(s.del,'קליטות הושלמו')+
     '</div></div>';
 }
 
@@ -5924,7 +5942,7 @@ function renderNobleReports(containerId){
   containerId = containerId || 'repNoble';
   var box = el(containerId); if(!box) return;
   var evs = DB.laundryEvents||[];
-  if(!evs.length){ box.innerHTML='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3><div class="card empty">אין עדיין נתוני מכבסה להצגה — הדוח יתמלא ברגע שיירשמו אירועי כביסה (התחלה/סיום שלב, שקילה)</div>'; return; }
+  if(!evs.length){ box.innerHTML='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3><div class="card empty">אין עדיין נתוני מכבסה להצגה — הדוח יתמלא ברגע שיירשמו אירועי כביסה. מ-B49c כל קידום שלב בלוח הכביסה נרשם כאן אוטומטית, לצד עבודת רצפת הייצור (התחלה/סיום שלב, שקילה)</div>'; return; }
   var parseT = function(x){ var d=new Date(String(x||'').replace(' ','T')); return isNaN(d.getTime())?null:d; };
   var ld = function(d){ return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); };
   var since = Date.now() - NOBLE_REP_DAYS*864e5;
@@ -5932,12 +5950,16 @@ function renderNobleReports(containerId){
   var E = []; evs.forEach(function(e){ var t=parseT(e.ts); if(t && t.getTime()>=since) E.push({e:e,t:t}); });
   E.sort(function(a,b){ return a.t-b.t; });
 
-  /* --- סיכום תקופה: מהקליטות שנמסרו (השקילה האחרונה קובעת — בלי כפילויות משקילה חוזרת) --- */
-  var kg=0, rev=0, del=0, manDel=0, manKg=0;
+  /* --- סיכום תקופה (B49c/L3): "הושלמה" ולא "נמסרה".
+     מפות של MAPA חוזרות למפעל ואינן נמסרות — כביסה פנימית נספרת בהגעה
+     ל"מוכן"; כביסת לקוח חיצוני נספרת רק במסירה בפועל.
+     השקילה האחרונה של כל עגלה קובעת — בלי כפילויות משקילה חוזרת. --- */
+  var kg=0, rev=0, del=0, manDel=0, manKg=0, intDone=0, extDone=0;
   var manSet = b49bManualIntakeSet(); // B49b: קליטות ידניות (ללא עגלה פיזית)
   (DB.laundryIntakes||[]).forEach(function(i){
-    var t=parseT(i.delivered_ts); if(!t||t.getTime()<since) return;
+    var t=parseT(b49cCompletedTs(i)); if(!t||t.getTime()<since) return;
     del++;
+    if(String(i.internal||'')==='כן') intDone++; else extDone++;
     if(incl || i.internal!=='כן') kg+=Number(i.net_weight_kg)||0;
     rev+=Number(i.total_charge)||0;
     if(manSet[i.id]){ manDel++; if(incl || i.internal!=='כן') manKg+=Number(i.net_weight_kg)||0; }
@@ -6000,7 +6022,10 @@ function renderNobleReports(containerId){
   var medals=['🥇','🥈','🥉'];
   var h='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3>'+
     '<div class="card"><div class="row" style="align-items:center;flex-wrap:wrap"><div class="row grow" style="gap:6px">'+rng(7,'7 ימים')+rng(30,'30 יום')+rng(90,'90 יום')+'</div>'+internalChk(containerId==='repNoble'?'renderNobleReports':'biNobleToggle')+'</div>'+
-    '<div class="row" style="flex-wrap:wrap;margin-top:6px">'+mini(Math.round(kg*100)/100,'ק&quot;ג (קליטות שנמסרו)')+mini(ils(rev),'הכנסות מכבסה (לפני מע&quot;מ)')+mini(del,'קליטות נמסרו')+'</div>'+
+    '<div class="row" style="flex-wrap:wrap;margin-top:6px">'+mini(Math.round(kg*100)/100,'ק&quot;ג (קליטות שהושלמו)')+mini(ils(rev),'הכנסות מכבסה (לפני מע&quot;מ)')+mini(del,'קליטות הושלמו')+'</div>'+
+    '<div class="muted" style="font-size:12px;border-top:1px solid var(--line);padding-top:6px">'+
+      '<b>מה נספר כ"הושלמה":</b> כביסה פנימית של MAPA (מפות שחוזרות למפעל) — בהגעה לשלב <b>"מוכן"</b>; '+
+      'כביסת לקוח חיצוני — במסירה בפועל. בתקופה זו: '+intDone+' פנימיות · '+extDone+' של לקוחות.</div>'+
     (manDel?'<div class="muted" style="font-size:12px;border-top:1px solid var(--line);padding-top:6px">מתוכן <b>'+manDel+'</b> קליטות ידניות (ללא עגלה פיזית) · '+(Math.round(manKg*100)/100)+' ק"ג</div>':'')+'</div>';
   h+='<div class="card"><h3>עובדים — מהירות מעבר בין שלבים</h3><div class="muted" style="font-size:12px;margin:2px 0 6px">כמה זמן עבר מסיום שלב של עגלה ועד שהעובד התחיל בה את השלב הבא. פחות = טוב יותר.</div>'+
     (lb.length?'<table><tr><th></th><th>עובד</th><th>מעברים</th><th>זמן מעבר ממוצע</th><th>פעולות בתקופה</th></tr>'+
