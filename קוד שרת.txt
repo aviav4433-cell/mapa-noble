@@ -14,9 +14,16 @@
 //             B49c — גשר בין לוח הכביסה ליומן NOBLE: החזרה פותחת קליטה פנימית
 //                   אוטומטית (b49cOpenReturnIntake), וכל קידום שלב בלוח כותב גם
 //                   ל-laundry_events (b49cAfterAdvance). הכרעת L3: כביסה פנימית
-//                   נספרת בדוח בהגעה ל"מוכן" (ready_ts) ולא במסירה — canary v4.43-B49c
+//                   נספרת בדוח בהגעה ל"מוכן" (ready_ts) ולא במסירה
 //                   ⚠ עמודות חדשות: laundry_tasks.intake_id · laundry_intakes.order_id
 //                      · laundry_intakes.ready_ts — יש להריץ setupDatabase
+//             B49e — איסוף עצמי מול משלוח כשני מצבים עצמאיים + חתימה מופרדת מהמשלוח
+//                   (הכרעות אבי P1–P8) — canary v4.44-B49e
+//                   • orders.ship_out / orders.ship_back — אופן המסירה של רגל ההלוך
+//                     (תאריך התחלה) ורגל החזור (תאריך החזרה). ערכים: 'משלוח' / 'איסוף עצמי'.
+//                     ⚠ P2: delivery_fee הוא שדה כספי בלבד ואין להסיק ממנו אופן מסירה.
+//                   • טבלה חדשה signatures — הוכחת מסירה/החזרה שאינה תלויה ברשומת משלוח (P4).
+//                   ⚠ עמודות/טבלה חדשות — יש להריץ setupDatabase
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -177,13 +184,21 @@ var TABLES = {
   purchases: ['id', 'supplier_id', 'date', 'status', 'notes', 'invoice_number', 'receipt_number', 'details', 'payment_mode', 'fexp_id'],
   purchase_lines: ['id', 'purchase_id', 'item_id', 'qty', 'unit_cost'],
   // B2: payment_status — 'ממתין לתשלום' / 'באשראי מסגרת' / 'ממתין לתשלום הפרש' / 'ממתין לאישור חריגה' / 'תשלום בהמשך' / 'שולם חלקית' / 'שולם'
-  orders: ['id', 'type', 'customer_id', 'start_date', 'end_date', 'status', 'notes', 'created_at', 'warehouse_id', 'delivery_fee', 'shortage_charge', 'order_number', 'payment_status', 'due_date'],   // B43: due_date = דריסה ידנית של מועד הפירעון (ריק = מחושב מתנאי התשלום של הלקוח)
+  // B49e: ship_out = אופן המסירה ברגל ההלוך (תאריך ההתחלה), ship_back = ברגל החזור (תאריך ההחזרה).
+  //       ערכים: 'משלוח' / 'איסוף עצמי'. ריק = הזמנה ותיקה, נגזר פעם אחת בלבד ב-b49eShipMode.
+  //       שתי עמודות חדשות בסוף — מיגרציה בטוחה.
+  orders: ['id', 'type', 'customer_id', 'start_date', 'end_date', 'status', 'notes', 'created_at', 'warehouse_id', 'delivery_fee', 'shortage_charge', 'order_number', 'payment_status', 'due_date', 'ship_out', 'ship_back'],   // B43: due_date = דריסה ידנית של מועד הפירעון (ריק = מחושב מתנאי התשלום של הלקוח)
   order_lines: ['id', 'order_id', 'item_id', 'qty', 'unit_price', 'returned_qty', 'returned_weight'],
   // B5: נוספו route_order (סדר מסלול נהג) ו-eta_text (תיאור מצב — "עצירה X מתוך Y") — בסוף בלבד (מיגרציה בטוחה)
   // B10: נוסף removal_ack (סימון "טופל" להסרת כתובת בדשבורד ההנהלה) — בסוף בלבד (מיגרציה בטוחה)
   // B16: נוסף signature_url (חתימת לקוח למסירה) — בסוף בלבד (מיגרציה בטוחה)
   // B34: נוספו trip_id, trip_order (שיוך לנסיעה), scan_status ('נסרק'/'ללא סריקה'), scan_ack (אישור מנהל בדיעבד) — בסוף בלבד (מיגרציה בטוחה)
   deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url', 'trip_id', 'trip_order', 'scan_status', 'scan_ack', 'manual_intake_reason', 'manual_intake_by', 'photo_by', 'scan_by'],   // B41/B41b: קליטה ידנית ללא סריקת נהג · מי צילם ומי סרק
+  // B49e (P4): הוכחת מסירה/החזרה — חתימה או צילום — שאינה תלויה ברשומת משלוח.
+  // entity_type: 'order' (נלקח מכרטיס ההזמנה, P8) / 'delivery' (נלקח ממסך הנהג).
+  // leg: 'הלוך' (תאריך ההתחלה) / 'חזור' (תאריך ההחזרה). kind: 'חתימה' / 'צילום'.
+  // חתימות היסטוריות ב-deliveries.signature_url נשארות במקומן — קיום מקביל, ללא מיגרציה.
+  signatures: ['id', 'entity_type', 'entity_id', 'order_id', 'leg', 'kind', 'url', 'signer_name', 'ts', 'user', 'note'],
   // B1: נוספו type, allocation_number, pdf_url, draft_note לחשבוניות
   invoices: ['id', 'number', 'order_id', 'customer_id', 'date', 'subtotal', 'vat_rate', 'vat', 'total', 'status', 'type', 'allocation_number', 'pdf_url', 'draft_note', 'due_date'],   // B43: due_date כנ"ל
   // B2: עמודות חדשות בסוף בלבד (מיגרציה בטוחה). amount נשאר בש"ח לתאימות; חישובים באגורות בשרת בלבד.
@@ -308,7 +323,7 @@ var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופ
 var B42_NEXT_STEPS = ['ממתין לטכנאי', 'הוזמן חלק חילוף', 'בטיפול פנימי', 'ממתין להצעת מחיר', 'ממתין להחלטת הנהלה', 'אחר'];
 // B42: תוצאת הסגירה קובעת את מצב הנכס (הכרעת אבי). הערך סמלי — התרגום למצב בפועל ב-b42Asset.
 var B42_OUTCOMES = { 'תוקנה': 'fixed', 'הושבתה סופית': 'dead', 'לא הייתה תקלה': 'prev' };
-var MANAGER_ONLY = ['delete', 'b38FixPickups', 'b41CloseStalePickups', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = ['delete', 'b38FixPickups', 'b41CloseStalePickups', 'b49eBackfillShipModes', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -506,7 +521,9 @@ var TMAP = {
   // B42
   service_providers: 'serviceProviders', asset_faults: 'assetFaults', technician_visits: 'technicianVisits', fault_events: 'faultEvents',
   // B43
-  date_changes: 'dateChanges'
+  date_changes: 'dateChanges',
+  // B49e
+  signatures: 'signatures'
 };
 
 // F1: טעינה עצלה — כל טבלה נקראת מהגליון רק בגישה הראשונה אליה (getter + מטמון)
@@ -588,20 +605,51 @@ function b38VerifyManagerPin(db, pin, actor) {
   return { ok: true };
 }
 
-// B38: איזה רשומות משלוח מגיעות להזמנה, לפי סוג ולפי שינוע.
-// השכרה  → אספקה בתאריך ההתחלה, איסוף בתאריך ההחזרה.
-// כביסה  → רק אם נבחר שינוע (delivery_fee > 0):
-//          איסוף בתאריך ההתחלה (איסוף הכביסה מהלקוח)
-//          אספקה בתאריך ההחזרה (החזרת הכביסה הנקייה)
-// הסדר הפוך מהשכרה בכוונה — כך מוגדרים השדות בטופס ההזמנה:
-// "תאריך אירוע / איסוף" ו-"תאריך החזרה".
-function b38PlannedDeliveries(o) {
-  if (String(o.type) === 'השכרה')
-    return [{ kind: 'אספקה', date: o.start_date }, { kind: 'איסוף', date: o.end_date }];
-  if (String(o.type) === 'כביסה' && Number(o.delivery_fee || 0) > 0)
-    return [{ kind: 'איסוף', date: o.start_date }, { kind: 'אספקה', date: o.end_date }];
-  return [];   // כביסה באיסוף עצמי — אין נסיעות
+// ============================================================
+// B49e — אופן המסירה: שני מצבים עצמאיים לכל רגל של ההזמנה (הכרעות אבי P1–P3)
+// ------------------------------------------------------------
+// רגל ההלוך  = הנסיעה בתאריך ההתחלה. בהשכרה 'אספקה' (אלינו→לקוח),
+//              בכביסה 'איסוף' (לקוח→אלינו). הכיוון הפוך בכוונה.
+// רגל החזור  = הנסיעה בתאריך ההחזרה. בהשכרה 'איסוף', בכביסה 'אספקה'.
+// ⚠ P2: delivery_fee הוא שדה כספי בלבד. אין להסיק ממנו אופן מסירה בשום כיוון.
+//   הגזירה מהעמלה קיימת כאן אך ורק כתאימות לאחור להזמנות שנוצרו לפני B49e
+//   ושדה המצב שלהן ריק. הזמנה חדשה תמיד נכתבת עם ערך מפורש, ו-b49eBackfillShipModes
+//   ממלאת את הוותיקות פעם אחת כדי שהגזירה הזו תיעלם מהמערכת.
+// ============================================================
+var B49E_SHIP = 'משלוח';
+var B49E_SELF = 'איסוף עצמי';
+var B49E_LEGS = ['הלוך', 'חזור'];
+
+// איזה kind מקבלת כל רגל, לפי סוג ההזמנה
+function b49eLegKind(o, leg) {
+  var rental = String(o.type) !== 'כביסה';
+  if (leg === 'הלוך') return rental ? 'אספקה' : 'איסוף';
+  return rental ? 'איסוף' : 'אספקה';
 }
+function b49eLegDate(o, leg) { return leg === 'הלוך' ? o.start_date : o.end_date; }
+
+// אופן המסירה של רגל. ערך מפורש גובר תמיד; ריק = גזירה חד-פעמית לתאימות לאחור.
+function b49eShipMode(o, leg) {
+  var v = String((leg === 'הלוך' ? o.ship_out : o.ship_back) || '').trim();
+  if (v === B49E_SHIP || v === B49E_SELF) return v;
+  if (String(o.type) === 'כביסה') return Number(o.delivery_fee || 0) > 0 ? B49E_SHIP : B49E_SELF;
+  return B49E_SHIP;   // השכרה ותיקה — עד B49e תמיד נוצרו לה שתי נסיעות
+}
+
+// B38 + B49e: איזה רשומות משלוח מגיעות להזמנה — רק רגליים שסומנו כמשלוח.
+function b38PlannedDeliveries(o) {
+  var out = [];
+  B49E_LEGS.forEach(function (leg) {
+    if (b49eShipMode(o, leg) !== B49E_SHIP) return;
+    out.push({ kind: b49eLegKind(o, leg), date: b49eLegDate(o, leg), leg: leg });
+  });
+  return out;
+}
+
+// B49e: נסיעה מבוטלת אינה "קיימת" לצורך תכנון — אחרת מעבר חזרה למשלוח (P3)
+// לא היה יוצר נסיעה מחדש לעולם. זו הייתה המלכודת המרכזית שזוהתה בתכנון.
+var B49E_LIVE_DELIV = ['מתוכנן', 'בדרך', 'בוצע'];
+function b49eLiveDeliv(d) { return B49E_LIVE_DELIV.indexOf(String(d.status)) > -1; }
 
 // B38: יוצר רק את מה שחסר. בטוח להרצה חוזרת.
 function b38EnsureOrderDeliveries(db, o) {
@@ -610,7 +658,7 @@ function b38EnsureOrderDeliveries(db, o) {
   var mine = (db.deliveries || []).filter(function (d) { return d.order_id === o.id; });
   var n = 0;
   plan.forEach(function (pl) {
-    if (mine.some(function (d) { return String(d.kind) === pl.kind; })) return;
+    if (mine.some(function (d) { return String(d.kind) === pl.kind && b49eLiveDeliv(d); })) return;
     db.deliveries.push({
       id: genId('DELV'), order_id: o.id, kind: pl.kind, date: pl.date || '',
       driver: '', status: 'מתוכנן', note: ''
@@ -618,6 +666,84 @@ function b38EnsureOrderDeliveries(db, o) {
     n++;
   });
   return n;
+}
+
+// B49e: מעבר בין המצבים אחרי שהנסיעות כבר נוצרו (P3).
+// למשלוח   → משלימים את הנסיעה החסרה של אותה רגל.
+// לאיסוף עצמי → מבטלים רק נסיעות פתוחות של אותה רגל. נסיעה ב'בוצע' לעולם לא נוגעים —
+//              היא קרתה בפועל וההיסטוריה אינה משתנה למפרע.
+function b49eApplyLegMode(db, o, leg, user) {
+  var kind = b49eLegKind(o, leg);
+  var mode = b49eShipMode(o, leg);
+  var changed = 0;
+  if (mode === B49E_SHIP) {
+    changed = b38EnsureOrderDeliveries(db, o);
+  } else {
+    (db.deliveries || []).forEach(function (d) {
+      if (d.order_id !== o.id || String(d.kind) !== kind) return;
+      if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+      d.status = 'בוטל';
+      d.eta_text = '';
+      d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה — ' + leg + ' באיסוף עצמי (' + String(user || '') + ')';
+      changed++;
+    });
+  }
+  return changed;
+}
+
+// ============================================================
+// B49e (P4) — הוכחת מסירה/החזרה שאינה תלויה ברשומת משלוח
+// ------------------------------------------------------------
+// ההוכחה יכולה לשבת בשלושה מקומות, וכולם נספרים:
+//   1. שורה ב-signatures על ההזמנה (נלקחה מכרטיס ההזמנה — P8)
+//   2. שורה ב-signatures על משלוח של אותה רגל
+//   3. signature_url / photo_url על רשומת המשלוח עצמה — התיעוד ההיסטורי,
+//      שנשאר בתוקף כדי שמסכי הנהג לא יראו שום שינוי וללא צורך במיגרציה.
+// ============================================================
+function b49eProofsOf(db, order, leg) {
+  var rows = (db.signatures || []).filter(function (s) {
+    return String(s.order_id) === String(order.id) && (!leg || String(s.leg) === leg);
+  });
+  if (leg) {
+    var kind = b49eLegKind(order, leg);
+    (db.deliveries || []).forEach(function (d) {
+      if (d.order_id !== order.id || String(d.kind) !== kind) return;
+      if (String(d.signature_url || '').trim())
+        rows.push({ id: 'LEGACY-SIG-' + d.id, entity_type: 'delivery', entity_id: d.id, order_id: order.id, leg: leg, kind: 'חתימה', url: d.signature_url, ts: '', user: '', note: 'תיעוד על רשומת המשלוח' });
+      if (String(d.photo_url || '').trim())
+        rows.push({ id: 'LEGACY-PHOTO-' + d.id, entity_type: 'delivery', entity_id: d.id, order_id: order.id, leg: leg, kind: 'צילום', url: d.photo_url, ts: '', user: String(d.photo_by || ''), note: 'תיעוד על רשומת המשלוח' });
+    });
+  }
+  return rows;
+}
+function b49eHasProof(db, order, leg) { return b49eProofsOf(db, order, leg).length > 0; }
+
+// ============================================================
+// B49e (P7) — סגירת נסיעות האיסוף אחרי קליטת ההחזרה
+// ------------------------------------------------------------
+// עד היום כל איסוף פתוח סומן 'בוצע' בעיוורון. נסיעה שאף נהג לא ביצע בפועל
+// סומנה כאילו קרתה — וזיהמה את יומן הנהגים ואת דוחות הצי.
+// מעכשיו: נהג שתיעד בשטח (סריקה או צילום מהחשבון שלו — b41DriverHandled) → 'בוצע'
+// עם תעודת משלוח כרגיל. אחרת → 'בוטל', בלי תעודת משלוח, עם הסבר על הנסיעה.
+// ⚠ שינוי מכוון של התנהגות קיימת. מוחל בשני מסלולי הקליטה בדיוק אותו דבר.
+// ============================================================
+function b49eClosePickupsAfterReturn(db, orderId, user) {
+  var done = 0, cancelled = 0;
+  (db.deliveries || []).forEach(function (d) {
+    if (d.order_id !== orderId || String(d.kind) !== 'איסוף') return;
+    if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+    d.eta_text = '';
+    if (b41DriverHandled(d)) {
+      d.status = 'בוצע';
+      if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
+      done++;
+    } else {
+      d.status = 'בוטל';
+      d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה בקליטת ההחזרה — הנסיעה לא בוצעה בפועל (' + String(user || '') + ')';
+      cancelled++;
+    }
+  });
+  return { done: done, cancelled: cancelled };
 }
 
 // B38 (תיקון החזרות): תאריכי ההזמנה זזו — משלוחי האספקה והאיסוף הפתוחים זזים איתם.
@@ -1011,7 +1137,8 @@ function handle(action, p, db, user) {
     case 'create': {
       if (!TABLES[p.table]) return { ok: false, error: 'טבלה לא קיימת' };
       if (p.table === 'invoices' || p.table === 'audit_log' || p.table === 'counters'
-        || p.table === 'payments')   // B2: קבלה נוצרת רק דרך addPayment / b2ProcessPayment (מספור רציף + idempotency)
+        || p.table === 'payments'    // B2: קבלה נוצרת רק דרך addPayment / b2ProcessPayment (מספור רציף + idempotency)
+        || p.table === 'signatures')  // B49e: הוכחת מסירה נוצרת רק דרך b49eSaveProof (העלאה ל-Drive)
         return { ok: false, error: 'מסמך זה נוצר רק דרך פעולה ייעודית' };
       var row = p.row || {};
       if (['carts', 'machines', 'vehicles'].indexOf(p.table) === -1)
@@ -1165,25 +1292,19 @@ function handle(action, p, db, user) {
             return { ok: false, error: 'המספר האישי הזה כבר תפוס' };
         }
       }
-      var b38OldStart = null, b38OldEnd = null, b38OldFee = 0;
-      if (p.table === 'orders') { b38OldStart = rec.start_date; b38OldEnd = rec.end_date; b38OldFee = Number(rec.delivery_fee || 0); }
+      // B49e: אופן המסירה משתנה רק דרך b49eSetShipMode — לא בעריכה גנרית.
+      if (p.table === 'orders') { delete p.row.ship_out; delete p.row.ship_back; }
+      var b38OldStart = null, b38OldEnd = null;
+      if (p.table === 'orders') { b38OldStart = rec.start_date; b38OldEnd = rec.end_date; }
       Object.keys(p.row).forEach(function (k) { if (k !== 'id') rec[k] = p.row[k]; });
       writeTable(p.table, arr);
       if (p.table === 'orders') {
         // B38: תאריכי ההזמנה השתנו — מיישרים את המשלוחים הפתוחים לתאריכים החדשים
         var movedB38 = b38SyncOrderDeliveries(db, rec, b38OldStart, b38OldEnd);
-        // B38: השינוע נוסף או בוטל אחרי האישור — הנסיעות נוצרות או מבוטלות בהתאם
-        var newFeeB38 = Number(rec.delivery_fee || 0);
-        var approvedB38 = ['מאושרת', 'סופקה'].indexOf(String(rec.status)) > -1;
-        var feeChangedB38 = false;
-        if (approvedB38 && b38OldFee <= 0 && newFeeB38 > 0) {
-          feeChangedB38 = b38EnsureOrderDeliveries(db, rec) > 0;
-        } else if (approvedB38 && b38OldFee > 0 && newFeeB38 <= 0 && String(rec.type) === 'כביסה') {
-          (db.deliveries || []).forEach(function (d) {
-            if (d.order_id === rec.id && String(d.status) === 'מתוכנן') { d.status = 'בוטל'; feeChangedB38 = true; }
-          });
-        }
-        if (movedB38 || feeChangedB38) writeTable('deliveries', db.deliveries);
+        // B49e (P2): הענף הישן שיצר/ביטל נסיעות לפי שינוי delivery_fee — הוסר.
+        // מחיר השינוע הוא נתון כספי בלבד; אופן המסירה נקבע ב-ship_out/ship_back
+        // ומשתנה אך ורק דרך b49eSetShipMode.
+        if (movedB38) writeTable('deliveries', db.deliveries);
       }
       return { ok: true, row: rec };
     }
@@ -1230,7 +1351,8 @@ function handle(action, p, db, user) {
         var skipFirstB38 = String(o.status) === 'סופקה';
         planB38.forEach(function (pl) {
           if (skipFirstB38 && String(pl.date) === String(o.start_date)) return;
-          if ((db.deliveries || []).some(function (d) { return d.order_id === o.id && String(d.kind) === pl.kind; })) return;
+          // B49e: אותו כלל כמו ב-b38EnsureOrderDeliveries — נסיעה מבוטלת אינה "קיימת"
+          if ((db.deliveries || []).some(function (d) { return d.order_id === o.id && String(d.kind) === pl.kind && b49eLiveDeliv(d); })) return;
           db.deliveries.push({
             id: genId('DELV'), order_id: o.id, kind: pl.kind, date: pl.date || '',
             driver: '', status: 'מתוכנן', note: 'הושלם בסנכרון B38'
@@ -1387,6 +1509,11 @@ function handle(action, p, db, user) {
           return d.order_id === p.order_id && d.kind !== 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1 && sigMissing(d);
         });
         if (blocked.length) return { ok: false, error: 'לא ניתן לסמן כסופקה — למשלוח ' + blocked[0].id + ' אין חתימת לקוח או צילום מסירה (הוסף דרך כרטיס המשלוח)' };
+        // B49e (P4+L6): רגל ההלוך באיסוף עצמי — אין רשומת משלוח, ולכן L6 לא היה חוסם דבר
+        // וההגנה על הוכחת המסירה הייתה נעלמת. במקומה נדרשת הוכחה על ההזמנה עצמה (P8).
+        var oL6 = db.orders.find(function (x) { return x.id === p.order_id; });
+        if (oL6 && b49eShipMode(oL6, 'הלוך') === B49E_SELF && !b49eHasProof(db, oL6, 'הלוך'))
+          return { ok: false, error: 'לא ניתן לסמן כסופקה — ההזמנה באיסוף עצמי ואין לה חתימת לקוח או צילום מסירה. הוסף אותם בכרטיס ההזמנה, בסעיף "הוכחת מסירה"' };
       }
       var r2 = deliverOrder(db, p.order_id);
       if (r2.ok) {
@@ -1475,10 +1602,10 @@ function handle(action, p, db, user) {
           writeTable('carts', db.carts);
           r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B49c קליטת מכבסה פנימית ' + r3.intake_id;
         }
-        // B39 (ליקוי 2): עד כה נסגרו רק איסופים בסטטוס 'מתוכנן'. איסוף שהנהג כבר
-        // סימן כנאסף יושב ב'בדרך' — ולכן נשאר פתוח לנצח והמשיך להופיע במסך המשלוחים
-        // כאילו לא התקבל. עכשיו נסגר כל איסוף בסטטוס פתוח (מתוכנן/בדרך).
-        db.deliveries.forEach(function (d) { if (d.order_id === p.order_id && d.kind === 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1) { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
+        // B39 (ליקוי 2): נסגר כל איסוף בסטטוס פתוח (מתוכנן/בדרך), לא רק 'מתוכנן'.
+        // B49e (P7): נסיעה שנהג תיעד בשטח → 'בוצע'; נסיעה שלא בוצעה → 'בוטל'.
+        var cl49e = b49eClosePickupsAfterReturn(db, p.order_id, user);
+        if (cl49e.cancelled) r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B49e ' + cl49e.cancelled + ' נסיעות איסוף בוטלו (לא בוצעו בפועל)';
         writeTable('deliveries', db.deliveries);
       }
       return r3;
@@ -2501,12 +2628,15 @@ function handle(action, p, db, user) {
         writeTable('laundry_intakes', db.laundryIntakes); writeTable('intake_carts', db.intakeCarts);
         writeTable('carts', db.carts);
       }
-      // B39 (ליקוי 2): גם כאן — כל איסוף בסטטוס פתוח נסגר, לא רק 'מתוכנן'.
-      db.deliveries.forEach(function (d) { if (d.order_id === ow.id && d.kind === 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1) { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
+      // B39 (ליקוי 2) + B49e (P7): אותה לוגיקה בדיוק כמו במסלול receiveReturn.
+      var cl49eW = b49eClosePickupsAfterReturn(db, ow.id, user);
       writeTable('deliveries', db.deliveries);
+      var noteW = [];
+      if (g41w.applied) noteW.push('B41 קליטה בשקילה ללא סריקת נהג · הזמנה ' + (ow.order_number || ow.id) + ' · סיבה: ' + g41w.reason);
+      if (cl49eW.cancelled) noteW.push('B49e ' + cl49eW.cancelled + ' נסיעות איסוף בוטלו (לא בוצעו בפועל)');
       return {
         ok: true, shortages: rr.shortages, shortage_charge: rr.shortage_charge,
-        auditNote: g41w.applied ? ('B41 קליטה בשקילה ללא סריקת נהג · הזמנה ' + (ow.order_number || ow.id) + ' · סיבה: ' + g41w.reason) : undefined
+        auditNote: noteW.length ? noteW.join(' · ') : undefined
       };
     }
     // C3: צילום נהג באספקה — נשמר ב-Drive ומקושר למשלוח
@@ -2526,6 +2656,81 @@ function handle(action, p, db, user) {
       writeTable('deliveries', db.deliveries);
       return { ok: true, url: dvP.photo_url, photo_by: dvP.photo_by };
     }
+    // ============================================================
+    // B49e — אופן המסירה והוכחת המסירה
+    // ============================================================
+    // מעבר של רגל בין 'משלוח' ל'איסוף עצמי' ולהפך, בכל שלב ולשני הכיוונים (P3).
+    case 'b49eSetShipMode': {
+      var oSM = db.orders.find(function (x) { return x.id === p.order_id; });
+      if (!oSM) return { ok: false, error: 'הזמנה לא נמצאה' };
+      if (String(oSM.status) === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת — אין מה לשנות' };
+      var legSM = String(p.leg || '');
+      if (B49E_LEGS.indexOf(legSM) === -1) return { ok: false, error: 'רגל לא חוקית' };
+      var modeSM = String(p.mode || '');
+      if ([B49E_SHIP, B49E_SELF].indexOf(modeSM) === -1) return { ok: false, error: 'אופן מסירה לא חוקי' };
+      if (b49eShipMode(oSM, legSM) === modeSM && String((legSM === 'הלוך' ? oSM.ship_out : oSM.ship_back) || '') !== '')
+        return { ok: true, order: oSM, changed: 0, auditNote: undefined };
+      if (legSM === 'הלוך') oSM.ship_out = modeSM; else oSM.ship_back = modeSM;
+      writeTable('orders', db.orders);
+      // הזמנה שטרם אושרה — אין לה נסיעות בכלל; הן ייווצרו באישור לפי המצב החדש.
+      var changedSM = 0;
+      if (['מאושרת', 'סופקה'].indexOf(String(oSM.status)) > -1) {
+        changedSM = b49eApplyLegMode(db, oSM, legSM, user);
+        if (changedSM) writeTable('deliveries', db.deliveries);
+      }
+      return {
+        ok: true, order: oSM, changed: changedSM,
+        deliveries: (db.deliveries || []).filter(function (d) { return d.order_id === oSM.id; }),
+        auditNote: 'B49e ' + legSM + ' → ' + modeSM + ' · הזמנה ' + (oSM.order_number || oSM.id) + ' · ' + changedSM + ' נסיעות הושפעו'
+      };
+    }
+
+    // הוכחת מסירה/החזרה על ההזמנה עצמה (P4+P8) — חתימה מה-canvas או צילום.
+    case 'b49eSaveProof': {
+      var oPR = db.orders.find(function (x) { return x.id === p.order_id; });
+      if (!oPR) return { ok: false, error: 'הזמנה לא נמצאה' };
+      var legPR = String(p.leg || '');
+      if (B49E_LEGS.indexOf(legPR) === -1) return { ok: false, error: 'רגל לא חוקית' };
+      var kindPR = String(p.kind || '') === 'צילום' ? 'צילום' : 'חתימה';
+      if (!p.base64) return { ok: false, error: kindPR === 'צילום' ? 'קובץ חסר' : 'חתימה חסרה' };
+      if (p.base64.length > (kindPR === 'צילום' ? 6000000 : 2000000))
+        return { ok: false, error: kindPR === 'צילום' ? 'קובץ גדול מדי (עד ~4MB)' : 'החתימה גדולה מדי' };
+      var mimePR = kindPR === 'צילום' ? (String(p.mime || 'image/jpeg')) : 'image/png';
+      var fnPR = kindPR === 'צילום' ? 'MAPA-NOBLE אספקות' : 'MAPA-NOBLE חתימות';
+      var flsPR = DriveApp.getFoldersByName(fnPR);
+      var fldPR = flsPR.hasNext() ? flsPR.next() : DriveApp.createFolder(fnPR);
+      var fPR = fldPR.createFile(Utilities.newBlob(Utilities.base64Decode(p.base64), mimePR, kindPR + '_' + oPR.id + '_' + legPR));
+      fPR.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      var rowPR = {
+        id: genId('SIGN'), entity_type: 'order', entity_id: oPR.id, order_id: oPR.id,
+        leg: legPR, kind: kindPR, url: fPR.getUrl(),
+        signer_name: String(p.signer_name || '').slice(0, 120),
+        ts: nowTs(), user: String(user || ''), note: String(p.note || '').slice(0, 300)
+      };
+      db.signatures.push(rowPR);
+      writeTable('signatures', db.signatures);
+      return { ok: true, row: rowPR, auditNote: 'B49e ' + kindPR + ' ' + legPR + ' · הזמנה ' + (oPR.order_number || oPR.id) };
+    }
+
+    // מילוי חד-פעמי של אופן המסירה להזמנות שנוצרו לפני B49e, לפי המצב בפועל היום.
+    // אחרי ההרצה אף חישוב במערכת אינו נגזר מ-delivery_fee (P2). אידמפוטנטי.
+    case 'b49eBackfillShipModes': {
+      var filled49e = 0;
+      (db.orders || []).forEach(function (o) {
+        var touched = false;
+        B49E_LEGS.forEach(function (leg) {
+          var cur = String((leg === 'הלוך' ? o.ship_out : o.ship_back) || '').trim();
+          if (cur === B49E_SHIP || cur === B49E_SELF) return;
+          var m = b49eShipMode(o, leg);
+          if (leg === 'הלוך') o.ship_out = m; else o.ship_back = m;
+          touched = true;
+        });
+        if (touched) filled49e++;
+      });
+      if (filled49e) writeTable('orders', db.orders);
+      return { ok: true, filled: filled49e, auditNote: 'B49e מילוי אופן מסירה · ' + filled49e + ' הזמנות' };
+    }
+
     // B16: חתימת לקוח (proof of delivery) — PNG מ-canvas, נשמר ב-Drive ומקושר למשלוח
     case 'deliverSignature': {
       var dvS = db.deliveries.find(function (x) { return x.id === p.delivery_id; });
