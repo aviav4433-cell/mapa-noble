@@ -6,7 +6,11 @@
 //             B46 — PDF אמיתי (Drive v3/v2 + fallback מדווח), תיקון רטרואקטיבי,
 //                   תמונת עובד ורכב (photo_url)
 //             B48 — מקור אמת אחד ליתרות לקוחות (customerBalance נגזר מ-b43Receivables)
-//                   + "מתחת למינימום" לפי פנוי-על-המדף — canary v4.40-B48
+//                   + "מתחת למינימום" לפי פנוי-על-המדף
+//             B49b — קליטת מכבסה ללא עגלה פיזית: כש-manual='כן' נוצרת עגלה וירטואלית
+//                   (carts.virtual='כן', tare_kg=0) ומשויכת לקליטה. כל שאר הצינור
+//                   (שקילה/שלבים/מסירה/דוחות) ללא שינוי — canary v4.42-B49b
+//                   ⚠ עמודה חדשה carts.virtual — יש להריץ setupDatabase
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -186,7 +190,7 @@ var TABLES = {
   // ומידוף נרשמים כאן, וזה מקור האמת להיסטוריה המלאה במסך.
   laundry_task_events: ['id', 'ts', 'task_id', 'order_id', 'item_id', 'event_type', 'stage_from', 'stage_to', 'cart_id', 'machine_id', 'qty', 'shelf_code', 'user', 'note'],
   // B39: condition — מצב תקינות העגלה (תקינה / דורשת טיפול / מושבתת). עמודה חדשה בסוף.
-  carts: ['id', 'location', 'status', 'barcode', 'capacity', 'purchase_date', 'notes', 'tare_kg', 'condition'],
+  carts: ['id', 'location', 'status', 'barcode', 'capacity', 'purchase_date', 'notes', 'tare_kg', 'condition', 'virtual'],
   laundry_intakes: ['id', 'customer_id', 'internal', 'status', 'net_weight_kg', 'price_per_kg', 'total_charge', 'intake_ts', 'delivered_ts', 'delivery_id', 'notes', 'created_by', 'invoice_id'],
   intake_carts: ['id', 'intake_id', 'cart_id', 'bind_ts', 'release_ts', 'active'],
   // B39b: portion_kg — כמה ק"ג מהעגלה נכנסו למכונה הזו (פיצול עגלה בין מכונות). עמודה חדשה בסוף.
@@ -3944,8 +3948,22 @@ function nobleIntake(db, p, user) {
     if (!cust) return { ok: false, error: 'יש לבחור לקוח (או לסמן כביסה פנימית)' };
   }
   var bcs = (p.cart_barcodes || []).map(String).filter(function (s) { return s.trim() !== ''; });
-  if (!bcs.length) return { ok: false, error: 'יש לסרוק לפחות עגלה אחת' };
-  var carts = [], seen = {};
+  /* B49b: קליטה ידנית — כביסה שנכנסת בלי עגלה פיזית רשומה (שקים, ערימה, לקוח שהביא
+     בעצמו). במקום לפתוח נתיב שני לכל הצינור (שקילה/שלבים/מסירה בנויים סביב ישות
+     עגלה), נוצרת כאן "עגלה וירטואלית" עם tare_kg=0 ו-virtual='כן'. מרגע זה כל שאר
+     הקוד ממשיך לעבוד כרגיל בלי שינוי ובלי שכפול לוגיקה. הממשק מסתיר עגלות
+     וירטואליות מכל מסכי הציוד, ההדפסה והבחירה. */
+  var manual = p.manual === 'כן' || p.manual === true;
+  if (manual && bcs.length)
+    return { ok: false, error: 'קליטה ידנית היא ללא עגלות — הסר את העגלות שנסרקו או בטל את סימון "אין עגלה פיזית"' };
+  if (!manual && !bcs.length) return { ok: false, error: 'יש לסרוק לפחות עגלה אחת' };
+  var carts = [], seen = {}, vCart = null;
+  if (manual) {
+    vCart = { id: 'VCART-' + ('00' + nextNumber(db, 'vcart_seq', 1)).slice(-3), location: '', status: 'בשימוש', barcode: '', capacity: '', purchase_date: '', notes: 'עגלה וירטואלית — נוצרה אוטומטית בקליטה ידנית ללא עגלה פיזית', tare_kg: 0, condition: 'תקינה', virtual: 'כן' };
+    vCart.barcode = vCart.id; // אחידות עם עגלות רגילות (B39: הברקוד נגזר מהמזהה)
+    db.carts.push(vCart);
+    carts.push(vCart);
+  }
   for (var i = 0; i < bcs.length; i++) {
     var c = nobleFindCart(db, bcs[i]);
     if (!c) return { ok: false, error: 'עגלה לא נמצאה: ' + bcs[i] };
@@ -3972,7 +3990,11 @@ function nobleIntake(db, p, user) {
   writeTable('laundry_intakes', db.laundryIntakes);
   writeTable('intake_carts', db.intakeCarts);
   writeTable('carts', db.carts);
-  return { ok: true, intake: intake, auditNote: 'קליטה ' + intake.id + ' · ' + (internal ? 'פנימי' : cust.name) + ' · ' + carts.length + ' עגלות' };
+  return {
+    ok: true, intake: intake, virtual_cart_id: vCart ? vCart.id : '', manual: manual ? 'כן' : '',
+    auditNote: 'קליטה ' + intake.id + ' · ' + (internal ? 'פנימי' : cust.name) + ' · ' +
+      (manual ? 'ידנית ללא עגלה פיזית (' + vCart.id + ')' : carts.length + ' עגלות')
+  };
 }
 
 // --- סריקת עגלה + מכונה: תחילת שלב (המכונה קובעת את השלב) ---
