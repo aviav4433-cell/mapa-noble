@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.41-B49 · 26.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.42-B49b · 26.07.2026</div>
   </div>
 </div>
 
@@ -2414,7 +2414,8 @@ function advanceForm(tid){
         '<button class="btn" onclick="doAdvance(\''+tid+'\')">סיים והעבר ל"מוכן"</button>'+
         '<button class="btn ghost" onclick="openLaundryTask(\''+tid+'\')">ביטול</button></div>');
   }
-  var freeCarts = (DB.carts||[]).filter(c=>c.status==='פנויה' || c.id===t.cart_id);
+  /* B49b: עגלות וירטואליות (קליטה ידנית NOBLE) אינן נכס פיזי — לא בוחרים בהן */
+  var freeCarts = b49bRealCarts().filter(c=>c.status==='פנויה' || c.id===t.cart_id);
   var machines  = (DB.machines||[]).filter(m=>!m.status || m.status==='פעילה');
   openModal(head+
     '<div class="card" style="background:#EFF6F5;border-color:var(--teal);padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
@@ -2456,7 +2457,7 @@ async function doAdvance(tid){
 function laundrySplitForm(tid){
   var t = DB.laundryTasks.find(x=>x.id===tid); if(!t) return;
   if(Number(t.qty)<2) return toast('אי אפשר לפצל כמות של פריט אחד', true);
-  var freeCarts = (DB.carts||[]).filter(c=>c.status==='פנויה');
+  var freeCarts = b49bRealCarts().filter(c=>c.status==='פנויה');
   var machines  = (DB.machines||[]).filter(m=>!m.status || m.status==='פעילה');
   openModal('<h2>פיצול לעגלה נוספת</h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(item(t.item_id))+' × '+esc(t.qty)+' · שלב '+esc(t.stage)+'</div>'+
@@ -5932,12 +5933,14 @@ function renderNobleReports(containerId){
   E.sort(function(a,b){ return a.t-b.t; });
 
   /* --- סיכום תקופה: מהקליטות שנמסרו (השקילה האחרונה קובעת — בלי כפילויות משקילה חוזרת) --- */
-  var kg=0, rev=0, del=0;
+  var kg=0, rev=0, del=0, manDel=0, manKg=0;
+  var manSet = b49bManualIntakeSet(); // B49b: קליטות ידניות (ללא עגלה פיזית)
   (DB.laundryIntakes||[]).forEach(function(i){
     var t=parseT(i.delivered_ts); if(!t||t.getTime()<since) return;
     del++;
     if(incl || i.internal!=='כן') kg+=Number(i.net_weight_kg)||0;
     rev+=Number(i.total_charge)||0;
+    if(manSet[i.id]){ manDel++; if(incl || i.internal!=='כן') manKg+=Number(i.net_weight_kg)||0; }
   });
 
   /* --- ניקוד עובדים: 'סיום' של עגלה → ה'התחלה' הבאה שלה; הפער נזקף לעובד שהתחיל את השלב הבא --- */
@@ -5997,7 +6000,8 @@ function renderNobleReports(containerId){
   var medals=['🥇','🥈','🥉'];
   var h='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3>'+
     '<div class="card"><div class="row" style="align-items:center;flex-wrap:wrap"><div class="row grow" style="gap:6px">'+rng(7,'7 ימים')+rng(30,'30 יום')+rng(90,'90 יום')+'</div>'+internalChk(containerId==='repNoble'?'renderNobleReports':'biNobleToggle')+'</div>'+
-    '<div class="row" style="flex-wrap:wrap;margin-top:6px">'+mini(Math.round(kg*100)/100,'ק&quot;ג (קליטות שנמסרו)')+mini(ils(rev),'הכנסות מכבסה (לפני מע&quot;מ)')+mini(del,'קליטות נמסרו')+'</div></div>';
+    '<div class="row" style="flex-wrap:wrap;margin-top:6px">'+mini(Math.round(kg*100)/100,'ק&quot;ג (קליטות שנמסרו)')+mini(ils(rev),'הכנסות מכבסה (לפני מע&quot;מ)')+mini(del,'קליטות נמסרו')+'</div>'+
+    (manDel?'<div class="muted" style="font-size:12px;border-top:1px solid var(--line);padding-top:6px">מתוכן <b>'+manDel+'</b> קליטות ידניות (ללא עגלה פיזית) · '+(Math.round(manKg*100)/100)+' ק"ג</div>':'')+'</div>';
   h+='<div class="card"><h3>עובדים — מהירות מעבר בין שלבים</h3><div class="muted" style="font-size:12px;margin:2px 0 6px">כמה זמן עבר מסיום שלב של עגלה ועד שהעובד התחיל בה את השלב הבא. פחות = טוב יותר.</div>'+
     (lb.length?'<table><tr><th></th><th>עובד</th><th>מעברים</th><th>זמן מעבר ממוצע</th><th>פעולות בתקופה</th></tr>'+
       lb.map(function(w,i){ return '<tr><td>'+(medals[i]||(i+1))+'</td><td><b>'+esc(w.name)+'</b></td><td>'+w.moves+'</td><td>'+(w.avg?fmtMin(w.avg):'מיידי ⚡')+'</td><td>'+w.acts+'</td></tr>'; }).join('')+'</table>'
@@ -6032,7 +6036,7 @@ function barcodeEntries(){
   if(kind==='units') list = DB.units.filter(u=>u.status!=='גרוט').map(u=>({code:String(u.barcode), label:item(u.item_id), item_id:u.item_id}));
   if(kind==='items') list = DB.items.filter(i=>i.barcode).map(i=>({code:String(i.barcode), label:i.name, item_id:i.id}));
   // B39: הברקוד נגזר מהמזהה — עגלות ותיקות בלי ערך בעמודה עדיין מודפסות
-  if(kind==='carts') list = DB.carts.map(c=>({code:String(c.barcode||c.id), label:'עגלה '+c.id, item_id:''}));
+  if(kind==='carts') list = b49bRealCarts().map(c=>({code:String(c.barcode||c.id), label:'עגלה '+c.id, item_id:''}));
   if(kind==='machines') list = (DB.machines||[]).map(m=>({code:String(m.barcode||m.id), label:(m.type||'מכונה')+' '+m.id, item_id:''}));
   if(kind==='packages') list = DB.laundryTasks.filter(t=>t.package_barcode).map(t=>({code:String(t.package_barcode), label:'אריזה · '+item(t.item_id), item_id:t.item_id}));
   if(kind==='pkgtypes') list = (DB.packageTypes||[]).filter(t=>t.active!=='לא').map(t=>({code:String(t.barcode), label:t.qty+' × '+item(t.item_id), item_id:t.item_id}));
@@ -8024,7 +8028,8 @@ function rAssets(){
       '<div class="eq-b"><span class="eq-chip" style="background:'+stCol+'">'+esc(m.status||'')+'</span>'+
       (due?'<span class="eq-chip" style="background:var(--amber)">טיפול קרוב</span>':'')+'</div></div>';
   };
-  var bad = (DB.carts||[]).filter(c=>String(c.condition||'תקינה')!=='תקינה');
+  var realCarts = b49bRealCarts(); // B49b: עגלות וירטואליות מוסתרות ממסך הציוד
+  var bad = realCarts.filter(c=>String(c.condition||'תקינה')!=='תקינה');
   /* B42: שני טאבי ציוד ושני טאבי תחזוקה, מופרדים ויזואלית — תפקיד שונה, קבוצה שונה */
   if(['faults','visits'].includes(ASSET_TAB) && !b42Can()) ASSET_TAB='carts';
   var openF = b42Can()? b42OpenFaults().length : 0;
@@ -8045,7 +8050,7 @@ function rAssets(){
   else
     body = '<div class="section-title"><h2>עגלות</h2><button class="btn ghost sm" onclick="cartForm()">+ עגלה</button></div>'+
       (bad.length?'<div class="card" style="background:#FDECEA;border-color:var(--danger);padding:8px 10px;font-size:13px">⚠ '+bad.length+' עגלות מסומנות כלא תקינות: '+bad.map(c=>esc(c.id)).join(', ')+'</div>':'')+
-      (DB.carts.length?'<div class="eqgrid">'+DB.carts.map(cartCard).join('')+'</div>':'<div class="card empty">אין עגלות — לחץ "+ עגלה"</div>');
+      (realCarts.length?'<div class="eqgrid">'+realCarts.map(cartCard).join('')+'</div>':'<div class="card empty">אין עגלות — לחץ "+ עגלה"</div>');
   el('main').innerHTML = '<div class="section-title"><h2>עגלות ומכונות</h2></div>'+tabs+body;
 }
 var ASSET_TAB = 'carts';
@@ -8479,7 +8484,7 @@ function b42EventForm(opts){
   var assetPick = '';
   if(opts.visit_id){
     var machs = (DB.machines||[]).map(function(m){ return '<option value="מכונה|'+esc(m.id)+'">'+esc(String(m.type||'מכונה')+' '+m.id)+'</option>'; }).join('');
-    var carts = (DB.carts||[]).map(function(c){ return '<option value="עגלה|'+esc(c.id)+'">עגלה '+esc(c.id)+'</option>'; }).join('');
+    var carts = b49bRealCarts().map(function(c){ return '<option value="עגלה|'+esc(c.id)+'">עגלה '+esc(c.id)+'</option>'; }).join('');
     assetPick = '<div class="frow"><label>על מה בוצעה הפעולה</label><select id="be_asset" onchange="b42EvtAssetChg()">'+
       '<option value="">— אחר: תשתיות / מבנה —</option>'+machs+carts+'</select></div>'+
       '<div class="frow" id="be_otherwrap"><label>נושא הפעולה</label><input id="be_other" placeholder="למשל: תאורה באזור הקיפול"></div>';
@@ -8820,7 +8825,9 @@ function floorBoardRender(){
     var carts = ik.carts.map(function(c){
       /* B39b: לעגלה יכולות להיות כמה מנות פתוחות בכמה מכונות — מציגים את כולן */
       var ops = c.opens || (c.open? [{stage:c.open, machine:c.machine, ts:c.open_ts, portion_kg:0}] : []);
-      var line='<b>עגלה '+esc(c.cart_id)+'</b>';
+      /* B49b: קליטה ידנית — אין עגלה פיזית, לא מציגים מזהה עגלה טכני */
+      var vc = ((DB&&DB.carts)||[]).find(function(x){ return x.id===c.cart_id; });
+      var line = b49bIsVirtual(vc) ? '<b>קליטה ידנית (ללא עגלה)</b>' : '<b>עגלה '+esc(c.cart_id)+'</b>';
       if(ops.length) line+=' — '+ops.map(function(o){
         return esc(o.stage)+(o.machine?' ב-'+esc(o.machine):'')+(Number(o.portion_kg)?' ('+o.portion_kg+' ק"ג)':'')+
           ' <span style="color:var(--amber);font-weight:600">'+minsSince(o.ts)+' דק\'</span>';
@@ -8875,10 +8882,22 @@ async function saveEtaOverride(){
 }
 /* --- לשונית עבודה --- */
 function floorWorkTab(){
+  /* B49b: לקליטה ידנית אין ברקוד לסרוק — היא נבחרת מרשימה */
+  var man = b49bManualIntakes();
+  var manHtml = man.length ? '<div class="card"><h3 style="margin:0 0 6px">קליטות ידניות פתוחות (ללא עגלה פיזית)</h3>'+
+    man.map(function(x){
+      var cn = x.intake.internal==='כן' ? 'פנימי — MAPA' : cust(x.intake.customer_id);
+      return '<div class="row" style="align-items:center;border-top:1px solid var(--line);padding:8px 0">'+
+        '<div class="grow"><b>'+esc(cn||'ללא לקוח')+'</b>'+
+        '<div class="muted" style="font-size:12px">קליטה '+esc(x.intake.id)+' · '+esc(x.intake.status||'')+
+        (x.intake.intake_ts?' · '+esc(String(x.intake.intake_ts).slice(0,16)):'')+'</div></div>'+
+        '<button class="btn" onclick="floorOpenManual(\''+esc(x.cart_id)+'\')">פתח</button></div>';
+    }).join('')+'</div>' : '';
   el('floorBody').innerHTML =
     '<div class="card"><div class="frow"><label>סרוק עגלה</label><input id="fl_cart" class="scanbox" value="'+esc(FLOOR_BC)+'" placeholder="ברקוד עגלה" onkeydown="if(event.key===\'Enter\')floorCheck()"></div>'+
     '<div class="row"><button class="btn grow" style="font-size:16px;padding:12px" onclick="floorCam(\'fl_cart\',floorCheck)">סרוק במצלמה</button>'+
     '<button class="btn ghost grow" style="font-size:16px;padding:12px" onclick="floorCheck()">בדוק עגלה</button></div></div>'+
+    manHtml+
     '<div id="floorInfo"></div>';
   if(FLOOR_INFO) floorRenderInfo();
   setTimeout(function(){ var e=el('fl_cart'); if(e && !floorTablet()) e.focus(); },100);
@@ -8921,7 +8940,7 @@ function floorRenderInfo(){
   var openKg = 0; opens.forEach(function(o){ openKg += Number(o.portion_kg)||0; });
 
   var h = '<div class="card"><div class="row"><div class="grow"><b style="font-size:17px">'+esc(r.customer_name||'ללא לקוח')+'</b>'+
-    '<div class="muted">קליטה '+esc(ik.id)+' · עגלה '+esc(r.cart.id)+(r.bound_carts.length>1?' · בקליטה: '+r.bound_carts.map(esc).join(', '):'')+'</div>'+
+    '<div class="muted">קליטה '+esc(ik.id)+' · '+(b49bIsVirtual(r.cart)?'קליטה ידנית — ללא עגלה פיזית':'עגלה '+esc(r.cart.id)+(r.bound_carts.length>1?' · בקליטה: '+r.bound_carts.map(esc).join(', '):''))+'</div>'+
     (r.cart_released?'<div class="muted" style="margin-top:4px;color:var(--teal)">העגלה כבר שוחררה מהקליטה הזו — נותר רק להעמיס ולמסור</div>':'')+
     (r.weighed.count?'<div class="muted" style="margin-top:4px">נשקל: '+r.weighed.net+' ק"ג נטו'+(Number(r.weighed.charge)?' · לחיוב '+ils(r.weighed.charge):'')+'</div>':'')+
     '</div><span class="chip" style="background:'+chipClr+';font-size:14px">'+esc(ik.status)+'</span></div></div>';
@@ -8956,8 +8975,11 @@ function floorRenderInfo(){
         }).join('')+'</div>' : '<div class="muted" style="font-size:12px;margin-top:8px">לא הוגדרו מכונות עם שלב אוטומטי — הוסף במסך "עגלות ומכונות".</div>')+
       '</div>';
 
-    h += '<div class="card"><div class="frow"><label>שקילה — משקל ברוטו על העגלה (ק"ג)</label><input id="fl_gross" type="number" inputmode="decimal" min="0" step="0.1" style="font-size:20px" onkeydown="if(event.key===\'Enter\')floorWeigh()"></div>'+
-      '<div class="muted" style="margin-bottom:8px">המערכת תחסיר את המשקל העצמי של העגלה ('+esc(r.cart.tare_kg!==''&&r.cart.tare_kg!=null?r.cart.tare_kg:'לא הוגדר!')+' ק"ג) ותחשב חיוב לפי מחיר לק"ג'+(r.intake.internal==='כן'?' — כביסה פנימית, ללא חיוב':'')+'</div>'+
+    h += '<div class="card"><div class="frow"><label>'+(b49bIsVirtual(r.cart)?'שקילה — משקל נטו (ק"ג)':'שקילה — משקל ברוטו על העגלה (ק"ג)')+'</label><input id="fl_gross" type="number" inputmode="decimal" min="0" step="0.1" style="font-size:20px" onkeydown="if(event.key===\'Enter\')floorWeigh()"></div>'+
+      '<div class="muted" style="margin-bottom:8px">'+(b49bIsVirtual(r.cart)
+        ? 'קליטה ידנית — אין משקל עצמי להפחית. הזן את המשקל <b>נטו</b>.'
+        : 'המערכת תחסיר את המשקל העצמי של העגלה ('+esc(r.cart.tare_kg!==''&&r.cart.tare_kg!=null?r.cart.tare_kg:'לא הוגדר!')+' ק"ג)')+
+        ' ותחשב חיוב לפי מחיר לק"ג'+(r.intake.internal==='כן'?' — כביסה פנימית, ללא חיוב':'')+'</div>'+
       '<button class="btn grow" '+big+' style="width:100%" onclick="floorWeigh()">שקילה</button></div>';
     if(r.weighed.count) h += '<button class="btn grow" '+big+' style="width:100%;background:var(--teal)" onclick="floorReady()">הכל ארוז ושקול — מוכן למשלוח</button>';
   } else if(ik.status==='מוכן'){
@@ -8967,11 +8989,17 @@ function floorRenderInfo(){
   }
   /* B39b: שחרור עגלה זמין תמיד, בכל שלב — לא רק במסירה ללקוח */
   if(!r.cart_released)
-    h += '<button class="btn ghost" style="width:100%;margin-top:10px" onclick="floorRelease(false)">שחרר את העגלה מהקליטה</button>'+
+    h += '<button class="btn ghost" style="width:100%;margin-top:10px" onclick="floorRelease(false)">'+(b49bIsVirtual(r.cart)?'סגור את הקליטה הידנית (שחרור)':'שחרר את העגלה מהקליטה')+'</button>'+
          '<div class="muted" style="font-size:11.5px;text-align:center;margin-top:4px">העגלות משתחררות אוטומטית ב"'+esc(setting('noble_release_carts_on')||'מוכן')+'". אפשר לשחרר ידנית בכל רגע.</div>';
   box.innerHTML = h;
 }
 async function floorRefresh(){ if(FLOOR_BC){ var r = await apiBusy('nobleCartInfo',{barcode:FLOOR_BC}); if(r && r.ok){ FLOOR_INFO=r; floorRenderInfo(); } } }
+/* B49b: פתיחת קליטה ידנית מהרשימה — אותו מסלול בדיוק כמו סריקה, רק בלי ברקוד */
+function floorOpenManual(cid){
+  FLOOR_BC = String(cid);
+  var e = el('fl_cart'); if(e) e.value = FLOOR_BC;
+  floorCheck();
+}
 function floorIntakeWith(cid){
   FLOOR_INTAKE_CARTS = [String(cid)];
   FLOOR_TAB = 'intake';
@@ -9035,19 +9063,63 @@ async function floorDeliver(){
   if(r) floorRefresh();
 }
 /* --- לשונית קליטה חדשה --- */
+/* ===== B49b: עגלות וירטואליות =====
+   קליטה ידנית (בלי עגלה פיזית) יוצרת בשרת "עגלה וירטואלית" עם tare_kg=0, כדי שכל
+   הצינור הקיים (שקילה/שלבים/מסירה/דוחות) ימשיך לעבוד בלי שכפול לוגיקה. העגלות
+   האלה אינן נכס אמיתי ולכן מוסתרות מכל מסכי הציוד, ההדפסה, הבחירה והתקלות. */
+function b49bIsVirtual(c){ return c && String(c.virtual||'')==='כן'; }
+function b49bRealCarts(){ return ((DB&&DB.carts)||[]).filter(function(c){ return !b49bIsVirtual(c); }); }
+function b49bVirtualIds(){
+  var m={}; ((DB&&DB.carts)||[]).forEach(function(c){ if(b49bIsVirtual(c)) m[c.id]=1; }); return m;
+}
+/* קליטות ידניות פתוחות — לפי שיוך לעגלה וירטואלית. משמש גם לפתיחת הקליטה במסך
+   העבודה בלי סריקה (למזהה העגלה הווירטואלית אין ברקוד פיזי להצמיד). */
+function b49bManualIntakes(){
+  var v=b49bVirtualIds(), out=[], seen={};
+  ((DB&&DB.intakeCarts)||[]).forEach(function(b){
+    if(!v[b.cart_id] || seen[b.intake_id]) return;
+    var ik=((DB&&DB.laundryIntakes)||[]).find(function(i){ return i.id===b.intake_id; });
+    if(!ik || ik.status==='נמסר') return;
+    seen[b.intake_id]=1;
+    out.push({intake:ik, cart_id:b.cart_id});
+  });
+  out.sort(function(a,b){ return String(b.intake.intake_ts||'').localeCompare(String(a.intake.intake_ts||'')); });
+  return out;
+}
+/* קבוצת מזהי הקליטות הידניות — לסימון בדוח ביצועי המכבסה */
+function b49bManualIntakeSet(){
+  var v=b49bVirtualIds(), s={};
+  ((DB&&DB.intakeCarts)||[]).forEach(function(b){ if(v[b.cart_id]) s[b.intake_id]=1; });
+  return s;
+}
 function floorIntakeTab(){
   var custs = DB.customers.filter(c=>c.active!=='לא');
   el('floorBody').innerHTML =
     '<div class="card">'+
     '<div class="frow"><label>לקוח</label><select id="fl_cust" style="font-size:16px"><option value="">— בחר לקוח —</option>'+custs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join('')+'</select></div>'+
     '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fl_internal" style="width:auto" onchange="el(\'fl_cust\').disabled=this.checked"> כביסה פנימית — טקסטיל השכרה של MAPA (ללא חיוב)</label>'+
+    /* B49b: קליטה ידנית — כביסה שנכנסת בלי עגלה פיזית רשומה */
+    '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fl_manual" style="width:auto" onchange="floorManualToggle()"> אין עגלה פיזית — קליטה ידנית (שקים / ערימה / הלקוח הביא בעצמו)</label>'+
+    '<div id="fl_manualnote" class="card" style="display:none;background:#EFF6F5;border-color:var(--teal);padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
+      'המערכת תיצור עגלה וירטואלית לקליטה הזו (משקל עצמי 0) כדי שמעקב השלבים, השקילה והמסירה יעבדו כרגיל. '+
+      'העגלה הווירטואלית אינה מופיעה במסך "עגלות ומכונות" ואין להדפיס לה ברקוד. '+
+      '<b>בשקילה יש להזין את המשקל נטו</b> — לא יופחת ממנו כלום.</div>'+
+    '<div id="fl_cartwrap">'+
     '<div class="frow"><label>סרוק עגלות לשיוך לקליטה</label><input id="fl_icart" class="scanbox" placeholder="ברקוד עגלה" onkeydown="if(event.key===\'Enter\')floorAddCart()"></div>'+
     '<div class="row" style="margin-bottom:10px"><button class="btn grow" onclick="floorCam(\'fl_icart\',floorAddCart)">סרוק במצלמה</button>'+
     '<button class="btn ghost grow" onclick="floorAddCart()">הוסף עגלה</button></div>'+
-    '<div id="fl_cartlist" style="margin-bottom:10px"></div>'+
+    '<div id="fl_cartlist" style="margin-bottom:10px"></div></div>'+
     '<div class="frow"><label>הערות (לא חובה)</label><input id="fl_inotes"></div>'+
     '<button class="btn grow" style="width:100%;font-size:17px;padding:14px" onclick="floorSaveIntake()">פתח קליטה</button></div>';
   floorRenderCartList();
+}
+/* B49b: סימון "אין עגלה פיזית" מסתיר את סריקת העגלות ומנקה רשימה שנסרקה בטעות */
+function floorManualToggle(){
+  var on = el('fl_manual') && el('fl_manual').checked;
+  var w = el('fl_cartwrap'), n = el('fl_manualnote');
+  if(w) w.style.display = on ? 'none' : '';
+  if(n) n.style.display = on ? '' : 'none';
+  if(on && FLOOR_INTAKE_CARTS.length){ FLOOR_INTAKE_CARTS = []; floorRenderCartList(); }
 }
 function floorRenderCartList(){
   var b = el('fl_cartlist'); if(!b) return;
@@ -9072,14 +9144,19 @@ async function floorAddCart(){
 async function floorSaveIntake(){
   var internal = el('fl_internal').checked;
   var cust = el('fl_cust').value;
+  var manual = !!(el('fl_manual') && el('fl_manual').checked);
   if(!internal && !cust) return toast('בחר לקוח או סמן כביסה פנימית', true);
-  if(!FLOOR_INTAKE_CARTS.length) return toast('סרוק לפחות עגלה אחת', true);
-  var r = await floorAct('nobleIntake',{customer_id:cust,internal:internal?'כן':'',cart_barcodes:FLOOR_INTAKE_CARTS.slice(),notes:el('fl_inotes').value});
+  if(!manual && !FLOOR_INTAKE_CARTS.length) return toast('סרוק לפחות עגלה אחת, או סמן "אין עגלה פיזית"', true);
+  var r = await floorAct('nobleIntake',{customer_id:cust,internal:internal?'כן':'',manual:manual?'כן':'',
+    cart_barcodes:manual?[]:FLOOR_INTAKE_CARTS.slice(),notes:el('fl_inotes').value});
   if(r){
-    toast('נפתחה קליטה '+r.intake.id);
-    FLOOR_INTAKE_CARTS=[]; FLOOR_TAB='work'; FLOOR_BC=''; FLOOR_INFO=null;
+    toast('נפתחה קליטה '+r.intake.id+(manual?' (ידנית — ללא עגלה פיזית)':''));
+    FLOOR_INTAKE_CARTS=[]; FLOOR_TAB='work'; FLOOR_INFO=null;
+    /* B49b: לקליטה ידנית אין ברקוד לסרוק — נכנסים ישר לעבודה על העגלה הווירטואלית */
+    FLOOR_BC = (manual && r.virtual_cart_id) ? String(r.virtual_cart_id) : '';
     var g = await api('getAll'); if(g && g.ok) DB=g.db;
     rFloor();
+    if(FLOOR_BC) floorCheck();
   }
 }
 
