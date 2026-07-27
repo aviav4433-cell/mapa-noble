@@ -9,8 +9,14 @@
 //                   + "מתחת למינימום" לפי פנוי-על-המדף
 //             B49b — קליטת מכבסה ללא עגלה פיזית: כש-manual='כן' נוצרת עגלה וירטואלית
 //                   (carts.virtual='כן', tare_kg=0) ומשויכת לקליטה. כל שאר הצינור
-//                   (שקילה/שלבים/מסירה/דוחות) ללא שינוי — canary v4.42-B49b
+//                   (שקילה/שלבים/מסירה/דוחות) ללא שינוי
 //                   ⚠ עמודה חדשה carts.virtual — יש להריץ setupDatabase
+//             B49c — גשר בין לוח הכביסה ליומן NOBLE: החזרה פותחת קליטה פנימית
+//                   אוטומטית (b49cOpenReturnIntake), וכל קידום שלב בלוח כותב גם
+//                   ל-laundry_events (b49cAfterAdvance). הכרעת L3: כביסה פנימית
+//                   נספרת בדוח בהגעה ל"מוכן" (ready_ts) ולא במסירה — canary v4.43-B49c
+//                   ⚠ עמודות חדשות: laundry_tasks.intake_id · laundry_intakes.order_id
+//                      · laundry_intakes.ready_ts — יש להריץ setupDatabase
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -185,13 +191,18 @@ var TABLES = {
   expenses: ['id', 'date', 'category', 'supplier_id', 'amount', 'vat', 'note', 'attachment_url'],
   // B39: link_note — תיעוד קידום שלב שנעשה בלי שיוך עגלה/מכונה
   // B40: parent_task_id (פיצול משימה בין עגלות) · release_mode + shelf_code (מידוף בסיום)
-  laundry_tasks: ['id', 'order_id', 'item_id', 'qty', 'stage', 'cart_id', 'machine_id', 'worker', 'in_date', 'done_date', 'warehouse_id', 'target_date', 'package_barcode', 'link_note', 'parent_task_id', 'release_mode', 'shelf_code'],
+  // B49c: intake_id — קישור המשימה לקליטת NOBLE שנפתחה אוטומטית בהחזרה. עמודה חדשה בסוף.
+  laundry_tasks: ['id', 'order_id', 'item_id', 'qty', 'stage', 'cart_id', 'machine_id', 'worker', 'in_date', 'done_date', 'warehouse_id', 'target_date', 'package_barcode', 'link_note', 'parent_task_id', 'release_mode', 'shelf_code', 'intake_id'],
   // B40: יומן אירועים למשימת כביסה — append-only. כל קידום שלב, פיצול, שיוך
   // ומידוף נרשמים כאן, וזה מקור האמת להיסטוריה המלאה במסך.
   laundry_task_events: ['id', 'ts', 'task_id', 'order_id', 'item_id', 'event_type', 'stage_from', 'stage_to', 'cart_id', 'machine_id', 'qty', 'shelf_code', 'user', 'note'],
   // B39: condition — מצב תקינות העגלה (תקינה / דורשת טיפול / מושבתת). עמודה חדשה בסוף.
   carts: ['id', 'location', 'status', 'barcode', 'capacity', 'purchase_date', 'notes', 'tare_kg', 'condition', 'virtual'],
-  laundry_intakes: ['id', 'customer_id', 'internal', 'status', 'net_weight_kg', 'price_per_kg', 'total_charge', 'intake_ts', 'delivered_ts', 'delivery_id', 'notes', 'created_by', 'invoice_id'],
+  // B49c: order_id — הזמנת ההשכרה שממנה נפתחה הקליטה (החזרת טקסטיל MAPA).
+  // B49c: ready_ts — מועד ההגעה ל"מוכן". הכרעת L3: כביסה פנימית נספרת בדוח
+  //       בהגעה ל"מוכן" ולא במסירה (מפות MAPA חוזרות למפעל ואינן נמסרות).
+  //       שתי עמודות חדשות בסוף — מיגרציה בטוחה של setupDatabase.
+  laundry_intakes: ['id', 'customer_id', 'internal', 'status', 'net_weight_kg', 'price_per_kg', 'total_charge', 'intake_ts', 'delivered_ts', 'delivery_id', 'notes', 'created_by', 'invoice_id', 'order_id', 'ready_ts'],
   intake_carts: ['id', 'intake_id', 'cart_id', 'bind_ts', 'release_ts', 'active'],
   // B39b: portion_kg — כמה ק"ג מהעגלה נכנסו למכונה הזו (פיצול עגלה בין מכונות). עמודה חדשה בסוף.
   laundry_events: ['id', 'ts', 'intake_id', 'customer_id', 'cart_id', 'machine_id', 'stage', 'event_type', 'worker_id', 'worker_name', 'gross_kg', 'tare_kg', 'net_kg', 'price_per_kg', 'charge', 'note', 'portion_kg'],
@@ -1452,12 +1463,18 @@ function handle(action, p, db, user) {
       // B41: קליטה שלא עברה דרך הנהג — מותרת, אך מחייבת פירוט סיבה שנרשם על נסיעת האיסוף.
       var g41 = b41IntakeGate(db, p.order_id, p.no_scan_reason, user, today());
       if (!g41.ok) return g41;
-      var r3 = receiveReturn(db, p.order_id, p.returns, today(), genId);
+      var r3 = receiveReturn(db, p.order_id, p.returns, today(), genId, user);
       if (r3.ok) {
         if (g41.applied) r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B41 קליטה ללא סריקת נהג · סיבה: ' + g41.reason;
         writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
         writeTable('stock_moves', db.stockMoves); writeTable('laundry_tasks', db.laundryTasks);
         writeTable('laundry_task_events', db.laundryTaskEvents || []);
+        // B49c: הקליטה הפנימית שנפתחה אוטומטית + העגלה הווירטואלית שלה
+        if (r3.intake_id) {
+          writeTable('laundry_intakes', db.laundryIntakes); writeTable('intake_carts', db.intakeCarts);
+          writeTable('carts', db.carts);
+          r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B49c קליטת מכבסה פנימית ' + r3.intake_id;
+        }
         // B39 (ליקוי 2): עד כה נסגרו רק איסופים בסטטוס 'מתוכנן'. איסוף שהנהג כבר
         // סימן כנאסף יושב ב'בדרך' — ולכן נשאר פתוח לנצח והמשיך להופיע במסך המשלוחים
         // כאילו לא התקבל. עכשיו נסגר כל איסוף בסטטוס פתוח (מתוכנן/בדרך).
@@ -1469,12 +1486,13 @@ function handle(action, p, db, user) {
 
     // ---- כביסה ----
     case 'assignCart': {
-      var r4 = assignCart(db, p.task_id, p.cart_id);
+      var r4 = assignCart(db, p.task_id, p.cart_id, user);
       if (r4.ok) {
         var tA = db.laundryTasks.find(function (x) { return x.id === p.task_id; });
         if (tA) b40LogTask(db, tA, 'שיוך עגלה', {}, genId, user);
         writeTable('laundry_tasks', db.laundryTasks); writeTable('carts', db.carts);
         writeTable('laundry_task_events', db.laundryTaskEvents || []);
+        writeTable('intake_carts', db.intakeCarts); // B49c: מעבר מעגלה וירטואלית לפיזית
       }
       return r4;
     }
@@ -1495,6 +1513,8 @@ function handle(action, p, db, user) {
         }
         writeTable('laundry_tasks', db.laundryTasks); writeTable('carts', db.carts); writeTable('orders', db.orders);
         writeTable('laundry_task_events', db.laundryTaskEvents || []);
+        // B49c: הגשר עדכן סטטוס קליטה ושיוכי עגלות (האירועים עצמם נכתבים ב-append)
+        writeTable('laundry_intakes', db.laundryIntakes); writeTable('intake_carts', db.intakeCarts);
       }
       return r5;
     }
@@ -1504,6 +1524,7 @@ function handle(action, p, db, user) {
       if (rSp.ok) {
         writeTable('laundry_tasks', db.laundryTasks); writeTable('carts', db.carts);
         writeTable('laundry_task_events', db.laundryTaskEvents || []);
+        writeTable('intake_carts', db.intakeCarts); // B49c
       }
       return rSp;
     }
@@ -2469,12 +2490,17 @@ function handle(action, p, db, user) {
       // B41: אותה אכיפה בדיוק כמו במסלול הקליטה ללא שקילה — שני המסלולים מתנהגים זהה.
       var g41w = b41IntakeGate(db, ow.id, p.no_scan_reason, user, today());
       if (!g41w.ok) return g41w;
-      var rr = receiveReturn(db, ow.id, returns2, today(), genId);
+      var rr = receiveReturn(db, ow.id, returns2, today(), genId, user);
       if (!rr.ok) return rr;
       olines.forEach(function (l3) { if (weights[l3.id] !== undefined) l3.returned_weight = weights[l3.id]; });
       writeTable('orders', db.orders); writeTable('order_lines', db.orderLines);
       writeTable('stock_moves', db.stockMoves); writeTable('laundry_tasks', db.laundryTasks);
       writeTable('laundry_task_events', db.laundryTaskEvents || []);
+      // B49c: אותו נתיב בדיוק כמו בקליטה הרגילה — קליטת NOBLE פנימית אוטומטית
+      if (rr.intake_id) {
+        writeTable('laundry_intakes', db.laundryIntakes); writeTable('intake_carts', db.intakeCarts);
+        writeTable('carts', db.carts);
+      }
       // B39 (ליקוי 2): גם כאן — כל איסוף בסטטוס פתוח נסגר, לא רק 'מתוכנן'.
       db.deliveries.forEach(function (d) { if (d.order_id === ow.id && d.kind === 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1) { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
       writeTable('deliveries', db.deliveries);
@@ -3537,11 +3563,12 @@ function deliverOrder(db, orderId) {
   o.status = 'סופקה';
   return { ok: true, order: o };
 }
-function receiveReturn(db, orderId, returns, todayStr, genIdFn) {
+function receiveReturn(db, orderId, returns, todayStr, genIdFn, user) {
   var o = db.orders.find(function (x) { return x.id === orderId; });
   if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
   if (o.status !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
   var shortages = [];
+  var newTasks = []; // B49c: המשימות שנוצרו בהחזרה הזו — יקושרו לקליטת NOBLE אחת
   db.orderLines.filter(function (l) { return l.order_id === orderId; }).forEach(function (l) {
     var ret = returns && returns[l.id] !== undefined ? Number(returns[l.id]) : Number(l.qty);
     if (ret < 0 || ret > Number(l.qty)) { ret = Math.max(0, Math.min(ret, Number(l.qty))); }
@@ -3559,18 +3586,30 @@ function receiveReturn(db, orderId, returns, todayStr, genIdFn) {
       var wt = {
         id: genIdFn('WASH'), order_id: orderId, item_id: l.item_id, qty: ret, stage: 'התקבל', cart_id: '', machine_id: '', worker: '', in_date: todayStr, done_date: '',
         warehouse_id: o.warehouse_id || '', target_date: addBusinessDays(db, todayStr, Number((db.settings.find(function (s) { return s.key === 'laundry_days'; }) || {}).value || 2)),
-        link_note: '', parent_task_id: '', release_mode: '', shelf_code: ''
+        link_note: '', parent_task_id: '', release_mode: '', shelf_code: '', intake_id: ''
       };
       db.laundryTasks.push(wt);
+      newTasks.push(wt);
       // B40: ההיסטוריה מתחילה כאן — מאיזו הזמנה, כמה מתוך כמה הוזמנו
       b40LogTask(db, wt, 'נקלט מהחזרה', { stage_to: 'התקבל', qty: ret, note: 'הוזמנו ' + l.qty + ' יח\', חזרו ' + ret }, genIdFn, '');
     }
   });
   o.status = 'הוחזרה';
   o.shortage_charge = Math.round(shortages.reduce(function (s, x) { return s + x.charge; }, 0) * 100) / 100;
-  return { ok: true, shortages: shortages, shortage_charge: o.shortage_charge };
+  /* B49c (הכרעת אבי L1): החזרה שיצרה משימות כביסה פותחת גם קליטת NOBLE פנימית
+     אחת, וכל המשימות מקושרות אליה. מכאן ואילך כל קידום שלב בלוח נרשם גם ביומן
+     NOBLE, ודוח ביצועי המכבסה מתמלא. החזרה בלי פריטים אינה פותחת קליטה ריקה. */
+  var b49cIntake = null;
+  if (newTasks.length) {
+    b49cIntake = b49cOpenReturnIntake(db, o, user);
+    newTasks.forEach(function (wt2) { wt2.intake_id = b49cIntake.id; });
+  }
+  return {
+    ok: true, shortages: shortages, shortage_charge: o.shortage_charge,
+    intake_id: b49cIntake ? b49cIntake.id : '', tasks_created: newTasks.length
+  };
 }
-function assignCart(db, taskId, cartId) {
+function assignCart(db, taskId, cartId, user) {
   var t = db.laundryTasks.find(function (x) { return x.id === taskId; });
   var c = db.carts.find(function (x) { return x.id === cartId; });
   if (!t || !c) return { ok: false, error: 'משימה או עגלה לא נמצאו' };
@@ -3578,6 +3617,8 @@ function assignCart(db, taskId, cartId) {
   if (t.cart_id) { releaseCart(db, t.cart_id); }
   t.cart_id = cartId;
   c.status = 'בשימוש';
+  // B49c (הכרעה 3): הקליטה עוברת מהעגלה הווירטואלית לעגלה הפיזית שנבחרה בלוח
+  b49cBindRealCart(db, t, cartId, user);
   return { ok: true };
 }
 function releaseCart(db, cartId) {
@@ -3613,6 +3654,9 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   if (idx === -1 || idx === STAGES.length - 1) return { ok: false, error: 'המשימה כבר בשלב מוכן' };
   var fromStage = t.stage, toStage = STAGES[idx + 1];
   var isFinish = (toStage === 'מוכן');
+  // B49c: העגלה שהחזיקה את המשימה עד לרגע הזה — עליה נסגרים השלבים הפתוחים
+  // ביומן NOBLE. חייבים לתפוס אותה לפני assignCart ולפני השחרור שבסיום.
+  var b49cCartBefore = String(t.cart_id || '');
 
   if (isFinish) {
     // סיום — לא שואלים עגלה ומכונה, שואלים לאן הכביסה הנקייה הולכת
@@ -3631,7 +3675,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   } else {
     // כל שלב עבודה — עגלה ומכונה חובה
     if (opts.cart_id && String(opts.cart_id) !== String(t.cart_id || '')) {
-      var ac = assignCart(db, taskId, String(opts.cart_id));
+      var ac = assignCart(db, taskId, String(opts.cart_id), user);
       if (!ac.ok) return ac;
     }
     if (opts.machine_id) {
@@ -3659,7 +3703,13 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
     cart_id: isFinish ? '' : (t.cart_id || ''), machine_id: t.machine_id || '',
     shelf_code: t.shelf_code || '', note: opts.note || ''
   }, genIdFn, user);
-  return { ok: true, stage: t.stage, release_mode: t.release_mode || '', shelf_code: t.shelf_code || '' };
+  /* B49c — הגשר. קריאה אחת בסוף, אחרי שהמעבר כבר הוכרע ונרשם ביומן המשימה.
+     אין כאן שום לוגיקת שלבים חדשה — רק שיקוף המעבר ליומן NOBLE. */
+  var b49c = b49cAfterAdvance(db, t, fromStage, toStage, b49cCartBefore, user);
+  return {
+    ok: true, stage: t.stage, release_mode: t.release_mode || '', shelf_code: t.shelf_code || '',
+    noble_events: b49c.events, intake_closed: b49c.closed ? 'כן' : ''
+  };
 }
 /* B40: פיצול משימת כביסה — הזמנה גדולה מתחלקת בין כמה עגלות וכמה מכונות.
    חלק מהכמות עובר למשימה חדשה עם עגלה ומכונה משלה; שתי המשימות מקושרות
@@ -3675,11 +3725,13 @@ function b40SplitLaundry(db, p, todayStr, genIdFn, user) {
     id: genIdFn('WASH'), order_id: t.order_id, item_id: t.item_id, qty: q, stage: t.stage,
     cart_id: '', machine_id: '', worker: t.worker || '', in_date: t.in_date || todayStr, done_date: '',
     warehouse_id: t.warehouse_id || '', target_date: t.target_date || '', package_barcode: '',
-    link_note: '', parent_task_id: t.parent_task_id || t.id, release_mode: '', shelf_code: ''
+    link_note: '', parent_task_id: t.parent_task_id || t.id, release_mode: '', shelf_code: '',
+    // B49c: המשימה המפוצלת שייכת לאותה קליטת NOBLE — אחרת הגשר היה מאבד אותה
+    intake_id: t.intake_id || ''
   };
   if (p.cart_id) {
     db.laundryTasks.push(nt);
-    var ac2 = assignCart(db, nt.id, String(p.cart_id));
+    var ac2 = assignCart(db, nt.id, String(p.cart_id), user);
     if (!ac2.ok) { db.laundryTasks = db.laundryTasks.filter(function (x) { return x.id !== nt.id; }); return ac2; }
   } else {
     db.laundryTasks.push(nt);
@@ -3704,6 +3756,177 @@ function b40SplitLaundry(db, p, todayStr, genIdFn, user) {
   b40LogTask(db, nt, 'נוצרה בפיצול', { qty: q, note: 'פוצלה מהמשימה ' + t.id }, genIdFn, user);
   return { ok: true, task: t, new_task: nt };
 }
+/* ============================================================
+   B49c — הגשר בין לוח הכביסה (MAPA) ליומן רצפת הייצור (NOBLE)
+   ------------------------------------------------------------
+   הרקע: עד B49c חיו שני זרמי עבודה נפרדים שלא דיברו זה עם זה.
+     · לוח הכביסה: receiveReturn יוצר laundry_tasks, advanceLaundry מקדם
+       שלבים וכותב ל-laundry_task_events בלבד.
+     · רצפת ייצור NOBLE: nobleIntake/nobleStageStart כותבים ל-laundry_events.
+   דוח "ביצועי מכבסה" קורא רק מ-laundry_events — ולכן היה ריק לחלוטין,
+   למרות שכל הנתונים שהוא צריך (מכונה · עובד · חותמות זמן) כבר נאספו
+   בלוח הכביסה. B49c מחבר: כל מעבר שלב בלוח כותב **גם** ליומן NOBLE.
+
+   חוק ברזל (הכרעת אבי L1): אין לשכפל את לוגיקת המעבר. advanceLaundry
+   נשארת המקום היחיד שמחליט על שלבים; כאן רק קריאה אחת נוספת בסופה.
+   יומן המשימה הקיים (laundry_task_events) נשאר במלואו — אין רגרסיה.
+
+   מודל האירועים: מעבר לשלב עבודה = 'סיום' לשלב הפתוח הקודם (אם היה)
+   + 'התחלה' לשלב החדש, שניהם באותה חותמת זמן. כך נוצרים זוגות
+   התחלה→סיום שמהם הדוח מחשב ניצולת מכונות וזמני מעבר של עובדים.
+   ארבעה מעברי לוח מייצרים אפוא שש שורות ביומן NOBLE (3 התחלה + 3 סיום).
+============================================================ */
+
+/* זיהוי רך של העובד — לעולם לא חוסם קידום שלב. השם מגיע מהמשימה או
+   מהמשתמש המחובר; אם אין עובד תואם בטבלה, נשמר השם בלבד. */
+function b49cWorkerRef(db, name) {
+  var n = String(name || '').trim();
+  if (!n) return { id: '', name: '' };
+  var e = (db.employees || []).find(function (x) { return x.name === n; });
+  return { id: e ? e.id : '', name: n };
+}
+function b49cTaskIntake(db, t) {
+  if (!t || !t.intake_id) return null;
+  return nobleIntakeById(db, t.intake_id);
+}
+function b49cIntakeClosed(ik) {
+  return !ik || ['מוכן', 'במשלוח', 'נמסר'].indexOf(ik.status) > -1;
+}
+
+/* פתיחת קליטת NOBLE פנימית מהחזרת הזמנה.
+   העגלה בשלב הזה עדיין לא ידועה (היא נבחרת בלוח הכביסה), ולכן נפתחת
+   עגלה וירטואלית של B49b — tare_kg=0, virtual='כן', מוסתרת ממסכי הציוד.
+   ברגע שהלוח משייך עגלה פיזית (b49cBindRealCart) היא מחליפה אותה. */
+function b49cOpenReturnIntake(db, order, user) {
+  var w = b49cWorkerRef(db, user);
+  var vCart = {
+    id: 'VCART-' + ('00' + nextNumber(db, 'vcart_seq', 1)).slice(-3),
+    location: '', status: 'בשימוש', barcode: '', capacity: '', purchase_date: '',
+    notes: 'עגלה וירטואלית — נוצרה אוטומטית בקליטת החזרה של הזמנה ' + order.id,
+    tare_kg: 0, condition: 'תקינה', virtual: 'כן'
+  };
+  vCart.barcode = vCart.id; // B39: הברקוד נגזר מהמזהה
+  db.carts.push(vCart);
+  var intake = {
+    id: genId('INTK'), customer_id: '', internal: 'כן', status: 'התקבל',
+    net_weight_kg: '', price_per_kg: '', total_charge: '', intake_ts: nowTs(),
+    delivered_ts: '', delivery_id: '', created_by: w.name, invoice_id: '',
+    notes: 'החזרת טקסטיל — הזמנה ' + (order.order_number || order.id),
+    order_id: order.id, ready_ts: ''
+  };
+  db.laundryIntakes.push(intake);
+  db.intakeCarts.push({ id: genId('IC'), intake_id: intake.id, cart_id: vCart.id, bind_ts: nowTs(), release_ts: '', active: 'כן' });
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: '', cart_id: vCart.id, stage: 'התקבל',
+    event_type: 'קליטה', worker_id: w.id, worker_name: w.name,
+    note: 'נקלט מהחזרת הזמנה ' + (order.order_number || order.id)
+  });
+  return intake;
+}
+
+/* שחרור שיוך עגלה מהקליטה (בלי לגעת בסטטוס העגלה — הלוח כבר שחרר אותו) */
+function b49cUnbindCart(db, intake, cartId, w, reason) {
+  var bind = db.intakeCarts.find(function (b) { return b.intake_id === intake.id && b.cart_id === cartId && b.active === 'כן'; });
+  if (!bind) return false;
+  bind.active = 'לא'; bind.release_ts = nowTs();
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: cartId,
+    stage: intake.status, event_type: 'שחרור עגלה', worker_id: w.id, worker_name: w.name,
+    note: reason || 'שוחרר מלוח הכביסה'
+  });
+  return true;
+}
+
+/* הכרעה 3: כשהלוח משייך עגלה פיזית למשימה — הקליטה עוברת אליה,
+   והעגלה הווירטואלית משוחררת. כך nobleMachineLoad, הלוח החי ומסכי
+   הרצפה מציגים את העגלה האמיתית ולא ישות פיקטיבית. */
+function b49cBindRealCart(db, t, cartId, user) {
+  var ik = b49cTaskIntake(db, t);
+  if (!ik || !cartId || b49cIntakeClosed(ik)) return false;
+  var cart = db.carts.find(function (c) { return c.id === cartId; });
+  if (!cart || String(cart.virtual || '') === 'כן') return false;
+  var w = b49cWorkerRef(db, t.worker || user);
+  var other = nobleActiveBinding(db, cartId);
+  if (other && other.intake_id !== ik.id) return false; // שייכת לקליטת רצפה אחרת — לא נוגעים
+  if (!other) {
+    db.intakeCarts.push({ id: genId('IC'), intake_id: ik.id, cart_id: cartId, bind_ts: nowTs(), release_ts: '', active: 'כן' });
+    nobleEvent(db, {
+      intake_id: ik.id, customer_id: ik.customer_id, cart_id: cartId, stage: ik.status,
+      event_type: 'שיוך עגלה', worker_id: w.id, worker_name: w.name,
+      note: 'שויכה בלוח הכביסה למשימה ' + t.id
+    });
+  }
+  // שחרור העגלות הווירטואליות — יש עכשיו עגלה פיזית
+  db.intakeCarts.slice().forEach(function (b) {
+    if (b.intake_id !== ik.id || b.active !== 'כן' || b.cart_id === cartId) return;
+    var c = db.carts.find(function (x) { return x.id === b.cart_id; });
+    if (!c || String(c.virtual || '') !== 'כן') return;
+    c.status = 'פנויה';
+    b49cUnbindCart(db, ik, b.cart_id, w, 'הוחלפה בעגלה פיזית ' + cartId);
+  });
+  return true;
+}
+
+/* סגירת הקליטה כשכל משימות ההזמנה הגיעו ל"מוכן" (הכרעה 4).
+   לא עוברים דרך nobleMarkReady — היא דורשת שקילה לכל עגלה, וכביסה
+   פנימית של MAPA אינה נשקלת ואינה מחויבת. זו הבחנה מכוונת ומתועדת. */
+function b49cCloseIntake(db, intake, w) {
+  if (b49cIntakeClosed(intake)) return [];
+  intake.status = 'מוכן';
+  intake.ready_ts = nowTs();
+  nobleEvent(db, {
+    intake_id: intake.id, customer_id: intake.customer_id, cart_id: '', stage: 'מוכן',
+    event_type: 'סטטוס', worker_id: w.id, worker_name: w.name,
+    note: 'כל משימות הכביסה של ההזמנה הסתיימו'
+  });
+  return nobleReleaseAll(db, intake, w, 'שוחרר אוטומטית — הכביסה הפנימית הושלמה');
+}
+
+/* ⭐ הגשר עצמו — נקרא פעם אחת בסוף advanceLaundry, אחרי שהמעבר כבר הוכרע.
+   מחזיר { events, closed, released } לצורך בדיקות ודיווח. */
+function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
+  var out = { events: 0, closed: false, released: [] };
+  var ik = b49cTaskIntake(db, t);
+  if (!ik || ['במשלוח', 'נמסר'].indexOf(ik.status) > -1) return out;
+  var w = b49cWorkerRef(db, t.worker || user);
+  var isFinish = (toStage === 'מוכן');
+
+  // 1. סגירת כל המנות הפתוחות של העגלה הקודמת — השלב שהסתיים ברגע זה
+  if (cartBefore) {
+    nobleOpenStarts(db, ik.id, cartBefore).forEach(function (o) {
+      nobleEvent(db, {
+        intake_id: ik.id, customer_id: ik.customer_id, cart_id: cartBefore, machine_id: o.machine_id,
+        stage: o.stage, event_type: 'סיום', worker_id: w.id, worker_name: w.name,
+        portion_kg: o.portion_kg || '', note: 'לוח הכביסה · משימה ' + t.id
+      });
+      out.events++;
+    });
+  }
+  // 2. פתיחת השלב החדש — רק שלב עבודה עם עגלה ומכונה (B40 אוכף את שניהם)
+  if (!isFinish && t.cart_id && t.machine_id) {
+    nobleEvent(db, {
+      intake_id: ik.id, customer_id: ik.customer_id, cart_id: t.cart_id, machine_id: t.machine_id,
+      stage: toStage, event_type: 'התחלה', worker_id: w.id, worker_name: w.name,
+      note: 'לוח הכביסה · משימה ' + t.id
+    });
+    out.events++;
+    if (ik.status !== toStage) ik.status = toStage;
+  }
+  // 3. בסיום — ניתוק העגלה מהקליטה (אם אינה מוחזקת ע"י משימה אחרת שעדיין בעבודה)
+  if (isFinish && cartBefore) {
+    var heldByOther = db.laundryTasks.some(function (x) {
+      return x.id !== t.id && x.cart_id === cartBefore && x.stage !== 'מוכן';
+    });
+    if (!heldByOther) b49cUnbindCart(db, ik, cartBefore, w, 'המשימה הסתיימה בלוח הכביסה');
+  }
+  // 4. כל משימות הקליטה הגיעו ל"מוכן" → סגירת הקליטה (L3: זה הרגע שנספר בדוח)
+  if (isFinish) {
+    var stillOpen = db.laundryTasks.filter(function (x) { return x.intake_id === ik.id && x.stage !== 'מוכן'; });
+    if (!stillOpen.length) { out.released = b49cCloseIntake(db, ik, w); out.closed = true; }
+  }
+  return out;
+}
+
 function orderTotal(db, orderId) {
   var o = db.orders.find(function (x) { return x.id === orderId; });
   var lines = db.orderLines.filter(function (l) { return l.order_id === orderId; })
@@ -3976,7 +4199,8 @@ function nobleIntake(db, p, user) {
   var intake = {
     id: genId('INTK'), customer_id: internal ? '' : cust.id, internal: internal ? 'כן' : '',
     status: 'התקבל', net_weight_kg: '', price_per_kg: '', total_charge: '',
-    intake_ts: nowTs(), delivered_ts: '', delivery_id: '', notes: p.notes || '', created_by: w.name
+    intake_ts: nowTs(), delivered_ts: '', delivery_id: '', notes: p.notes || '', created_by: w.name,
+    order_id: '', ready_ts: '' // B49c: עמודות חדשות — קליטת רצפה אינה קשורה להזמנה
   };
   db.laundryIntakes.push(intake);
   carts.forEach(function (c) {
@@ -4129,6 +4353,7 @@ function nobleMarkReady(db, p, user) {
   });
   if (openCarts.length) return { ok: false, error: 'יש מנות פתוחות במכונות: ' + openCarts.join(', ') + ' — סיים אותן קודם' };
   intake.status = 'מוכן';
+  intake.ready_ts = nowTs(); // B49c/L3: מועד ההגעה ל"מוכן" — אותה משמעות בשני המסלולים
   nobleEvent(db, {
     intake_id: intake.id, customer_id: intake.customer_id, cart_id: r.cart ? r.cart.id : '',
     stage: 'מוכן', event_type: 'סטטוס', worker_id: w.id, worker_name: w.name
@@ -4356,7 +4581,11 @@ function nobleBoard(db) {
     var c = db.customers.find(function (x) { return x.id === id; });
     return c ? c.name : id;
   }
-  var active = db.laundryIntakes.filter(function (i) { return i.status !== 'נמסר'; });
+  /* B49c: כביסה פנימית של MAPA אינה נמסרת לעולם — לכן קליטה פנימית שהגיעה
+     ל"מוכן" הושלמה וירדה מהלוח החי. בלעדי זה היא הייתה נשארת "פעילה" לנצח. */
+  var active = db.laundryIntakes.filter(function (i) {
+    return i.status !== 'נמסר' && !(i.internal === 'כן' && String(i.ready_ts || ''));
+  });
   var intakes = active.map(function (ik) {
     var binds = db.intakeCarts.filter(function (b) { return b.intake_id === ik.id && b.active === 'כן'; });
     var carts = binds.map(function (b) {
