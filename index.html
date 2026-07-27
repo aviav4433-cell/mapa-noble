@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.43-B49c · 27.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.44-B49e · 28.07.2026</div>
   </div>
 </div>
 
@@ -937,7 +937,7 @@ function orderBalance(oid){
   var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
   return (inv? Number(inv.total) : orderTotal(oid)) - orderPaid(oid);
 }
-function closeModal(){ el('modalBg').style.display='none'; }
+function closeModal(){ el('modalBg').style.display='none'; if(typeof sigTeardown==='function') sigTeardown(); }
 function openModal(html){ el('modal').innerHTML = '<button class="mclose" onclick="closeModal()" title="סגור">✕</button>' + html; el('modalBg').style.display='flex'; }
 /* ===== B32: תפריט שלוש הנקודות — רכיב כללי לכל מסך =====
    moreMenu(items) מקבל מערך של מחרוזות HTML (כפתורים/קישורים) ומחזיר את הכפתור + התפריט.
@@ -2045,15 +2045,104 @@ function newOrderForm(isQuote){
     '<div class="frow"><label>סוג</label><select id="f_type"><option>השכרה</option><option>כביסה</option></select></div>'+
     '<div class="grid2"><div class="frow"><label>תאריך אירוע / איסוף</label><input id="f_start" type="date"></div>'+
     '<div class="frow"><label>תאריך החזרה</label><input id="f_end" type="date"></div></div>'+
-    '<div class="frow"><label>מחיר שינוע (₪) — ריק/0 = איסוף עצמי</label><input id="f_ofee" type="number" min="0" value="'+esc(setting('default_delivery_fee')||'')+'"><div class="muted" style="font-size:11.5px">סכום גדול מאפס פותח נסיעות ביומן ובמסך המשלוחים. אפס = הלקוח מגיע בעצמו ולא נוצרת נסיעה.</div></div>'+
+    '<div class="frow"><label>מחיר שינוע (₪)</label><input id="f_ofee" type="number" min="0" value="'+esc(setting('default_delivery_fee')||'')+'"><div class="muted" style="font-size:11.5px">B49e: סכום כספי בלבד. אופן המסירה נקבע בשתי הבחירות שמתחת, ואינו תלוי במחיר — משלוח יכול להיות גם בלי חיוב.</div></div>'+
+    '<div class="grid2">'+
+      '<div class="frow"><label>אופן המסירה — הלוך</label><select id="f_shipout"><option>משלוח</option><option>איסוף עצמי</option></select></div>'+
+      '<div class="frow"><label>אופן המסירה — חזור</label><select id="f_shipback"><option>משלוח</option><option>איסוף עצמי</option></select></div>'+
+    '</div>'+
+    '<div class="muted" style="font-size:11.5px;margin:-4px 0 10px">רק רגל שסומנה "משלוח" מייצרת נסיעה ביומן ובמסלול הנהג. אפשר לשנות בכל שלב, לשני הכיוונים, מתוך כרטיס ההזמנה.</div>'+
     (DB.warehouses.length?'<div class="frow"><label>מחסן מספק (ריק = לפי הלקוח)</label><select id="f_owh"><option value="">לפי הלקוח</option>'+DB.warehouses.filter(w=>w.active!=='לא').map(w=>'<option value="'+w.id+'">'+esc(w.name)+'</option>').join('')+'</select></div>':'')+
     '<div class="frow"><label>הערות</label><input id="f_notes"></div>'+
     '<button class="btn" onclick="createOrder('+(isQuote?'true':'false')+')">להוספת פריטי הזמנה</button>');
 }
 async function createOrder(isQuote){
   var r = await act('create',{table:'orders',row:{type:el('f_type').value,customer_id:el('f_cust').value,
-    start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},'נשמר — הוסף פריטים');
+    start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,ship_out:(el('f_shipout')?el('f_shipout').value:'משלוח'),ship_back:(el('f_shipback')?el('f_shipback').value:'משלוח'),warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},'נשמר — הוסף פריטים');
   if(r){ closeModal(); openOrder(r.row.id); }
+}
+/* ===== B49e: אופן המסירה והוכחת המסירה בכרטיס ההזמנה (P1-P4, P8) ===== */
+function b49eCanEditShip(){ return ['מנהל','משרד'].indexOf(ROLE)>-1; }
+function b49eOrderShipHtml(o){
+  if(String(o.status)==='בוטלה') return '';
+  var canEdit = b49eCanEditShip();
+  var rows = B49E_LEGS.map(function(leg){
+    var mode = b49eShipMode(o,leg);
+    var self = mode===B49E_SELF;
+    var proofs = b49eProofsOf(o,leg);
+    var other = self? B49E_SHIP : B49E_SELF;
+    var kind = b49eLegKind(o,leg);
+    var live = (DB.deliveries||[]).filter(function(d){ return d.order_id===o.id && String(d.kind)===kind && b49eLiveDeliv(d); });
+    var proofHtml = proofs.length
+      ? proofs.map(function(pr){ return '<a href="'+esc(pr.url)+'" target="_blank" style="font-size:12px">'+esc(pr.kind)+(pr.ts?' · '+esc(String(pr.ts).slice(0,16)):'')+(pr.signer_name?' · '+esc(pr.signer_name):'')+'</a>'; }).join(' · ')
+      : '<span class="muted" style="font-size:12px">אין תיעוד</span>';
+    return '<div class="row" style="padding:6px 0;border-top:1px solid var(--line);gap:8px;flex-wrap:wrap;align-items:center">'+
+      '<div class="grow"><b style="font-size:13px">'+esc(b49eLegLabel(o,leg))+'</b>'+
+        ' <span class="chip" style="background:'+(self?'var(--amber)':'var(--teal)')+'">'+esc(mode)+'</span>'+
+        '<div class="muted" style="font-size:11.5px;margin-top:2px">'+esc(b49eLegDate(o,leg)||'—')+' · '+
+          (self? 'לא נוצרת נסיעה' : (live.length? live.length+' נסיעות במערכת' : 'אין עדיין רשומת נסיעה'))+
+        '</div>'+
+        '<div style="margin-top:3px">הוכחה: '+proofHtml+'</div>'+
+      '</div>'+
+      (canEdit? '<button class="btn ghost sm" onclick="b49eSetShip(\''+o.id+'\',\''+leg+'\',\''+other+'\')">'+(self?'העבר למשלוח':'העבר לאיסוף עצמי')+'</button>':'')+
+      (canEdit? ' <button class="btn ghost sm" onclick="b49eProofForm(\''+o.id+'\',\''+leg+'\')">חתימה / צילום</button>':'')+
+      '</div>';
+  }).join('');
+  return '<h3 style="margin-top:14px">אופן המסירה והוכחת מסירה</h3>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:2px">אפשר לעבור בין משלוח לאיסוף עצמי בכל שלב, ולכל רגל בנפרד. מחיר השינוע אינו קובע כלום.</div>'+
+    rows;
+}
+async function b49eSetShip(oid, leg, mode){
+  var r = await act('b49eSetShipMode',{order_id:oid, leg:leg, mode:mode}, leg+' → '+mode);
+  if(!r) return;
+  var o = (DB.orders||[]).find(x=>x.id===oid);
+  if(o && r.order){ o.ship_out=r.order.ship_out; o.ship_back=r.order.ship_back; }
+  if(r.deliveries){
+    DB.deliveries = (DB.deliveries||[]).filter(function(d){ return d.order_id!==oid; }).concat(r.deliveries);
+  }
+  closeModal(); openOrder(oid);
+}
+/* P8: החתימה נלקחת מכרטיס ההזמנה עצמו — בלי מעבר למסך המשלוחים */
+function b49eProofForm(oid, leg){
+  var o = (DB.orders||[]).find(x=>x.id===oid); if(!o) return;
+  openModal('<h2>הוכחת מסירה — '+esc(b49eLegLabel(o,leg))+'</h2>'+
+    '<p class="muted" style="font-size:13px">נא להעביר את המכשיר ללקוח לחתימה באצבע או בעט.</p>'+
+    '<div class="frow"><label>שם החותם (לא חובה)</label><input id="f_signer"></div>'+
+    '<canvas id="sigPad" style="width:100%;height:220px;border:1px solid var(--line);border-radius:6px;background:#fff;touch-action:none;display:block"></canvas>'+
+    '<div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">'+
+      '<button class="btn ghost sm" onclick="sigClear()">נקה</button>'+
+      '<button class="btn" style="background:var(--ok,#3a9d5c)" onclick="b49eProofSave(\''+oid+'\',\''+leg+'\')">שמור חתימה</button>'+
+    '</div>'+
+    '<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">'+
+      '<p class="muted" style="font-size:13px">אין אפשרות לחתימה? אפשר לתעד בצילום במקום.</p>'+
+      '<button class="btn ghost sm" onclick="b49eProofPhoto(\''+oid+'\',\''+leg+'\')">תעד בצילום</button>'+
+    '</div>');
+  sigInit();
+}
+async function b49eProofSave(oid, leg){
+  if(!SIG_HAS_INK) return toast('יש לבקש מהלקוח לחתום לפני השמירה', true);
+  var b64 = el('sigPad').toDataURL('image/png').split(',')[1];
+  var who = el('f_signer')? el('f_signer').value : '';
+  toast('שומר חתימה...');
+  var u = await api('b49eSaveProof',{order_id:oid, leg:leg, kind:'חתימה', base64:b64, signer_name:who});
+  if(!u.ok) return toast(u.error, true);
+  DB.signatures = (DB.signatures||[]).concat([u.row]);
+  closeModal(); toast('החתימה נשמרה'); openOrder(oid);
+}
+function b49eProofPhoto(oid, leg){
+  var who = el('f_signer')? el('f_signer').value : '';
+  var inp = document.createElement('input');
+  inp.type='file'; inp.accept='image/*'; inp.setAttribute('capture','environment');
+  inp.onchange = async function(){
+    var f = inp.files[0]; if(!f) return;
+    if(f.size > 4*1024*1024) return toast('הקובץ גדול מ-4MB — צלם באיכות נמוכה יותר', true);
+    toast('מעלה צילום...');
+    var b64 = await new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(rd.result.split(',')[1]);}; rd.readAsDataURL(f); });
+    var u = await api('b49eSaveProof',{order_id:oid, leg:leg, kind:'צילום', base64:b64, mime:f.type, signer_name:who});
+    if(!u.ok) return toast(u.error, true);
+    DB.signatures = (DB.signatures||[]).concat([u.row]);
+    closeModal(); toast('הצילום נשמר'); openOrder(oid);
+  };
+  inp.click();
 }
 /* ===== B11a/E1: שרשרת מסמכים — קריאה ותצוגה בלבד, מבוססת על DB שכבר נטען ===== */
 function docChainHtml(oid, active){
@@ -2153,6 +2242,7 @@ function openOrder(oid){
     :'')+
     creditBarHtml(creditStatus(o.customer_id))+
     (pays.length?'<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>מסמך</th></tr>'+pays.map(p=>'<tr><td><span style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+esc(p.receipt_number)+'</span></td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+(p.type?' · '+esc(p.type):'')+'</td><td>'+(p.pdf_url?'<a href="'+esc(p.pdf_url)+'" target="_blank">קבלה</a>':'')+'</td></tr>').join('')+'</table>':'')+
+    b49eOrderShipHtml(o)+
     (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0;cursor:pointer" onclick="openDelivery(\''+d.id+'\')"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
     b44PickBlockHtml(oid)+
     linksSection('order',oid)+
@@ -2651,16 +2741,58 @@ function dispatchTodayHtml(){
    הכפתור מפעיל
    b38FixPickups
    בשרת — מנהל בלבד. */
-/* B38: אותה הגדרה בדיוק כמו בשרת — אילו נסיעות מגיעות להזמנה.
-   השכרה: אספקה בהתחלה, איסוף בהחזרה.
-   כביסה עם שינוע: איסוף בהתחלה (מהלקוח), אספקה בהחזרה (הנקי חזרה).
-   כביסה באיסוף עצמי: אין נסיעות כלל. */
-function b38PlannedForOrder(o){
-  if(String(o.type)==='השכרה') return [{kind:'אספקה',date:o.start_date},{kind:'איסוף',date:o.end_date}];
-  if(String(o.type)==='כביסה' && Number(o.delivery_fee||0)>0)
-    return [{kind:'איסוף',date:o.start_date},{kind:'אספקה',date:o.end_date}];
-  return [];
+/* ===== B49e: אופן המסירה — שתי רגליים עצמאיות (הכרעות אבי P1-P3) =====
+   רגל "הלוך" = הנסיעה בתאריך ההתחלה: בהשכרה אספקה ללקוח, בכביסה איסוף מהלקוח.
+   רגל "חזור" = הנסיעה בתאריך ההחזרה: בהשכרה איסוף מהלקוח, בכביסה החזרת הנקי.
+   ⚠ P2: delivery_fee הוא מחיר בלבד. אין להסיק ממנו אופן מסירה בשום כיוון.
+   הגזירה מהעמלה כאן היא תאימות לאחור בלבד להזמנות שנוצרו לפני B49e,
+   ומועתקת מילה במילה מ-b49eShipMode בשרת. */
+var B49E_SHIP='משלוח', B49E_SELF='איסוף עצמי', B49E_LEGS=['הלוך','חזור'];
+function b49eLegKind(o,leg){
+  var rental = String(o.type)!=='כביסה';
+  if(leg==='הלוך') return rental?'אספקה':'איסוף';
+  return rental?'איסוף':'אספקה';
 }
+function b49eLegDate(o,leg){ return leg==='הלוך'? o.start_date : o.end_date; }
+function b49eLegLabel(o,leg){
+  var rental = String(o.type)!=='כביסה';
+  if(leg==='הלוך') return rental?'אספקה ללקוח':'איסוף הכביסה מהלקוח';
+  return rental?'איסוף מהלקוח':'החזרת הכביסה ללקוח';
+}
+function b49eShipMode(o,leg){
+  var v = String((leg==='הלוך'? o.ship_out : o.ship_back)||'').trim();
+  if(v===B49E_SHIP||v===B49E_SELF) return v;
+  if(String(o.type)==='כביסה') return Number(o.delivery_fee||0)>0? B49E_SHIP : B49E_SELF;
+  return B49E_SHIP;
+}
+/* B38 + B49e: אותה הגדרה בדיוק כמו בשרת — אילו נסיעות מגיעות להזמנה.
+   רק רגל שסומנה "משלוח" מייצרת נסיעה. */
+function b38PlannedForOrder(o){
+  var out=[];
+  B49E_LEGS.forEach(function(leg){
+    if(b49eShipMode(o,leg)!==B49E_SHIP) return;
+    out.push({kind:b49eLegKind(o,leg), date:b49eLegDate(o,leg), leg:leg});
+  });
+  return out;
+}
+/* B49e: נסיעה מבוטלת אינה "קיימת" — אחרת מעבר חזרה למשלוח לא היה יוצר אותה מחדש */
+function b49eLiveDeliv(d){ return ['מתוכנן','בדרך','בוצע'].indexOf(String(d.status))>-1; }
+/* B49e (P4): הוכחות המסירה של רגל — מטבלת signatures ומהתיעוד ההיסטורי על המשלוח */
+function b49eProofsOf(o,leg){
+  var rows = (DB.signatures||[]).filter(function(s){
+    return String(s.order_id)===String(o.id) && (!leg || String(s.leg)===leg);
+  });
+  if(leg){
+    var kind = b49eLegKind(o,leg);
+    (DB.deliveries||[]).forEach(function(d){
+      if(d.order_id!==o.id || String(d.kind)!==kind) return;
+      if(String(d.signature_url||'').trim()) rows.push({id:'L-S-'+d.id,kind:'חתימה',url:d.signature_url,leg:leg,ts:'',user:'',note:'על רשומת המשלוח'});
+      if(String(d.photo_url||'').trim())     rows.push({id:'L-P-'+d.id,kind:'צילום',url:d.photo_url,leg:leg,ts:'',user:String(d.photo_by||''),note:'על רשומת המשלוח'});
+    });
+  }
+  return rows;
+}
+function b49eHasProof(o,leg){ return b49eProofsOf(o,leg).length>0; }
 function b38ReturnsNeedingAttention(){
   var t = todayYMD();
   var OPEN = ['מתוכנן','בדרך'];
@@ -3157,29 +3289,70 @@ function driverSignatureForm(did){
     '</div>');
   sigInit();
 }
-function sigInit(){
-  var cv = el('sigPad');
+/* B49e (ספיחת חלק 2 של B51 — Bug 1): פד החתימה בטאבלט.
+   שלוש תקלות שאובחנו: (א) pos() החזיר קואורדינטות בלי סקיילינג בין רוחב ה-CSS
+   לרזולוציית הקנבס, ולכן הקו נמשך במקום הלא נכון; (ב) rect.width=0 כשהמודאל
+   נמדד לפני פריסה מלאה → רוחב קבוע 280 מול CSS 100%; (ג) devicePixelRatio —
+   קו מטושטש. בנוסף: סיבוב מסך באמצע חתימה איבד את הציור.
+   התיקון: קנבס ברזולוציית dpr, סקיילינג תמיד לפי רוחב ה-CSS בפועל,
+   ושחזור התוכן ב-resize/orientationchange. */
+var SIG_CSS_W = 0, SIG_CSS_H = 220, SIG_RESIZE = null;
+function sigSetup(cv, keepDataUrl){
   var rect = cv.getBoundingClientRect();
-  cv.width = Math.max(280, Math.round(rect.width));
-  cv.height = 220;
+  var dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  var cssW = Math.max(280, Math.round(rect.width || cv.clientWidth || 280));
+  SIG_CSS_W = cssW; SIG_CSS_H = 220;
+  cv.width = Math.round(cssW * dpr);
+  cv.height = Math.round(SIG_CSS_H * dpr);
   SIG_CTX = cv.getContext('2d');
+  SIG_CTX.setTransform(1,0,0,1,0,0);
+  SIG_CTX.scale(dpr, dpr);
   SIG_CTX.lineWidth = 2.4; SIG_CTX.lineCap = 'round'; SIG_CTX.lineJoin = 'round'; SIG_CTX.strokeStyle = '#1F2A44';
+  if(keepDataUrl){
+    var img = new Image();
+    img.onload = function(){ try{ SIG_CTX.drawImage(img, 0, 0, SIG_CSS_W, SIG_CSS_H); }catch(e){} };
+    img.src = keepDataUrl;
+  }
+}
+function sigInit(){
+  var cv = el('sigPad'); if(!cv) return;
+  sigSetup(cv, null);
   SIG_HAS_INK = false; SIG_DRAWING = false; SIG_LAST = null;
-  function pos(e){ var r=cv.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
-  cv.onpointerdown = function(e){ SIG_DRAWING=true; SIG_LAST=pos(e); try{cv.setPointerCapture(e.pointerId);}catch(ex){} };
+  /* הסקיילינג הוא הלב של התיקון: תמיד ממירים מקואורדינטת מסך לקואורדינטת CSS של הקנבס */
+  function pos(e){
+    var r = cv.getBoundingClientRect();
+    var sx = r.width ? (SIG_CSS_W / r.width) : 1;
+    var sy = r.height ? (SIG_CSS_H / r.height) : 1;
+    return { x:(e.clientX - r.left) * sx, y:(e.clientY - r.top) * sy };
+  }
+  cv.onpointerdown = function(e){ e.preventDefault(); SIG_DRAWING=true; SIG_LAST=pos(e); try{cv.setPointerCapture(e.pointerId);}catch(ex){} };
   cv.onpointermove = function(e){
     if(!SIG_DRAWING) return;
+    e.preventDefault();
     var p = pos(e);
     SIG_CTX.beginPath(); SIG_CTX.moveTo(SIG_LAST.x,SIG_LAST.y); SIG_CTX.lineTo(p.x,p.y); SIG_CTX.stroke();
     SIG_LAST = p; SIG_HAS_INK = true;
   };
   cv.onpointerup = function(){ SIG_DRAWING=false; };
   cv.onpointerleave = function(){ SIG_DRAWING=false; };
+  cv.onpointercancel = function(){ SIG_DRAWING=false; };
+  if(SIG_RESIZE){ try{ window.removeEventListener('resize', SIG_RESIZE); window.removeEventListener('orientationchange', SIG_RESIZE); }catch(e){} }
+  SIG_RESIZE = function(){
+    var c = el('sigPad'); if(!c) return sigTeardown();
+    var keep = null; try{ keep = SIG_HAS_INK ? c.toDataURL('image/png') : null; }catch(e){}
+    sigSetup(c, keep);
+  };
+  window.addEventListener('resize', SIG_RESIZE);
+  window.addEventListener('orientationchange', SIG_RESIZE);
+}
+function sigTeardown(){
+  if(!SIG_RESIZE) return;
+  try{ window.removeEventListener('resize', SIG_RESIZE); window.removeEventListener('orientationchange', SIG_RESIZE); }catch(e){}
+  SIG_RESIZE = null;
 }
 function sigClear(){
   if(!SIG_CTX) return;
-  var cv = el('sigPad');
-  SIG_CTX.clearRect(0,0,cv.width,cv.height);
+  SIG_CTX.clearRect(0,0,SIG_CSS_W,SIG_CSS_H);
   SIG_HAS_INK = false;
 }
 async function sigSave(did){
@@ -6669,7 +6842,29 @@ function b46FixPanelHtml(){
       '</div>'+
       '<div class="row"><button class="btn" id="b46FixBtn" onclick="b46RunFix()">תיקון מסמכים שנשמרו כ-HTML</button></div>'+
       '<div id="b46FixOut" class="muted" style="margin-top:8px;font-size:12.5px"></div>'+
+    '</div>'+
+    /* B49e: מילוי חד-פעמי של אופן המסירה בהזמנות ותיקות. אחריו אף חישוב במערכת
+       אינו נגזר ממחיר השינוע (P2). אידמפוטנטי — ריצה שנייה תחזיר 0. */
+    '<div class="card" style="margin-top:10px">'+
+      '<div style="font-size:13px"><b>אופן מסירה בהזמנות ותיקות</b> — הזמנות שנוצרו לפני גרסה זו אין להן אופן מסירה שמור, '+
+      'והמערכת גוזרת אותו זמנית ממחיר השינוע. הכפתור כותב את המצב בפועל פעם אחת, ומאותו רגע מחיר השינוע כספי בלבד.</div>'+
+      '<div class="row" style="margin-top:8px"><button class="btn ghost" id="b49eBfBtn" onclick="b49eRunBackfill()">מילוי אופן מסירה</button></div>'+
+      '<div id="b49eBfOut" class="muted" style="margin-top:8px;font-size:12.5px"></div>'+
     '</div>';
+}
+async function b49eRunBackfill(){
+  var btn = el('b49eBfBtn'), out = el('b49eBfOut');
+  if(btn){ btn.disabled=true; btn.style.opacity='.6'; btn.textContent='ממלא...'; }
+  try{
+    var r = await apiBusy('b49eBackfillShipModes', {});
+    if(!r || !r.ok){ if(out) out.innerHTML = '<span style="color:var(--danger)">'+esc((r&&r.error)||'הפעולה נכשלה')+'</span>'; return; }
+    if(out) out.textContent = 'הושלם — ' + r.filled + ' הזמנות עודכנו.';
+    var g = await api('getAll'); if(g && g.ok) DB = g.db;
+  }catch(e){
+    if(out) out.innerHTML = '<span style="color:var(--danger)">שגיאת תקשורת — נסה שוב</span>';
+  }finally{
+    if(btn && document.body.contains(btn)){ btn.disabled=false; btn.style.opacity='1'; btn.textContent='מילוי אופן מסירה'; }
+  }
 }
 /* קורא ל-b46FixPdfDocs בלולאה עד more:0. השרת מעבד עד 30 מסמכים לקריאה
    (מגבלת זמן ריצה של Apps Script) ומחזיר offset להמשך. */
@@ -6847,20 +7042,24 @@ async function fetchHebcal(y, m){
 function hebFmt(d, opts){ try{ return new Intl.DateTimeFormat('he-u-ca-hebrew', opts).format(d); }catch(e){ return ''; } }
 function calEvents(){
   var events = [];
-  /* B38: התוויות ביומן לפי סוג ההזמנה. בכביסה הכיוון הפוך מהשכרה —
-     בתאריך ההתחלה אוספים מהלקוח ובתאריך ההחזרה מחזירים נקי.
-     הזמנת כביסה באיסוף עצמי (בלי שינוע) מסומנת ככזו ואינה נסיעה. */
+  /* B49e: התוויות ביומן נגזרות מאופן המסירה של כל רגל — לא ממחיר השינוע (P2).
+     רגל באיסוף עצמי אינה נסיעה, ולכן מסומנת בבירור ובצבע נייטרלי. */
   DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status)).forEach(function(o){
     var nm = cust(o.customer_id);
-    if(String(o.type)==='כביסה'){
-      var ship = Number(o.delivery_fee||0) > 0;
-      var suf = ship? '' : ' (איסוף עצמי)';
-      events.push({date:o.start_date, label:(ship?'איסוף כביסה: ':'קליטת כביסה: ')+nm+suf, color:'var(--amber)', click:"openOrder('"+o.id+"')"});
-      events.push({date:o.end_date, label:(ship?'מסירת כביסה: ':'מוכן לאיסוף: ')+nm+suf, color:'var(--teal)', click:"openOrder('"+o.id+"')"});
-    } else {
-      events.push({date:o.start_date, label:'אספקה: '+nm, color:'var(--teal)', click:"openOrder('"+o.id+"')"});
-      events.push({date:o.end_date, label:'איסוף: '+nm, color:'var(--amber)', click:"openOrder('"+o.id+"')"});
-    }
+    var laundry = String(o.type)==='כביסה';
+    B49E_LEGS.forEach(function(leg){
+      var ship = b49eShipMode(o,leg)===B49E_SHIP;
+      var out = leg==='הלוך';
+      var lbl = laundry
+        ? (out ? (ship?'איסוף כביסה: ':'קליטת כביסה: ') : (ship?'מסירת כביסה: ':'מוכן לאיסוף: '))
+        : (out ? (ship?'אספקה: ':'איסוף עצמי — מסירה: ') : (ship?'איסוף: ':'איסוף עצמי — החזרה: '));
+      events.push({
+        date: b49eLegDate(o,leg),
+        label: lbl+nm+(ship?'':' (איסוף עצמי)'),
+        color: ship ? (out?'var(--teal)':'var(--amber)') : 'var(--navy2)',
+        click: "openOrder('"+o.id+"')"
+      });
+    });
   });
   DB.tasks.filter(t=>t.status!=='הושלמה'&&t.due_date).forEach(function(t){
     events.push({date:t.due_date, label:'משימה: '+t.title, color:'var(--navy2)', click:"openTask('"+t.id+"')"});
