@@ -24,7 +24,8 @@
 //                     ⚠ P2: delivery_fee הוא שדה כספי בלבד ואין להסיק ממנו אופן מסירה.
 //                   • טבלה חדשה signatures — הוכחת מסירה/החזרה שאינה תלויה ברשומת משלוח (P4).
 //                   ⚠ עמודות/טבלה חדשות — יש להריץ setupDatabase
-//             B49d — כביסה מלקוח: הזמנת 'כביסה' → קליטת NOBLE — canary v4.45-B49d
+//             B49d — כביסה מלקוח: הזמנת 'כביסה' → קליטת NOBLE
+//             B54 — ספר החיובים: מקור אחד לכל חיוב לקוח (C1–C11) — canary v4.46-B54
 //                   • nobleIntake מקבל order_id: הלקוח נגזר מההזמנה, price_per_kg
 //                     מכרטיס הלקוח, והקליטה מקושרת (laundry_intakes.order_id).
 //                   • פתיחת הקליטה סוגרת את רגל ההלוך (b49dClosePickupAfterIntake)
@@ -292,7 +293,13 @@ var TABLES = {
   // B43: יומן שינויי מועד תשלום — append-only. כל דחייה/הקדמה של תאריך, בשני הכיוונים
   // (חוב לקוח וחוב לספק), נרשמת כאן עם מי שינה, מתי, ממה למה ולמה.
   // entity_type: 'future_expense' | 'invoice' | 'order'
-  date_changes: ['id', 'ts', 'user', 'entity_type', 'entity_id', 'old_date', 'new_date', 'reason']
+  date_changes: ['id', 'ts', 'user', 'entity_type', 'entity_id', 'old_date', 'new_date', 'reason'],
+
+  // B54 (C3): חיוב ידני — הטבלה היחידה שנוספת בספר החיובים. persist רק למה
+  // שאין לו טבלת אב; כל שאר החיובים נגזרים מהאב שלהם ואינם משוכפלים לכאן.
+  // source מתוך CHARGE_SOURCES · amount נטו בשקלים · status 'פתוח'/'בוטל' (אין מחיקה)
+  charges: ['id', 'customer_id', 'source', 'date', 'amount', 'description',
+            'order_id', 'intake_id', 'invoice_id', 'status', 'created_by', 'created_at', 'cancel_reason']
 };
 
 var UNIT_STATUSES = ['פנוי', 'אצל לקוח', 'בכביסה', 'גרוט'];
@@ -330,7 +337,7 @@ var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופ
 var B42_NEXT_STEPS = ['ממתין לטכנאי', 'הוזמן חלק חילוף', 'בטיפול פנימי', 'ממתין להצעת מחיר', 'ממתין להחלטת הנהלה', 'אחר'];
 // B42: תוצאת הסגירה קובעת את מצב הנכס (הכרעת אבי). הערך סמלי — התרגום למצב בפועל ב-b42Asset.
 var B42_OUTCOMES = { 'תוקנה': 'fixed', 'הושבתה סופית': 'dead', 'לא הייתה תקלה': 'prev' };
-var MANAGER_ONLY = ['delete', 'b38FixPickups', 'b41CloseStalePickups', 'b49eBackfillShipModes', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = ['delete', 'b54ChargeCancel', 'b38FixPickups', 'b41CloseStalePickups', 'b49eBackfillShipModes', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -497,6 +504,7 @@ function readTable(name) {
   });
 }
 function writeTable(name, rows) {
+  b54Bump();   // B54: כל כתיבה מבטלת את מטמון ספר החיובים — אפס drift
   var sh = ensureSheet(name); // B21: נוצר אוטומטית אם חסר
   var cols = TABLES[name];
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, cols.length).clearContent();
@@ -530,7 +538,9 @@ var TMAP = {
   // B43
   date_changes: 'dateChanges',
   // B49e
-  signatures: 'signatures'
+  signatures: 'signatures',
+  // B54
+  charges: 'charges'
 };
 
 // F1: טעינה עצלה — כל טבלה נקראת מהגליון רק בגישה הראשונה אליה (getter + מטמון)
@@ -1006,9 +1016,12 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   // B14: לוח בקרה עסקי — קריאה בלבד (Phase 2/2.1)
   'b14BiDashboard',
   // B19b (L2): בדיקת זמינות מהפורטל/חנות — קריאה בלבד
-  'portalCheckAvail'];
+  'portalCheckAvail',
+  // B54: אבחון נתוני החיובים — קריאה בלבד, אינה משנה דבר (כלל R1)
+  'b54LedgerAudit'];
 
 function route(action, p, user) {
+  b54Bump();   // B54: ספר חיובים נקי לכל בקשה
   var db = loadDb();
   var lock = null;
   if (READ_ONLY_ACTIONS.indexOf(action) === -1) {   // F1: נעילה רק לפעולות שמשנות נתונים
@@ -1737,7 +1750,7 @@ function handle(action, p, db, user) {
       if (!p.order_id && p.invoice_id) {
         var ivL = db.invoices.find(function (v) { return v.id === p.invoice_id && v.status !== 'בוטלה'; });
         if (!ivL) return { ok: false, error: 'חשבונית לא נמצאה' };
-        var paidL = db.payments.filter(function (x) { return x.invoice_id === ivL.id; }).reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0);
+        var paidL = db.payments.filter(function (x) { return x.invoice_id === ivL.id && b54PayCounts(x); }).reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0);
         var balL = nRound2(Number(ivL.total) - paidL);
         if (Number(p.amount) > balL + 0.01) return { ok: false, error: 'הסכום גבוה מהיתרה (' + balL + ' ₪)' };
         var payL = {
@@ -2522,6 +2535,7 @@ function handle(action, p, db, user) {
       var pgInvIds = {}; db.invoices.forEach(function (v) { if (v.customer_id === pc.id) pgInvIds[v.id] = 1; });
       var pgRecMap = {};
       db.payments.forEach(function (x) {
+        if (!b54PayCounts(x)) return;   // C10: תשלום שטרם נגבה אינו קבלה
         if (!(x.customer_id === pc.id || pgOrderIds[x.order_id] || pgInvIds[x.invoice_id])) return;
         var k = String(x.receipt_number);
         if (!pgRecMap[k]) pgRecMap[k] = { number: x.receipt_number, date: x.date, amount: 0, method: x.method || '', url: '' };
@@ -3328,6 +3342,11 @@ function handle(action, p, db, user) {
     case 'b49dAddCarts': return b49dAddCarts(db, p, user);         // B49d (L2): הוספת עגלות לקליטה פתוחה
     case 'nobleCreateInvoice': return nobleCreateInvoice(db, p, user);
 
+    // ---- B54: ספר החיובים ----
+    case 'b54ChargeAdd': return b54ChargeAdd(db, p, user);
+    case 'b54ChargeCancel': return b54ChargeCancel(db, p, user);
+    case 'b54LedgerAudit': return b54LedgerAudit(db, p);
+
     // ---- B1: חשבוניות מורחבות ----
     case 'b1CreateInvoice': return b1CreateInvoice(db, p, user);
     case 'b1GetInvoiceLink': return b1GetInvoiceLink(db, p);
@@ -3616,7 +3635,7 @@ function expensePaidSum(db, fexpId) {
 // יציאות: תשלומי ספקים/הוצאות במזומן, תשלומי שכר במזומן, ותנועות קופה (הפקדה לבנק / תשלום מהקופה).
 function cashBalanceSrv(db) {
   var isCash = function (m) { return String(m || '').indexOf('מזומן') > -1; };
-  var inn = (db.payments || []).reduce(function (s, x) { return s + (isCash(x.method) ? (Number(x.amount) || 0) : 0); }, 0);
+  var inn = (db.payments || []).reduce(function (s, x) { return s + ((isCash(x.method) && b54PayCounts(x)) ? (Number(x.amount) || 0) : 0); }, 0);   // C10
   var outE = (db.expensePayments || []).reduce(function (s, x) { return s + (isCash(x.method) ? (Number(x.amount) || 0) : 0); }, 0);
   var outP = (db.payrollPayments || []).reduce(function (s, x) { return s + (isCash(x.method) ? (Number(x.amount) || 0) : 0); }, 0);
   var outC = (db.cashMoves || []).reduce(function (s, x) { return s + (Number(x.amount) || 0); }, 0);
@@ -4272,21 +4291,415 @@ function b49dAddCarts(db, p, user) {
   };
 }
 
+// ============================================================
+//  B54: ספר החיובים — מקור אחד לכל חיוב לקוח (הכרעות C1–C11)
+//  ------------------------------------------------------------
+//  C1: b54Ledger(db) היא **המקום היחיד** בשרת שבו חיוב לקוח מחושב.
+//      orderTotal · orderBalance · b2OrderBalanceAg · b2InvoiceBalanceAg ·
+//      b2CreditUsedAg · b48BalancesAg · b43Receivables — כולן נגזרות ממנה.
+//  C3: persist רק את מה שאין לו טבלת אב — טבלת charges לחיוב ידני בלבד.
+//      כל השאר נגזר מהאב (order_lines · delivery_fee · shortage_charge ·
+//      laundry_intakes.total_charge) ואינו משוכפל.
+//  C4: חשבונית = מעטפת, לא חיוב. סכום החשבונית מתחלק בין שורות הספר שלה
+//      לפי חלקן היחסי בנטו, והשורה האחרונה סופגת את שארית העיגול (C4א),
+//      כך ש-Σ השורות = inv.total בדיוק. חשבונית בלי שורות ניתנות לגזירה
+//      מקבלת שורה סינתטית 'כללי' (C4ב) — אין מיגרציה ואין כסף שנעלם.
+//  C5: שורות הזמנת כביסה הן אומדן כמותי, לא כסף. unit_price לא משתנה
+//      ולא מאופס — פשוט אינו נספר. אפס כתיבה לנתוני עבר.
+//  C7: payments לא משתנה. בתוך מכולה, התשלומים מוקצים לשורות לפי הסדר
+//      הקבוע של CHARGE_SOURCES. Σ לכל מכולה אינו משתנה — ולכן זהות B48 (C9).
+// ============================================================
+
+// C2: אוצר מילים סגור. אין מקור שישי בלי הכרעת אבי.
+var CHARGE_SOURCES = ['השכרה', 'כביסה', 'חוסרים', 'משלוח', 'כללי'];
+// הזמנות שאינן נספרות כחוב (זהה להגדרה שהייתה ב-b43Receivables/b2CreditUsedAg)
+var B54_SKIP_ORDER = ['בוטלה', 'טיוטה', 'הצעת מחיר'];
+
+// C10: תשלום נספר רק אם הוא נגבה. status ריק = נגבה (תאימות היסטורית).
+function b54PayCounts(p) { return String((p && p.status) || 'שולם') === 'שולם'; }
+
+// סדר ההקצאה בתוך מכולה — שרירותי אך קבוע ומתועד (C7)
+function b54SrcIdx(s) { var i = CHARGE_SOURCES.indexOf(s); return i === -1 ? CHARGE_SOURCES.length : i; }
+
+// חלוקת סכום שלם (אגורות) לפי משקלים, כשהאיבר האחרון סופג את השארית (C4א)
+function b54Alloc(baseAg, weights) {
+  var n = weights.length, out = [], i;
+  if (!n) return out;
+  var tot = weights.reduce(function (s, w) { return s + w; }, 0);
+  if (!tot) {
+    for (i = 0; i < n; i++) out.push(0);
+    out[n - 1] = baseAg;
+    return out;
+  }
+  var acc = 0;
+  for (i = 0; i < n - 1; i++) {
+    var v = Math.round(baseAg * weights[i] / tot);
+    out.push(v); acc += v;
+  }
+  out.push(baseAg - acc);
+  return out;
+}
+
+// מטמון לבקשה בודדת — נמחק בכל כתיבה (b54Bump) כדי שלא ייווצר drift
+var B54_LEDGER_CACHE = null;
+function b54Bump() { B54_LEDGER_CACHE = null; }
+
+// ------------------------------------------------------------
+//  הספר עצמו. מחזיר מערך שורות חיוב, כל אחת עם מקור אחד מ-CHARGE_SOURCES.
+//  amount_ag = הסכום שהלקוח חייב על השורה (ברוטו כשקיימת חשבונית — C4א/C11)
+//  open_ag   = היתרה הפתוחה של השורה (= החוב). Σ open_ag של לקוח = החוב שלו.
+//  pending=1 = חיוב שנרשם אך טרם הפך למסמך (קליטה חופשית שממתינה לחשבונית
+//              מרוכזת) — מוצג בספר, ואינו חוב, בדיוק כמו היום. אפס שינוי.
+// ------------------------------------------------------------
+function b54Ledger(db) {
+  if (B54_LEDGER_CACHE) return B54_LEDGER_CACHE;
+  var rows = [];
+  var orders = (db.orders || []).filter(function (o) { return B54_SKIP_ORDER.indexOf(o.status) === -1; });
+  var invActive = (db.invoices || []).filter(function (v) { return v.status !== 'בוטלה'; });
+  var invById = {}; invActive.forEach(function (v) { invById[v.id] = v; });
+
+  var byOrder = {}, byInv = {}, containers = [], loose = [];
+
+  orders.forEach(function (o) {
+    var inv = null;
+    for (var k = 0; k < invActive.length; k++) { if (invActive[k].order_id === o.id) { inv = invActive[k]; break; } }
+    var c = { kind: 'order', order: o, inv: inv, customer_id: o.customer_id, rows: [] };
+    byOrder[o.id] = c; containers.push(c);
+  });
+  invActive.filter(function (v) { return !v.order_id; }).forEach(function (v) {
+    var c = { kind: 'invoice', order: null, inv: v, customer_id: v.customer_id, rows: [] };
+    byInv[v.id] = c; containers.push(c);
+  });
+
+  // ---- 1) שורות הזמנה · שינוע · חוסרים ----
+  orders.forEach(function (o) {
+    var c = byOrder[o.id];
+    // C5: הזמנת כביסה — השורות הן אומדן כמותי. אינן כסף ואינן נספרות.
+    if (String(o.type) !== 'כביסה') {
+      var linesIls = (db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
+        .reduce(function (s, l) { return s + Number(l.qty) * Number(l.unit_price); }, 0);
+      var linesAg = toAg(linesIls);
+      if (linesAg !== 0) c.rows.push({ source: 'השכרה', origin_type: 'order_lines', origin_id: o.id, net_ag: linesAg, description: 'שורות הזמנה' });
+    }
+    // C6: משלוח וחוסרים הם שורות חיוב עצמאיות — סוף ל"דמי שינוע יתומים"
+    var feeAg = toAg(o.delivery_fee);
+    if (feeAg !== 0) c.rows.push({ source: 'משלוח', origin_type: 'order_fee', origin_id: o.id, net_ag: feeAg, description: 'דמי שינוע' });
+    var shAg = toAg(o.shortage_charge);
+    if (shAg !== 0) c.rows.push({ source: 'חוסרים', origin_type: 'order_shortage', origin_id: o.id, net_ag: shAg, description: 'חיוב חוסרים' });
+  });
+
+  // ---- 2) קליטות מכבסה (המקור: total_charge מ-nobleWeigh — לא נוגעים בו) ----
+  (db.laundryIntakes || []).forEach(function (ik) {
+    if (String(ik.internal) === 'כן') return;          // כביסה פנימית — אפס שינוי
+    var amtAg = toAg(ik.total_charge);
+    if (!(amtAg > 0)) return;
+    var kg = Number(ik.net_weight_kg) || 0;
+    var row = {
+      source: 'כביסה', origin_type: 'intake', origin_id: ik.id, intake_id: ik.id, net_ag: amtAg,
+      description: 'קליטה ' + ik.id + (kg ? ' · ' + (Math.round(kg * 100) / 100) + ' ק"ג' : ''),
+      date: String(ik.delivered_ts || ik.intake_ts || '').slice(0, 10)
+    };
+    var inv = invById[String(ik.invoice_id || '').trim()] || null;
+    // C8: קליטה מקושרת להזמנה מחויבת דרך חשבונית ההזמנה, לא דרך המרוכזת.
+    if (inv && !inv.order_id && byInv[inv.id]) { byInv[inv.id].rows.push(row); return; }
+    if (inv && inv.order_id && byOrder[inv.order_id]) { byOrder[inv.order_id].rows.push(row); return; }
+    var oid = String(ik.order_id || '').trim();
+    if (oid && byOrder[oid]) { byOrder[oid].rows.push(row); return; }
+    // קליטה חופשית שנמסרה וטרם רוכזה לחשבונית — נרשמת בספר, אינה חוב (כמו היום)
+    if (String(ik.status) === 'נמסר') {
+      row.customer_id = ik.customer_id; row.pending = 1; loose.push(row);
+    }
+  });
+
+  // ---- 3) חיובים ידניים (C3) ----
+  (db.charges || []).forEach(function (ch) {
+    if (String(ch.status || 'פתוח') === 'בוטל') return;
+    var amtAg = toAg(ch.amount);
+    if (!(amtAg > 0)) return;
+    var row = {
+      source: CHARGE_SOURCES.indexOf(ch.source) > -1 ? ch.source : 'כללי',
+      origin_type: 'charge', origin_id: ch.id, charge_id: ch.id, net_ag: amtAg,
+      description: String(ch.description || 'חיוב ידני'),
+      date: String(ch.date || ch.created_at || '').slice(0, 10)
+    };
+    var chInv = invById[String(ch.invoice_id || '').trim()] || null;
+    if (chInv && !chInv.order_id && byInv[chInv.id]) { byInv[chInv.id].rows.push(row); return; }
+    if (chInv && chInv.order_id && byOrder[chInv.order_id]) { byOrder[chInv.order_id].rows.push(row); return; }
+    var coid = String(ch.order_id || '').trim();
+    if (coid && byOrder[coid]) { byOrder[coid].rows.push(row); return; }
+    row.customer_id = ch.customer_id; loose.push(row);
+  });
+
+  // ---- 4) מכולות → שורות ספר סופיות ----
+  containers.forEach(function (c) {
+    var inv = c.inv;
+    // C4ב: חשבונית מדור קודם בלי שורות ניתנות לגזירה — שורה סינתטית, הכסף לא נעלם
+    if (inv && !c.rows.length) {
+      c.rows.push({
+        source: 'כללי', origin_type: 'invoice', origin_id: inv.id, synthetic: 1,
+        net_ag: toAg(inv.subtotal || inv.total), description: 'חשבונית ' + inv.number + ' — ללא שורות ניתנות לגזירה'
+      });
+    }
+    if (!c.rows.length) return;
+
+    var netTot = c.rows.reduce(function (s, r) { return s + r.net_ag; }, 0);
+    // C4א: כשקיימת חשבונית פעילה — הבסיס הוא סכום המסמך (ברוטו), מחולק יחסית
+    var baseAg = inv ? toAg(inv.total) : netTot;
+    var alloc = b54Alloc(baseAg, c.rows.map(function (r) { return r.net_ag; }));
+    var netAlloc = inv ? b54Alloc(toAg(inv.subtotal), c.rows.map(function (r) { return r.net_ag; })) : alloc;
+
+    var payAg = (db.payments || []).filter(function (x) {
+      if (!b54PayCounts(x)) return false;                       // C10
+      return c.kind === 'order' ? (x.order_id === c.order.id) : (x.invoice_id === inv.id);
+    }).reduce(function (s, x) { return s + toAg(x.amount); }, 0);
+
+    // C7: הקצאה דטרמיניסטית לפי סדר CHARGE_SOURCES
+    var order = c.rows.map(function (r, i) { return i; }).sort(function (a, b) {
+      var d = b54SrcIdx(c.rows[a].source) - b54SrcIdx(c.rows[b].source);
+      return d !== 0 ? d : a - b;
+    });
+    var paid = c.rows.map(function () { return 0; });
+    var remain = payAg;
+    order.forEach(function (i) {
+      if (remain <= 0) return;
+      var take = Math.min(remain, Math.max(0, alloc[i]));
+      paid[i] = take; remain -= take;
+    });
+    if (remain !== 0 && order.length) paid[order[order.length - 1]] += remain;  // תשלום ביתר — שומר על Σ
+
+    var host = inv || c.order;
+    var docDate = String((inv ? inv.date : (c.order.end_date || c.order.start_date || c.order.created_at)) || '').slice(0, 10);
+    var terms = b43CustTerms(db, c.customer_id);
+    var over = isDateStr(host.due_date);
+    var due = over ? String(host.due_date) : b43DueFrom(docDate, terms);
+    var label = inv ? ('חשבונית ' + inv.number) : ('הזמנה ' + (c.order.order_number || c.order.id));
+
+    c.rows.forEach(function (r, i) {
+      rows.push({
+        id: 'LG-' + (c.kind === 'order' ? c.order.id : inv.id) + '-' + i,
+        source: r.source, origin_type: r.origin_type, origin_id: r.origin_id,
+        customer_id: c.customer_id,
+        order_id: c.kind === 'order' ? c.order.id : '',
+        invoice_id: inv ? inv.id : '',
+        intake_id: r.intake_id || '', charge_id: r.charge_id || '',
+        entity_type: inv ? 'invoice' : 'order', entity_id: host.id, label: label,
+        description: r.description || '',
+        date: r.date || docDate, doc_date: docDate, terms: terms, overridden: over, due_date: due,
+        amount_ag: alloc[i], net_ag: netAlloc[i], paid_ag: paid[i], open_ag: alloc[i] - paid[i],
+        gross: inv ? 1 : 0, pending: 0, synthetic: r.synthetic ? 1 : 0
+      });
+    });
+  });
+
+  // ---- 5) שורות שאין להן מכולה ----
+  loose.forEach(function (r, i) {
+    var terms = b43CustTerms(db, r.customer_id);
+    var docDate = r.date || today();
+    rows.push({
+      id: 'LGX-' + r.origin_type + '-' + r.origin_id + '-' + i,
+      source: r.source, origin_type: r.origin_type, origin_id: r.origin_id,
+      customer_id: r.customer_id || '', order_id: '', invoice_id: '',
+      intake_id: r.intake_id || '', charge_id: r.charge_id || '',
+      entity_type: r.pending ? 'intake' : 'charge', entity_id: r.origin_id,
+      label: r.pending ? 'קליטה ' + r.origin_id : 'חיוב ידני',
+      description: r.description || '',
+      date: docDate, doc_date: docDate, terms: terms, overridden: false,
+      due_date: b43DueFrom(docDate, terms),
+      amount_ag: r.net_ag, net_ag: r.net_ag, paid_ag: 0,
+      open_ag: r.pending ? 0 : r.net_ag,
+      gross: 0, pending: r.pending ? 1 : 0, synthetic: 0
+    });
+  });
+
+  B54_LEDGER_CACHE = rows;
+  return rows;
+}
+
+// שורות הספר של הזמנה אחת
+function b54OrderRows(db, orderId) {
+  return b54Ledger(db).filter(function (r) { return r.order_id === orderId; });
+}
+
+// ------------------------------------------------------------
+//  B54: פעולות שרת
+// ------------------------------------------------------------
+
+// חיוב ידני חדש — מנהל + משרד (C3)
+function b54ChargeAdd(db, p, user) {
+  var role = String(p._verified_role || '');
+  if (db.employees.length && ['מנהל', 'משרד'].indexOf(role) === -1)
+    return { ok: false, error: 'הוספת חיוב מותרת למנהל/משרד בלבד' };
+  var c = db.customers.find(function (x) { return x.id === p.customer_id; });
+  if (!c) return { ok: false, error: 'לקוח לא נמצא' };
+  var src = String(p.source || '');
+  if (CHARGE_SOURCES.indexOf(src) === -1) return { ok: false, error: 'מקור חיוב לא חוקי' };
+  var amt = Number(p.amount);
+  if (!isFinite(amt) || !(amt > 0)) return { ok: false, error: 'סכום החיוב חייב להיות גדול מאפס' };
+  var desc = String(p.description || '').trim();
+  if (!desc) return { ok: false, error: 'תיאור החיוב חובה' };
+  var oid = String(p.order_id || '').trim();
+  if (oid) {
+    var o = db.orders.find(function (x) { return x.id === oid; });
+    if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+    if (o.customer_id !== c.id) return { ok: false, error: 'ההזמנה אינה של לקוח זה' };
+  }
+  var iid = String(p.intake_id || '').trim();
+  if (iid && !db.laundryIntakes.some(function (x) { return x.id === iid; })) return { ok: false, error: 'קליטה לא נמצאה' };
+  var d = isDateStr(p.date) ? String(p.date) : today();
+  var row = {
+    id: genId('CHG'), customer_id: c.id, source: src, date: d,
+    amount: Math.round(amt * 100) / 100, description: desc.slice(0, 300),
+    order_id: oid, intake_id: iid, invoice_id: '', status: 'פתוח',
+    created_by: user || '', created_at: nowTs(), cancel_reason: ''
+  };
+  db.charges.push(row);
+  writeTable('charges', db.charges);
+  b54Bump();
+  return { ok: true, charge: row, credit: b2CreditStatusObj(db, c.id), auditNote: 'חיוב ' + src + ' · ' + c.name + ' · ₪' + row.amount + ' · ' + desc };
+}
+
+// ביטול חיוב ידני — מנהל בלבד. אין מחיקה (C3).
+function b54ChargeCancel(db, p, user) {
+  var ch = (db.charges || []).find(function (x) { return x.id === p.charge_id; });
+  if (!ch) return { ok: false, error: 'חיוב לא נמצא' };
+  if (String(ch.status) === 'בוטל') return { ok: false, error: 'החיוב כבר בוטל' };
+  if (String(ch.invoice_id || '').trim())
+    return { ok: false, error: 'החיוב כבר נכלל בחשבונית — יש לבטל או לזכות את החשבונית קודם' };
+  var reason = String(p.reason || '').trim();
+  if (!reason) return { ok: false, error: 'סיבת ביטול חובה' };
+  ch.status = 'בוטל';
+  ch.cancel_reason = reason.slice(0, 300);
+  writeTable('charges', db.charges);
+  b54Bump();
+  return { ok: true, charge: ch, auditNote: 'ביטול חיוב ' + ch.id + ' · ₪' + ch.amount + ' · ' + reason };
+}
+
+// אבחון נתוני החיובים — קריאה בלבד, אינה משנה דבר (כלל R1: אבי לוחץ, רואה, וזהו)
+function b54LedgerAudit(db, p) {
+  var out = {
+    counts: {
+      orders: (db.orders || []).length,
+      orders_wash: (db.orders || []).filter(function (o) { return String(o.type) === 'כביסה'; }).length,
+      intakes: (db.laundryIntakes || []).length,
+      invoices: (db.invoices || []).length,
+      payments: (db.payments || []).length,
+      charges: (db.charges || []).length
+    },
+    phantom: { count: 0, amount: 0, rows: [] },
+    intake_in_bulk: { count: 0, rows: [] },
+    intake_after_invoice: { count: 0, rows: [] },
+    synthetic_invoices: { count: 0, rows: [] },
+    pay_no_status: { count: 0, amount: 0 },
+    pending_intakes: { count: 0, amount: 0 }
+  };
+
+  // (א) הזמנות כביסה עם שורות מתומחרות — החוב השווא שנעלם עם B54
+  (db.orders || []).filter(function (o) {
+    return String(o.type) === 'כביסה' && B54_SKIP_ORDER.indexOf(o.status) === -1;
+  }).forEach(function (o) {
+    var s = (db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
+      .reduce(function (a, l) { return a + Number(l.qty) * Number(l.unit_price); }, 0);
+    if (!(s > 0)) return;
+    out.phantom.count++;
+    out.phantom.amount = Math.round((out.phantom.amount + s) * 100) / 100;
+    if (out.phantom.rows.length < 30) {
+      var c = db.customers.find(function (x) { return x.id === o.customer_id; });
+      out.phantom.rows.push({ order: o.order_number || o.id, customer: c ? c.name : '', amount: Math.round(s * 100) / 100, status: o.status });
+    }
+  });
+
+  // (ב) קליטות עם order_id שנכנסו לחשבונית מרוכזת (ללא הזמנה) — חיוב כפול היסטורי
+  var invById = {}; (db.invoices || []).forEach(function (v) { invById[v.id] = v; });
+  (db.laundryIntakes || []).forEach(function (ik) {
+    var iid = String(ik.invoice_id || '').trim();
+    var oid = String(ik.order_id || '').trim();
+    if (!oid) return;
+    var v = iid ? invById[iid] : null;
+    if (v && !v.order_id && v.status !== 'בוטלה') {
+      out.intake_in_bulk.count++;
+      if (out.intake_in_bulk.rows.length < 30) out.intake_in_bulk.rows.push({ intake: ik.id, order_id: oid, invoice: v.number, amount: Number(ik.total_charge || 0) });
+    }
+    // (ג) קליטה שנקשרה להזמנה שכבר הופקה לה חשבונית — הסכום לא נכלל במסמך
+    var oInv = (db.invoices || []).find(function (x) { return x.order_id === oid && x.status !== 'בוטלה'; });
+    if (oInv && !iid && Number(ik.total_charge) > 0) {
+      out.intake_after_invoice.count++;
+      if (out.intake_after_invoice.rows.length < 30) out.intake_after_invoice.rows.push({ intake: ik.id, order_id: oid, invoice: oInv.number, amount: Number(ik.total_charge || 0) });
+    }
+  });
+
+  // (ד) חשבוניות ללא שורות ניתנות לגזירה (C4ב)
+  b54Ledger(db).forEach(function (r) {
+    if (!r.synthetic) return;
+    out.synthetic_invoices.count++;
+    if (out.synthetic_invoices.rows.length < 30) out.synthetic_invoices.rows.push({ invoice: r.label, customer_id: r.customer_id, amount: agIls(r.amount_ag) });
+  });
+
+  // (ה) תשלומים בלי status (C10)
+  (db.payments || []).forEach(function (x) {
+    if (String(x.status || '') === '') {
+      out.pay_no_status.count++;
+      out.pay_no_status.amount = Math.round((out.pay_no_status.amount + Number(x.amount || 0)) * 100) / 100;
+    }
+  });
+
+  // (ו) קליטות חופשיות שנמסרו וטרם רוכזו — נרשמות בספר, אינן חוב
+  b54Ledger(db).forEach(function (r) {
+    if (!r.pending) return;
+    out.pending_intakes.count++;
+    out.pending_intakes.amount = Math.round((out.pending_intakes.amount + agIls(r.amount_ag)) * 100) / 100;
+  });
+
+  out.ledger_rows = b54Ledger(db).length;
+  out.ok = true;
+  return out;
+}
+
+// ------------------------------------------------------------
+//  B54: הסכום הגולמי של הזמנה = Σ שורות החיוב שלה, נטו, ללא תלות במסמך.
+//  עובד גם על הזמנה שאינה בספר (טיוטה/הצעת מחיר) — אותה הגדרה בדיוק.
+//  C5: הזמנת כביסה אינה סופרת את שורות הפריטים — הן אומדן כמותי.
+// ------------------------------------------------------------
+function b54RawOrderTotalAg(db, o) {
+  var ag = 0;
+  if (String(o.type) !== 'כביסה') {
+    ag += toAg((db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
+      .reduce(function (s, l) { return s + Number(l.qty) * Number(l.unit_price); }, 0));
+  }
+  ag += toAg(o.delivery_fee) + toAg(o.shortage_charge);
+  // C8: קליטה מקושרת להזמנה — חיובה שייך להזמנה, אלא אם רוכזה לחשבונית מרוכזת
+  (db.laundryIntakes || []).forEach(function (ik) {
+    if (String(ik.order_id || '').trim() !== o.id) return;
+    if (String(ik.internal) === 'כן') return;
+    if (!(toAg(ik.total_charge) > 0)) return;
+    var iv = (db.invoices || []).find(function (v) { return v.id === ik.invoice_id && v.status !== 'בוטלה'; });
+    if (iv && !iv.order_id) return;
+    ag += toAg(ik.total_charge);
+  });
+  // חיוב ידני שקושר להזמנה (C3)
+  (db.charges || []).forEach(function (ch) {
+    if (String(ch.order_id || '').trim() !== o.id) return;
+    if (String(ch.status || 'פתוח') === 'בוטל') return;
+    if (!(toAg(ch.amount) > 0)) return;
+    var cv = (db.invoices || []).find(function (v) { return v.id === ch.invoice_id && v.status !== 'בוטלה'; });
+    if (cv && !cv.order_id) return;
+    ag += toAg(ch.amount);
+  });
+  return ag;
+}
+
+// C1: סכום ההזמנה נגזר מהספר. אין חישוב כסף מקומי.
 function orderTotal(db, orderId) {
   var o = db.orders.find(function (x) { return x.id === orderId; });
-  var lines = db.orderLines.filter(function (l) { return l.order_id === orderId; })
-    .reduce(function (s, l) { return s + Number(l.qty) * Number(l.unit_price); }, 0);
-  return lines + Number((o && o.delivery_fee) || 0) + Number((o && o.shortage_charge) || 0);
+  if (!o) return 0;
+  return agIls(b54RawOrderTotalAg(db, o));
 }
+// C10: תשלום נספר רק אם נגבה
 function orderPaid(db, orderId) {
-  return db.payments.filter(function (p) { return p.order_id === orderId; })
+  return db.payments.filter(function (p) { return p.order_id === orderId && b54PayCounts(p); })
     .reduce(function (s, p) { return s + Number(p.amount); }, 0);
 }
 function orderBalance(db, orderId) {
-  // כשקיימת חשבונית פעילה — היתרה היא מול סכום החשבונית (כולל מע"מ); אחרת מול סכום ההזמנה
-  var inv = db.invoices ? db.invoices.find(function (v) { return v.order_id === orderId && v.status !== 'בוטלה'; }) : null;
-  var base = inv ? Number(inv.total) : orderTotal(db, orderId);
-  return base - orderPaid(db, orderId);
+  return agIls(b2OrderBalanceAg(db, orderId));
 }
 // ============================================================
 //  B48: מקור אמת אחד ליתרת לקוח
@@ -4306,18 +4719,30 @@ function orderBalance(db, orderId) {
 //  שמנוע האשראי סופר כ-credit_used. בדיקה אוטומטית מאמתת את השוויון.
 //  אין לשנות אחד בלי השני.
 // ============================================================
-function b48BalancesAg(db) {
+// ============================================================
+//  B54/C9: יתרת לקוח = Σ יתרות שורות הספר, מקובצות למכולות.
+//  מכולת הזמנה נספרת עם הסימן שלה (יתרה שלילית = זיכוי שמקזז חוב);
+//  מכולת חשבונית עצמאית ושורה עצמאית נספרות רק כשהן חיוביות — בדיוק
+//  כהגדרת b2CreditUsedAg עד B54. **שתי הפונקציות קוראות מכאן ולכן
+//  זהות מתמטית בהגדרה, לא רק בבדיקה.**
+// ============================================================
+function b54CustomerOpenAg(db) {
+  var conts = {}, keys = [];
+  b54Ledger(db).forEach(function (r) {
+    var key = r.order_id ? ('O:' + r.order_id) : (r.invoice_id ? ('V:' + r.invoice_id) : ('X:' + r.id));
+    if (!conts[key]) { conts[key] = { cid: r.customer_id, kind: r.order_id ? 'order' : 'other', open: 0 }; keys.push(key); }
+    conts[key].open += r.open_ag;
+  });
   var m = {};
-  var add = function (cid, ag) { if (!cid) return; m[cid] = (m[cid] || 0) + ag; };
-  b43Receivables(db).forEach(function (r) { add(r.customer_id, r.amount_ag); });
-  db.orders.filter(function (o) {
-    return ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
-  }).forEach(function (o) {
-    var b = b2OrderBalanceAg(db, o.id);
-    if (b < 0) add(o.customer_id, b);   // זיכוי — מקזז את החוב, אינו שורת חוב
+  keys.forEach(function (k) {
+    var c = conts[k];
+    if (!c.cid) return;
+    var v = (c.kind === 'order') ? c.open : Math.max(0, c.open);
+    m[c.cid] = (m[c.cid] || 0) + v;
   });
   return m;
 }
+function b48BalancesAg(db) { return b54CustomerOpenAg(db); }
 // גישה ללקוח בודד. ⚠ בונה את כל המפה — בלולאה על לקוחות רבים יש לקרוא
 // ל-b48BalancesAg(db) פעם אחת ולקרוא ממנה, כפי שעושה case 'reports'.
 function b48CustomerBalanceAg(db, customerId) {
@@ -5010,11 +5435,20 @@ function nobleBoard(db) {
 function nobleCreateInvoice(db, p, user) {
   var cust = db.customers.find(function (c) { return c.id === p.customer_id; });
   if (!cust) return { ok: false, error: 'לקוח לא נמצא' };
+  // C8: קליטה שנפתחה מהזמנה (B49d) יוצאת מהחשבונית המרוכזת — היא מחויבת
+  // דרך חשבונית ההזמנה. קליטה חופשית / פנימית — ללא שינוי כלל.
   var open = db.laundryIntakes.filter(function (i) {
-    return i.customer_id === cust.id && i.internal !== 'כן' && i.status === 'נמסר' &&
-      !String(i.invoice_id || '').trim() && Number(i.total_charge) > 0;
+    if (i.customer_id !== cust.id || i.internal === 'כן' || i.status !== 'נמסר') return false;
+    if (String(i.invoice_id || '').trim()) return false;
+    if (!(Number(i.total_charge) > 0)) return false;
+    var oid = String(i.order_id || '').trim();
+    if (oid) {
+      var ord = db.orders.find(function (x) { return x.id === oid; });
+      if (ord && ord.status !== 'בוטלה') return false;
+    }
+    return true;
   });
-  if (!open.length) return { ok: false, error: 'אין חיובי מכבסה פתוחים ללקוח זה' };
+  if (!open.length) return { ok: false, error: 'אין חיובי מכבסה פתוחים ללקוח זה (קליטה שנפתחה מהזמנה מחויבת דרך חשבונית ההזמנה)' };
   var sub = nRound2(open.reduce(function (s2, i) { return s2 + Number(i.total_charge); }, 0));
   var vat = nRound2(sub * VAT_RATE);
   var inv = {
@@ -5321,6 +5755,23 @@ function esc2(s) {
 
 // B1: יצירת חשבונית מורחבת — פעולה חדשה (מחליפה את createInvoice הישנה בהדרגה)
 // תומכת ב: סוג מסמך, מספר הקצאה, שמירת PDF ב-Drive
+// B54: שורות מסמך מתוך שורות הספר. שורת 'השכרה' נפרשת לפריטים כמו עד B54,
+// כדי שהחשבונית תיראה בדיוק כמו קודם; כל מקור אחר = שורה אחת עם שם המקור.
+function b54InvoiceLines(db, lrows) {
+  var out = [];
+  lrows.forEach(function (r) {
+    if (r.origin_type === 'order_lines') {
+      (db.orderLines || []).filter(function (l) { return l.order_id === r.order_id; }).forEach(function (l) {
+        var it = db.items.find(function (i) { return i.id === l.item_id; }) || {};
+        out.push({ item_id: l.item_id, item_name: it.name || l.item_id, qty: l.qty, unit_price: l.unit_price });
+      });
+      return;
+    }
+    out.push({ item_id: '', item_name: r.source + ' — ' + String(r.description || ''), qty: 1, unit_price: agIls(r.net_ag) });
+  });
+  return out;
+}
+
 function b1CreateInvoice(db, p, user) {
   var invoiceType = p.invoice_type || 'חשבונית עסקה';
   if (INVOICE_TYPES.indexOf(invoiceType) === -1) return { ok: false, error: 'סוג חשבונית לא חוקי' };
@@ -5328,23 +5779,47 @@ function b1CreateInvoice(db, p, user) {
   // חישוב סכומים
   var sub, lines = [], cust = null;
 
+  var b54StampIntakes = [], b54StampCharges = [];
+
   if (p.order_id) {
-    // חשבונית על הזמנה
+    // חשבונית על הזמנה — שורות המסמך נבנות מ**כל** שורות הספר של ההזמנה (C8)
     var oi = db.orders.find(function(x) { return x.id === p.order_id; });
     if (!oi) return { ok: false, error: 'הזמנה לא נמצאה' };
     if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oi.status) > -1)
       return { ok: false, error: 'חשבונית מפיקים רק להזמנה מאושרת ומעלה' };
     if (db.invoices.some(function(v) { return v.order_id === oi.id && v.status !== 'בוטלה'; }))
       return { ok: false, error: 'כבר קיימת חשבונית פעילה להזמנה זו' };
-    sub = orderTotal(db, oi.id);
-    if (!(sub > 0)) return { ok: false, error: 'אין שורות בהזמנה — אין מה לחייב' };
+    var lrows = b54OrderRows(db, oi.id);
+    sub = agIls(lrows.reduce(function (s, r) { return s + r.net_ag; }, 0));
+    if (!(sub > 0)) return { ok: false, error: 'אין שורות חיוב בהזמנה — אין מה לחייב' };
     cust = db.customers.find(function(c) { return c.id === oi.customer_id; });
-    lines = db.orderLines.filter(function(l) { return l.order_id === oi.id; }).map(function(l) {
-      var it = db.items.find(function(i) { return i.id === l.item_id; }) || {};
-      return { item_id: l.item_id, item_name: it.name || l.item_id, qty: l.qty, unit_price: l.unit_price };
+    lines = b54InvoiceLines(db, lrows);
+    lrows.forEach(function (r) {
+      if (r.intake_id) b54StampIntakes.push(r.intake_id);
+      if (r.charge_id) b54StampCharges.push(r.charge_id);
     });
+  } else if (p.charge_ids && p.charge_ids.length) {
+    // B54: חשבונית מחיובים מסומנים — נתיב מסמך אחד לכל המקורות
+    var wantIds = [].concat(p.charge_ids).map(function (x) { return String(x); });
+    var chs = (db.charges || []).filter(function (c) {
+      return wantIds.indexOf(String(c.id)) > -1 && String(c.status || 'פתוח') !== 'בוטל' && !String(c.invoice_id || '').trim();
+    });
+    if (!chs.length) return { ok: false, error: 'לא נמצאו חיובים פתוחים להפקת חשבונית' };
+    var cid0 = chs[0].customer_id;
+    if (chs.some(function (c) { return c.customer_id !== cid0; }))
+      return { ok: false, error: 'כל החיובים המסומנים חייבים להיות של אותו לקוח' };
+    if (chs.some(function (c) { return String(c.order_id || '').trim(); }))
+      return { ok: false, error: 'חיוב המשויך להזמנה מחויב דרך חשבונית ההזמנה — הפק אותה מכרטיס ההזמנה' };
+    cust = db.customers.find(function (c) { return c.id === cid0; });
+    if (!cust) return { ok: false, error: 'לקוח לא נמצא' };
+    sub = Math.round(chs.reduce(function (s, c) { return s + Number(c.amount || 0); }, 0) * 100) / 100;
+    if (!(sub > 0)) return { ok: false, error: 'סכום החיובים חייב להיות גדול מאפס' };
+    lines = chs.map(function (c) {
+      return { item_id: '', item_name: c.source + ' — ' + String(c.description || ''), qty: 1, unit_price: Number(c.amount || 0) };
+    });
+    b54StampCharges = chs.map(function (c) { return c.id; });
   } else {
-    return { ok: false, error: 'יש לספק order_id ליצירת חשבונית. לחשבונית מכבסה השתמש ב-nobleCreateInvoice.' };
+    return { ok: false, error: 'יש לספק order_id או charge_ids ליצירת חשבונית. לחשבונית מכבסה מרוכזת השתמש ב-nobleCreateInvoice.' };
   }
 
   var vatRate = parseFloat((db.settings.find(function(s) { return s.key === 'vat_rate'; }) || { value: '0.18' }).value || '0.18');
@@ -5375,6 +5850,18 @@ function b1CreateInvoice(db, p, user) {
 
   db.invoices.push(inv);
   writeTable('invoices', db.invoices);
+
+  // B54/C4: החשבונית היא מעטפת — היא מחתימה invoice_id על שורות הספר שנכללו בה,
+  // כדי שלא ייחשבו פעמיים ולא ייכנסו לחשבונית מרוכזת.
+  if (b54StampIntakes.length) {
+    db.laundryIntakes.forEach(function (ik) { if (b54StampIntakes.indexOf(ik.id) > -1) ik.invoice_id = inv.id; });
+    writeTable('laundry_intakes', db.laundryIntakes);
+  }
+  if (b54StampCharges.length) {
+    db.charges.forEach(function (ch) { if (b54StampCharges.indexOf(ch.id) > -1) ch.invoice_id = inv.id; });
+    writeTable('charges', db.charges);
+  }
+  b54Bump();
 
   return {
     ok: true,
@@ -5441,31 +5928,33 @@ function b2Setting(db, key) {
   return s ? String(s.value || '') : '';
 }
 
-// יתרת הזמנה באגורות — אותה סמנטיקה כמו orderBalance: חשבונית פעילה גוברת על סכום ההזמנה
+// B54/C1: יתרת הזמנה = Σ יתרות שורות הספר של ההזמנה. חשבונית פעילה גוברת
+// על סכום ההזמנה (C4א — ההתנהגות נשמרה: הלקוח חייב את סכום המסמך).
 function b2OrderBalanceAg(db, orderId) {
+  var rows = b54OrderRows(db, orderId);
+  if (rows.length) return rows.reduce(function (s, r) { return s + r.open_ag; }, 0);
+  // הזמנה שאינה בספר (טיוטה / הצעת מחיר / בוטלה) — אותה הגדרה בדיוק
+  var o = db.orders.find(function (x) { return x.id === orderId; });
+  if (!o) return 0;
   var inv = db.invoices.find(function (v) { return v.order_id === orderId && v.status !== 'בוטלה'; });
-  var baseAg = inv ? toAg(inv.total) : toAg(orderTotal(db, orderId));
-  var paidAg = db.payments.filter(function (x) { return x.order_id === orderId; })
+  var baseAg = inv ? toAg(inv.total) : b54RawOrderTotalAg(db, o);
+  var paidAg = db.payments.filter(function (x) { return x.order_id === orderId && b54PayCounts(x); })
     .reduce(function (s, x) { return s + toAg(x.amount); }, 0);
   return baseAg - paidAg;
 }
 
-// יתרת חשבונית ללא הזמנה (מכבסה מרוכזת — NC3) באגורות
+// יתרת חשבונית ללא הזמנה (מכבסה מרוכזת NC4 / חיובים ידניים) — מהספר
 function b2InvoiceBalanceAg(db, inv) {
-  var paidAg = db.payments.filter(function (x) { return x.invoice_id === inv.id; })
+  var rows = b54Ledger(db).filter(function (r) { return r.invoice_id === inv.id && !r.order_id; });
+  if (rows.length) return rows.reduce(function (s, r) { return s + r.open_ag; }, 0);
+  var paidAg = db.payments.filter(function (x) { return x.invoice_id === inv.id && b54PayCounts(x); })
     .reduce(function (s, x) { return s + toAg(x.amount); }, 0);
   return toAg(inv.total) - paidAg;
 }
 
-// S5: credit_used מחושב תמיד — לעולם לא נשמר בגיליון
+// S5 + C9: credit_used מחושב תמיד, ומאותו מקור בדיוק כמו b48BalancesAg
 function b2CreditUsedAg(db, customerId) {
-  var used = 0;
-  db.orders.filter(function (o) {
-    return o.customer_id === customerId && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
-  }).forEach(function (o) { used += b2OrderBalanceAg(db, o.id); });
-  db.invoices.filter(function (v) { return v.customer_id === customerId && !v.order_id && v.status !== 'בוטלה'; })
-    .forEach(function (v) { used += Math.max(0, b2InvoiceBalanceAg(db, v)); });
-  return used;
+  return b54CustomerOpenAg(db)[customerId] || 0;
 }
 
 // D8: limit − used = available. מסגרת צמיתה (revolving), לא מתחדשת חודשית.
@@ -5623,7 +6112,7 @@ function b2ProcessPayment(db, p, user) {
     });
     debts.sort(function (a, b) { return a.sort < b.sort ? -1 : 1; });
     var debtTotal = debts.reduce(function (s, d) { return s + d.bal; }, 0);
-    if (debtAg > debtTotal) return { ok: false, error: 'קיזוז החוב גבוה מהחוב הקודם (₪' + agIls(debtTotal) + ')' };
+    if (debtAg > debtTotal) return { ok: false, error: 'קיזוז החוב גבוה מהחוב הניתן לגבייה (₪' + agIls(debtTotal) + '). חיוב ידני שטרם הופקה לו חשבונית אינו ניתן לגבייה — הפק לו חשבונית קודם.' };
   }
 
   var rcptNum = nextNumber(db, 'receipt', 5001);
@@ -5655,6 +6144,7 @@ function b2ProcessPayment(db, p, user) {
   });
 
   newRows.forEach(function (r) { db.payments.push(r); });
+  b54Bump();   // B54: היתרות שנקראות מיד להלן חייבות לראות את התשלומים החדשים
 
   // עדכון סטטוסי חשבוניות ("שולמה") שנגעו בהן בטרנזקציה זו
   var invTouched = false;
@@ -6402,44 +6892,29 @@ function b43CustTerms(db, customerId) {
 // כל היתרות הפתוחות של לקוחות, כל אחת עם מועד הפירעון שלה.
 // זהו מקור האמת היחיד בשרת לצד ההכנסות — b9AgingReport ו-b14Cashflow משתמשים בו.
 // הדריסה הידנית יושבת על החשבונית אם קיימת, אחרת על ההזמנה.
+// B54/C1: עטיפה על ספר החיובים — אותה חתימה ואותם שדות כמו עד B54
+// (שמונה קוראים תלויים בה), אבל הלוגיקה עברה ל-b54Ledger. כל מכולה
+// (הזמנה / חשבונית עצמאית / חיוב ידני עצמאי) = שורה אחת עם יתרה חיובית.
 function b43Receivables(db) {
-  var rows = [];
-  db.orders.filter(function (o) {
-    return ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
-  }).forEach(function (o) {
-    var balAg = b2OrderBalanceAg(db, o.id);
-    if (balAg <= 0) return;
-    var inv = db.invoices.find(function (v) { return v.order_id === o.id && v.status !== 'בוטלה'; });
-    var host = inv || o;
-    var docDate = String((inv ? inv.date : (o.end_date || o.start_date || o.created_at)) || '').slice(0, 10);
-    var terms = b43CustTerms(db, o.customer_id);
-    var over = isDateStr(host.due_date);
-    var c = db.customers.find(function (x) { return x.id === o.customer_id; });
-    rows.push({
-      entity_type: inv ? 'invoice' : 'order', entity_id: host.id,
-      order_id: o.id, invoice_id: inv ? inv.id : '',
-      label: inv ? ('חשבונית ' + inv.number) : ('הזמנה ' + (o.order_number || o.id)),
-      customer_id: o.customer_id, customer: c ? c.name : '',
-      doc_date: docDate, terms: terms, overridden: over,
-      due_date: over ? String(host.due_date) : b43DueFrom(docDate, terms),
-      amount_ag: balAg
-    });
+  var conts = {}, keys = [];
+  b54Ledger(db).forEach(function (r) {
+    if (r.pending) return;   // חיוב שטרם הפך למסמך אינו יתרה לגבייה
+    var key = r.order_id ? ('O:' + r.order_id) : (r.invoice_id ? ('V:' + r.invoice_id) : ('X:' + r.id));
+    if (!conts[key]) { conts[key] = { r: r, sum: 0 }; keys.push(key); }
+    conts[key].sum += r.open_ag;
   });
-  // חשבוניות מכבסה מרוכזות ללא הזמנה (NC4)
-  db.invoices.filter(function (v) { return !v.order_id && v.status !== 'בוטלה'; }).forEach(function (v) {
-    var balAg = b2InvoiceBalanceAg(db, v);
-    if (balAg <= 0) return;
-    var docDate = String(v.date || '').slice(0, 10);
-    var terms = b43CustTerms(db, v.customer_id);
-    var over = isDateStr(v.due_date);
-    var c = db.customers.find(function (x) { return x.id === v.customer_id; });
+  var rows = [];
+  keys.forEach(function (k) {
+    var g = conts[k];
+    if (!(g.sum > 0)) return;
+    var r = g.r;
+    var c = db.customers.find(function (x) { return x.id === r.customer_id; });
     rows.push({
-      entity_type: 'invoice', entity_id: v.id, order_id: '', invoice_id: v.id,
-      label: 'חשבונית ' + v.number,
-      customer_id: v.customer_id, customer: c ? c.name : '',
-      doc_date: docDate, terms: terms, overridden: over,
-      due_date: over ? String(v.due_date) : b43DueFrom(docDate, terms),
-      amount_ag: balAg
+      entity_type: r.entity_type, entity_id: r.entity_id,
+      order_id: r.order_id, invoice_id: r.invoice_id,
+      label: r.label, customer_id: r.customer_id, customer: c ? c.name : '',
+      doc_date: r.doc_date, terms: r.terms, overridden: r.overridden,
+      due_date: r.due_date, amount_ag: g.sum
     });
   });
   return rows;
