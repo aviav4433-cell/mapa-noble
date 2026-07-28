@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.48-B49f · 28.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.49-B50 · 28.07.2026</div>
   </div>
 </div>
 
@@ -4633,11 +4633,20 @@ function b43FlowHtml(){
                 : b45Money(Number(r.net_amount!==undefined? r.net_amount : r.amount)))+'</td>'+
       '<td><div class="row" style="gap:4px;flex-wrap:nowrap">'+acts+'</div></td></tr>';
   };
-  var table = function(title, rows, empty){
+  var table = function(title, rows, empty, expKey){
     var list = rows.filter(b43InRange).slice()
       .sort(function(a,b){ return String(a.due_date||'9999-12-31').localeCompare(String(b.due_date||'9999-12-31')); });
+    /* B50: ייצוא CSV — אותה פונקציה גנרית של מרכז הדוחות. סכומים נטו כמספר בלי ₪ */
+    b50Reg(expKey, (expKey==='flow_in'?'לגבייה':'לתשלום')+'_'+ymdLocal()+'.csv',
+      ['מועד פירעון','מי','מסמך / תיאור','סכום נטו','סכום כולל מע\u0022מ','תנאי תשלום','מועד נקבע ידנית'],
+      list.map(function(r){
+        var net = Number(r.net_amount!==undefined? r.net_amount : r.amount)||0;
+        return [r.due_date||'', r.who||'', r.label||'', b50R2(net),
+          (r.novat? b50R2(net) : b50R2(b45Gross(net))), r.terms||'', r.overridden?'כן':''];
+      }));
     return '<h3 style="margin:14px 0 8px">'+title+
-      ' <span class="muted" style="font-weight:400;font-size:12.5px">· '+list.length+' רשומות · '+ils(b43Sum(list))+'</span></h3>'+
+      ' <span class="muted" style="font-weight:400;font-size:12.5px">· '+list.length+' רשומות · '+ils(b43Sum(list))+'</span> '+
+      b50ExportBtn(expKey)+'</h3>'+
       (list.length? '<div class="card"><table><tr><th>מועד ומחוון</th><th>מי</th><th>מסמך / תיאור</th><th>סכום (לפני מע\u0022מ)</th><th></th></tr>'+
         list.map(rowHtml).join('')+'</table></div>' : '<div class="card empty">'+esc(empty)+'</div>');
   };
@@ -4652,8 +4661,8 @@ function b43FlowHtml(){
       '<div style="font-size:22px;font-weight:800;color:'+(net30>=0?'var(--ink)':'var(--danger)')+'">'+ils(net30)+'</div>'+
     '</div></div>'+
     bar+
-    table('לגבייה — לפי מועד פירעון', rec, 'אין יתרות לגבייה בטווח שנבחר')+
-    table('לתשלום — לפי מועד היעד', pay, 'אין תשלומים בטווח שנבחר')+
+    table('לגבייה — לפי מועד פירעון', rec, 'אין יתרות לגבייה בטווח שנבחר', 'flow_in')+
+    table('לתשלום — לפי מועד היעד', pay, 'אין תשלומים בטווח שנבחר', 'flow_out')+
     '<div class="muted" style="font-size:12px;margin-top:8px">הסכומים מוצגים <b>לפני מע\u0022מ</b>, ומתחת לכל אחד הסכום כולל מע\u0022מ. '+
       'המחוון שליד המועד מתמלא מיום היווצרות החוב ועד מועד הפירעון. '+
       'מועד הפירעון של חוב לקוח מחושב מתאריך המסמך ומתנאי התשלום שבכרטיס הלקוח. מנהל רשאי לדחות או להקדים מועד — כל שינוי נרשם עם שם המשנה, המועד הקודם והסיבה, וניתן לצפייה בכפתור 🕘 שבשורה.</div>';
@@ -6351,7 +6360,29 @@ var REPORTS_CATALOG = [
   {id:'aging', title:'חובות לקוחות לפי גיל', desc:'לפי ימי איחור מעבר למועד הפירעון. ניתן לסנן ללקוח בודד', group:'כספים', roles:null, container:'repAging', autoRun:true,
    params:[{key:'customer_id', type:'customer', label:'לקוח (אופציונלי)', allLabel:'כל הלקוחות'}]},
   {id:'exceptions', title:'דשבורד חריגים', desc:'חמישה סוגי חריגים הדורשים תשומת לב מנהל', group:'ניהול', roles:null, container:'repExceptions', autoRun:true, params:[]},
-  {id:'noble', title:'ביצועי מכבסה', desc:'עובדים ומכונות — קליטות, משקל והכנסות (טווח ימים בתוך הדוח עצמו)', group:'מכבסה', roles:null, container:'repNoble', autoRun:true, params:[]}
+  {id:'noble', title:'ביצועי מכבסה', desc:'עובדים ומכונות — קליטות, משקל והכנסות (טווח ימים בתוך הדוח עצמו)', group:'מכבסה', roles:null, container:'repNoble', autoRun:true, params:[]},
+  /* ---- B50: שלושת הדוחות החסרים + עלות התחזוקה ---- */
+  {id:'hours', title:'שעות עבודה', desc:'פר עובד — ימי עבודה, שעות מזכות, שעות שנפסלו, ממוצע ליום ושעת התחלה ממוצעת', group:'ניהול', roles:[], container:'repHours', autoRun:true,
+   params:[
+     {key:'from', type:'date', label:'מתאריך', def:function(){ return b50MonthStart(); }},
+     {key:'to', type:'date', label:'עד תאריך', def:function(){ return ymdLocal(); }},
+     {key:'employee_id', type:'employee', label:'עובד (אופציונלי)', allLabel:'כל העובדים'}
+   ]},
+  {id:'utilization', title:'ניצולת השכרות', desc:'פר פריט — ימי השכרה בפועל, אחוז ניצולת מול המלאי הכולל והכנסה מהפריט', group:'תפעול', roles:['משרד'], container:'repUtil', autoRun:true,
+   params:[
+     {key:'from', type:'date', label:'מתאריך', def:function(){ return b50DaysAgo(30); }},
+     {key:'to', type:'date', label:'עד תאריך', def:function(){ return ymdLocal(); }}
+   ]},
+  {id:'fleet', title:'צי רכב', desc:'פר רכב — משלוחים בטווח (בפילוח מי אישר את הנסיעה), ק"מ, טסט וביטוח קרבים וטיפול הבא', group:'תפעול', roles:['משרד'], container:'repFleet', autoRun:true,
+   params:[
+     {key:'from', type:'date', label:'מתאריך', def:function(){ return b50DaysAgo(30); }},
+     {key:'to', type:'date', label:'עד תאריך', def:function(){ return ymdLocal(); }}
+   ]},
+  {id:'maint', title:'עלות תחזוקה לפי חודש', desc:'עגלות ומכונות — עלות מצטברת מיומן התקלות, לפי חודש ולפי נכס', group:'ניהול', roles:['משרד'], container:'repMaint', autoRun:true,
+   params:[
+     {key:'from', type:'date', label:'מתאריך', def:function(){ return b50MonthStart(-5); }},
+     {key:'to', type:'date', label:'עד תאריך', def:function(){ return ymdLocal(); }}
+   ]}
 ];
 /* פונקציית render לכל דוח — עטיפה דקה על הפונקציות הקיימות, בלי לשכפל לוגיקה */
 var REPORT_RENDERERS = {
@@ -6359,7 +6390,11 @@ var REPORT_RENDERERS = {
   summary: function(){ loadSummary(); },
   aging: function(p){ loadAgingReport(p.customer_id||''); },
   exceptions: function(){ loadExceptionsDashboard(); },
-  noble: function(){ renderNobleReports(); }
+  noble: function(){ renderNobleReports(); },
+  hours: function(p){ b50RenderHours(p||{}); },
+  utilization: function(p){ b50RenderUtil(p||{}); },
+  fleet: function(p){ b50RenderFleet(p||{}); },
+  maint: function(p){ b50RenderMaint(p||{}); }
 };
 var REPORT_GROUPS_ORDER = ['כספים','תפעול','מכבסה','ניהול'];
 function reportAllowed(entry){ if(!entry.roles) return true; return ROLE==='מנהל' || entry.roles.includes(ROLE); }
@@ -6380,6 +6415,8 @@ function repParamsForm(entry){
       var eid = repFieldId(entry,p);
       if(p.type==='date') return '<div class="frow"><label>'+esc(p.label)+'</label><input id="'+eid+'" type="date"></div>';
       if(p.type==='customer') return '<div class="frow"><label>'+esc(p.label)+'</label><select id="'+eid+'"><option value="">'+esc(p.allLabel||'כל הלקוחות')+'</option>'+DB.customers.map(function(c){ return '<option value="'+c.id+'">'+esc(c.name)+'</option>'; }).join('')+'</select></div>';
+      /* B50: אותו דפוס בדיוק כמו 'customer' — בחירת עובד לדוח השעות */
+      if(p.type==='employee') return '<div class="frow"><label>'+esc(p.label)+'</label><select id="'+eid+'"><option value="">'+esc(p.allLabel||'כל העובדים')+'</option>'+(DB.employees||[]).filter(function(e){ return e.active!=='לא'; }).map(function(e){ return '<option value="'+esc(e.id)+'">'+esc(e.name)+(e.role?' · '+esc(e.role):'')+'</option>'; }).join('')+'</select></div>';
       if(p.type==='select') return '<div class="frow"><label>'+esc(p.label)+'</label><select id="'+eid+'"><option value="">'+esc(p.allLabel||'הכל')+'</option>'+(p.options||[]).map(function(o){ return '<option>'+esc(o)+'</option>'; }).join('')+'</select></div>';
       return '<div class="frow"><label>'+esc(p.label)+'</label><input id="'+eid+'" type="text"></div>';
     }).join('')+
@@ -6429,10 +6466,426 @@ function rReports(){
     '<div id="'+entry.container+'"></div>';
   (entry.params||[]).forEach(function(p){
     var f = el(repFieldId(entry,p));
-    if(f && REPORT_PARAMS[p.key]!=null) f.value = REPORT_PARAMS[p.key];
+    if(!f) return;
+    if(REPORT_PARAMS[p.key]!=null) f.value = REPORT_PARAMS[p.key];
+    /* B50: ברירת מחדל לשדה ריק — כדי שדוח autoRun ייפתח על טווח הגיוני ולא ריק */
+    if(!f.value && p.def!=null) f.value = (typeof p.def==='function'? p.def() : p.def);
   });
   if(entry.autoRun) runReport(entry.id);
 }
+
+/* ================= B50: ייצוא CSV + דוחות חסרים + הכרעת Y1 =================
+   כל הדוחות כאן רצים על DB שכבר טעון — אין קריאת שרת אחת.
+   כסף: כל סכום נגזר מספר החיובים (b54LedgerFE) ומוצג נטו לפי כלל B45.
+   תאריכים: dYmd/ymdLocal בלבד — לעולם לא toISOString.
+   ⚠ מ-B51 טבלאות היסטוריה עלולות להיחתך ל-90 יום; אם attendance/faultEvents
+   ייחתכו, הדוחות כאן יוגבלו לטווח שהגיע לממשק — לציין בכותרת הדוח.
+   ============================================================ */
+
+/* ---- ייצוא גנרי אחד לכל טבלת דוח ---- */
+function csvCell(v){
+  var s = String(v==null? '' : v);
+  if(/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+function exportCsv(filename, headers, rows){
+  var lines = [ (headers||[]).map(csvCell).join(',') ];
+  (rows||[]).forEach(function(r){ lines.push(r.map(csvCell).join(',')); });
+  var text = '\uFEFF' + lines.join('\r\n');   /* BOM — חובה לעברית באקסל */
+  var a = document.createElement('a');
+  a.download = filename;
+  var url = '';
+  try {
+    var blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
+    url = URL.createObjectURL(blob);
+    a.href = url;
+  } catch(e) {
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(text);
+  }
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){
+    if(a.parentNode) a.parentNode.removeChild(a);
+    if(url && URL.revokeObjectURL) URL.revokeObjectURL(url);
+  }, 0);
+}
+/* רישום מטען הייצוא של כל טבלה — הכפתור קורא למפתח, בלי לשרשר נתונים ל-onclick */
+var B50_EXPORTS = {};
+function b50Reg(key, filename, headers, rows){ B50_EXPORTS[key] = {f:filename, h:headers, r:rows||[]}; return key; }
+function b50Export(key){
+  var x = B50_EXPORTS[key];
+  if(!x || !x.r.length){ toast('אין נתונים לייצוא', true); return; }
+  exportCsv(x.f, x.h, x.r);
+}
+function b50ExportBtn(key){
+  var x = B50_EXPORTS[key], dis = (!x || !x.r.length);
+  return '<button class="btn ghost sm"'+(dis?' disabled title="אין נתונים לייצוא"':'')+
+    ' onclick="b50Export(\''+key+'\')">⬇ ייצוא</button>';
+}
+
+/* ---- עוזרי טווח תאריכים (Y1: יום = יום קלנדרי מ-00:00) ---- */
+function b50MonthStart(offset){
+  var d = new Date(); d.setDate(1);
+  if(offset) d.setMonth(d.getMonth()+offset);
+  return ymdLocal(d);
+}
+function b50DaysAgo(n){ return ymdLocal(new Date(Date.now() - n*864e5)); }
+function b50Range(p){
+  var from = dYmd(p.from||'') || b50DaysAgo(30);
+  var to = dYmd(p.to||'') || ymdLocal();
+  if(from > to){ var t=from; from=to; to=t; }
+  return {from:from, to:to, days: Math.round((new Date(to+'T00:00:00').getTime()-new Date(from+'T00:00:00').getTime())/864e5)+1};
+}
+function b50RangeBad(p){ return !!(dYmd(p.from||'') && dYmd(p.to||'') && dYmd(p.from) > dYmd(p.to)); }
+function b50Note(txt){ return '<div class="muted" style="font-size:12px;margin:2px 0 8px">'+txt+'</div>'; }
+function b50Empty(txt){ return '<div class="card empty">'+esc(txt)+'</div>'; }
+function b50Head(box, title, note, key){
+  return '<div class="card"><div class="row" style="align-items:center;flex-wrap:wrap">'+
+    '<h3 class="grow" style="margin:0">'+esc(title)+'</h3>'+b50ExportBtn(key)+'</div>'+
+    (note? b50Note(note) : '')+'</div>';
+}
+/* דקות → שעה קריאה */
+function b50Hhmm(min){
+  if(min==null || isNaN(min)) return '—';
+  min = Math.round(min);
+  var h = Math.floor(min/60)%24, m = min%60;
+  return ('0'+h).slice(-2)+':'+('0'+m).slice(-2);
+}
+function b50Min(hhmm){
+  var m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})/);
+  return m? (Number(m[1])*60 + Number(m[2])) : null;
+}
+function b50R2(n){ return Math.round((Number(n)||0)*100)/100; }
+/* ---- הכרעת Y1: חלון יום העבודה של הצוות, נגזר מהנוכחות בפועל ----
+   אין שעת תחילת יום קבועה בשום חישוב. היום נמדד מההחתמה הראשונה של עובד
+   מכבסה/רצפה ועד ההחתמה האחרונה באותו יום קלנדרי (מ-00:00).
+   מחזיר {yyyy-mm-dd: {a: דקות מתחילת היום, b: דקות}}. */
+function b50TeamDayWindow(){
+  var win = {}, floorRoles = {'מכבסה':1, 'עובד רצפה':1}, empRole = {};
+  (DB.employees||[]).forEach(function(e){ empRole[String(e.id)] = String(e.role||''); });
+  (DB.attendance||[]).forEach(function(a){
+    var d = dYmd(a.date || a.in_date); if(!d) return;
+    var r = empRole[String(a.employee_id||'')];
+    if(r && !floorRoles[r]) return;      /* עובד שאינו של רצפת הייצור אינו מגדיר את יום המכבסה */
+    var s = b50Min(a.in_time), e = b50Min(a.out_time);
+    if(s==null) return;
+    if(e==null || e < s) e = s;          /* משמרת פתוחה או חוצה חצות — נספרת עד ההחתמה הידועה */
+    if(!win[d]) win[d] = {a:s, b:e};
+    else { if(s < win[d].a) win[d].a = s; if(e > win[d].b) win[d].b = e; }
+  });
+  return win;
+}
+/* כסף ברצועת ה-KPI — נטו כמספר ראשי, כולל מע"מ קטן מתחתיו (כלל B45) */
+function b50KpiMoney(net){ return ils(net)+'<div class="muted" style="font-size:10.5px;font-weight:400">'+b45Incl(net)+'</div>'; }
+
+/* ============================================================
+   דוח 1 — שעות עבודה (מנהל בלבד; שכר = מידע רגיש)
+   שעות מזכות = attEff הקיימת (מכבדת פסילות). אין חישוב שכר חדש.
+   שעת התחלה ממוצעת = ממוצע ה-in_time הראשון בכל יום (הכרעת Y1).
+   ============================================================ */
+function b50HoursRows(p){
+  var R = b50Range(p), only = String(p.employee_id||'');
+  var per = {}, order = [];
+  (DB.attendance||[]).forEach(function(a){
+    var d = dYmd(a.date || a.in_date);
+    if(!d || d < R.from || d > R.to) return;
+    var eid = String(a.employee_id||'');
+    if(only && eid !== only) return;
+    if(!per[eid]){ per[eid] = {id:eid, name:empName(eid)||eid, days:{}, eff:0, void:0, starts:[], rows:[]}; order.push(eid); }
+    var w = per[eid];
+    w.eff += attEff(a); w.void += attVoid(a);
+    var st = b50Min(a.in_time);
+    if(!w.days[d]) w.days[d] = {date:d, eff:0, void:0, first:st};
+    w.days[d].eff += attEff(a); w.days[d].void += attVoid(a);
+    if(st!=null && (w.days[d].first==null || st < w.days[d].first)) w.days[d].first = st;
+    w.rows.push(a);
+  });
+  return order.map(function(eid){
+    var w = per[eid], dayKeys = Object.keys(w.days).sort();
+    var firsts = dayKeys.map(function(k){ return w.days[k].first; }).filter(function(x){ return x!=null; });
+    var avgStart = firsts.length? Math.round(firsts.reduce(function(s,x){ return s+x; },0)/firsts.length) : null;
+    var emp = (DB.employees||[]).find(function(e){ return String(e.id)===eid; }) || {};
+    return {id:eid, name:w.name, role:String(emp.role||''),
+      days:dayKeys.length, eff:b50R2(w.eff), voided:b50R2(w.void),
+      avgDay: dayKeys.length? b50R2(w.eff/dayKeys.length) : 0,
+      avgStart: avgStart, dayList: dayKeys.map(function(k){ return w.days[k]; })};
+  }).sort(function(a,b){ return b.eff - a.eff; });
+}
+function b50RenderHours(p){
+  var box = el('repHours'); if(!box) return;
+  if(b50RangeBad(p)){ box.innerHTML = b50Empty('טווח התאריכים הפוך — תאריך הסיום מוקדם מתאריך ההתחלה'); return; }
+  var R = b50Range(p), rows = b50HoursRows(p);
+  var key = b50Reg('hours', 'שעות-עבודה_'+R.from+'_'+R.to+'.csv',
+    ['עובד','תפקיד','ימי עבודה','שעות מזכות','שעות שנפסלו','ממוצע ליום','שעת התחלה ממוצעת'],
+    rows.map(function(r){ return [r.name, r.role, r.days, r.eff, r.voided, r.avgDay, r.avgStart==null?'':b50Hhmm(r.avgStart)]; }));
+  var totEff = b50R2(rows.reduce(function(s,r){ return s+r.eff; },0));
+  var totVoid = b50R2(rows.reduce(function(s,r){ return s + r.voided; },0));
+  var h = b50Head(box, R.from+' — '+R.to,
+    'שעות מזכות = שעות בפועל פחות שעות שנפסלו (אותו חישוב בדיוק כמו מסך הנוכחות והשכר). '+
+    'שעת ההתחלה הממוצעת נגזרת מההחתמה הראשונה בכל יום — יום נמדד מ-00:00 (הכרעת Y1), אין שעת תחילת יום קבועה.', key);
+  if(!rows.length){ box.innerHTML = h + b50Empty('אין רישומי נוכחות בטווח שנבחר'); return; }
+  h += repKpiRow([{v:rows.length, l:'עובדים'}, {v:totEff, l:'שעות מזכות'},
+    {v:totVoid, l:'שעות שנפסלו', alert:totVoid>0}]);
+  h += '<div class="card"><table><tr><th>עובד</th><th>תפקיד</th><th>ימי עבודה</th><th>שעות מזכות</th>'+
+    '<th>שעות שנפסלו</th><th>ממוצע ליום</th><th>שעת התחלה ממוצעת</th></tr>'+
+    rows.map(function(r){
+      return '<tr><td><b>'+esc(r.name)+'</b></td><td class="muted">'+esc(r.role)+'</td>'+
+        '<td>'+r.days+'</td><td><b>'+r.eff+'</b></td>'+
+        '<td'+(r.voided?' style="color:var(--danger)"':'')+'>'+(r.voided||'—')+'</td>'+
+        '<td>'+r.avgDay+'</td><td>'+(r.avgStart==null?'—':b50Hhmm(r.avgStart))+'</td></tr>';
+    }).join('')+'</table></div>';
+  /* עובד בודד → פירוט יומי */
+  if(String(p.employee_id||'') && rows.length===1){
+    var d = rows[0];
+    h += '<h3 style="margin:14px 0 8px">פירוט יומי — '+esc(d.name)+'</h3><div class="card"><table>'+
+      '<tr><th>תאריך</th><th>שעת התחלה</th><th>שעות מזכות</th><th>שעות שנפסלו</th></tr>'+
+      d.dayList.map(function(x){
+        return '<tr><td>'+esc(x.date)+'</td><td>'+(x.first==null?'—':b50Hhmm(x.first))+'</td>'+
+          '<td>'+b50R2(x.eff)+'</td><td'+(x.void?' style="color:var(--danger)"':'')+'>'+(b50R2(x.void)||'—')+'</td></tr>';
+      }).join('')+'</table></div>';
+  }
+  box.innerHTML = h;
+}
+
+/* ============================================================
+   דוח 2 — ניצולת השכרות
+   ימי השכרה = חיתוך [start_date..end_date] של הזמנה פעילה עם הטווח, כפול qty.
+   ניצולת % = ימי ההשכרה חלקי (מלאי כולל × ימי הטווח).
+   הכנסה = חלק הפריט בשורת 'השכרה' של ההזמנה בספר החיובים (B54),
+           מוכפל בשיעור החפיפה של ההזמנה עם הטווח.
+   ============================================================ */
+function b50RentalNetAgByOrder(){
+  var m = {};
+  b54LedgerFE().forEach(function(r){
+    if(r.source !== 'השכרה' || !r.order_id) return;
+    m[r.order_id] = (m[r.order_id]||0) + r.net_ag;
+  });
+  return m;
+}
+function b50UtilRows(p){
+  var R = b50Range(p);
+  var netByOrder = b50RentalNetAgByOrder();
+  var per = {};
+  var get = function(iid){
+    if(!per[iid]){
+      var it = (DB.items||[]).find(function(x){ return x.id===iid; }) || {};
+      var bd = null;
+      try { bd = b40ItemBreakdown(iid); } catch(e){ bd = null; }
+      per[iid] = {id:iid, name:it.name||iid, category:String(it.category||''),
+        stock: bd? Number(bd.total)||0 : 0, days:0, netAg:0, orders:{}};
+    }
+    return per[iid];
+  };
+  (DB.orders||[]).forEach(function(o){
+    if(String(o.type)!=='השכרה') return;
+    if(B54_SKIP_ORDER.indexOf(String(o.status))>-1) return;
+    var s = dYmd(o.start_date||''), e = dYmd(o.end_date||o.start_date||'');
+    if(!s) return;
+    if(!e || e < s) e = s;
+    var a = s > R.from ? s : R.from, b = e < R.to ? e : R.to;
+    if(a > b) return;                                     /* אין חפיפה */
+    var ovl = Math.round((new Date(b+'T00:00:00').getTime()-new Date(a+'T00:00:00').getTime())/864e5)+1;
+    var tot = Math.round((new Date(e+'T00:00:00').getTime()-new Date(s+'T00:00:00').getTime())/864e5)+1;
+    var share = tot>0 ? ovl/tot : 0;
+    var lines = (DB.orderLines||[]).filter(function(l){ return l.order_id===o.id; });
+    if(!lines.length) return;
+    var weights = lines.map(function(l){ return Math.max(0, Math.round(Number(l.qty)*Number(l.unit_price)*100)); });
+    var alloc = b54Alloc(Math.round((netByOrder[o.id]||0)*share), weights);
+    lines.forEach(function(l, i){
+      var w = get(l.item_id);
+      w.days += ovl * (Number(l.qty)||0);
+      w.netAg += alloc[i]||0;
+      w.orders[o.id] = 1;
+    });
+  });
+  return Object.keys(per).map(function(k){
+    var w = per[k], cap = w.stock * R.days;
+    w.orderCount = Object.keys(w.orders).length;
+    w.pct = cap>0 ? Math.min(999, Math.round(w.days/cap*100)) : null;
+    return w;
+  }).sort(function(a,b){ return (b.pct==null?-1:b.pct) - (a.pct==null?-1:a.pct) || b.days-a.days; });
+}
+function b50RenderUtil(p){
+  var box = el('repUtil'); if(!box) return;
+  if(b50RangeBad(p)){ box.innerHTML = b50Empty('טווח התאריכים הפוך — תאריך הסיום מוקדם מתאריך ההתחלה'); return; }
+  var R = b50Range(p), rows = b50UtilRows(p);
+  var key = b50Reg('utilization', 'ניצולת-השכרות_'+R.from+'_'+R.to+'.csv',
+    ['פריט','קטגוריה','מלאי כולל','הזמנות','ימי השכרה','ניצולת %','הכנסה נטו'],
+    rows.map(function(r){ return [r.name, r.category, r.stock, r.orderCount, r.days, r.pct==null?'':r.pct, b50R2(r.netAg/100)]; }));
+  var h = b50Head(box, R.from+' — '+R.to+' ('+R.days+' ימים)',
+    'ימי השכרה = מספר הימים שההזמנה חופפת לטווח, כפול הכמות בשורה. '+
+    'ניצולת = ימי ההשכרה חלקי (מלאי כולל × '+R.days+' ימים). '+
+    'ההכנסה נגזרת מספר החיובים (B54) ומוצגת נטו, לפי חלקו היחסי של הפריט בהזמנה ולפי שיעור החפיפה עם הטווח.', key);
+  if(!rows.length){ box.innerHTML = h + b50Empty('אין הזמנות השכרה פעילות בטווח שנבחר'); return; }
+  var totDays = rows.reduce(function(s,r){ return s+r.days; },0);
+  var totNet = rows.reduce(function(s,r){ return s+r.netAg; },0);
+  h += repKpiRow([{v:rows.length, l:'פריטים שהושכרו'}, {v:totDays, l:'ימי השכרה'},
+    {v:b50KpiMoney(totNet/100), l:'הכנסה מהשכרה'}]);
+  var bar = function(pc){
+    var c = pc>=70? 'var(--ok)' : (pc>=35? 'var(--teal)' : 'var(--amber)');
+    return '<div style="background:var(--line);border-radius:6px;height:8px;overflow:hidden;min-width:70px">'+
+      '<div style="width:'+Math.min(100,pc)+'%;height:100%;background:'+c+'"></div></div>';
+  };
+  h += '<div class="card"><table><tr><th>פריט</th><th>מלאי כולל</th><th>הזמנות</th><th>ימי השכרה</th>'+
+    '<th>ניצולת</th><th>הכנסה (לפני מע\u0022מ)</th></tr>'+
+    rows.map(function(r){
+      return '<tr><td><b>'+esc(r.name)+'</b>'+(r.category?' <span class="muted" style="font-size:11.5px">'+esc(r.category)+'</span>':'')+'</td>'+
+        '<td>'+r.stock+'</td><td>'+r.orderCount+'</td><td>'+r.days+'</td>'+
+        '<td>'+(r.pct==null? '<span class="muted" title="אין רישום מלאי לפריט">—</span>'
+          : '<div class="row" style="gap:6px;align-items:center"><b>'+r.pct+'%</b>'+bar(r.pct)+'</div>')+'</td>'+
+        '<td class="tot">'+b45Money(r.netAg/100)+'</td></tr>';
+    }).join('')+'</table></div>'+
+    b50Note('פריט ללא רישום תנועות מלאי מוצג בלי אחוז ניצולת — אין לו מכנה.');
+  box.innerHTML = h;
+}
+
+/* ============================================================
+   דוח 3 — צי רכב
+   ⚠ חובה מ-B49f: פילוח לפי trip_confirmed_by. נסיעה שהנהג תיעד בשטח
+   ונסיעה שההנהלה אישרה בדיעבד אינן אותו דבר — שתי עמודות, לא אחת.
+   תקלות רכב אינן נרשמות במערכת (b42Meta תומך בעגלה ובמכונה בלבד),
+   ולכן אין כאן עמודת תקלות. עלות התחזוקה של הציוד = דוח נפרד.
+   ============================================================ */
+function b50VehOfDelivery(d){
+  if(d.vehicle_id) return String(d.vehicle_id);
+  if(d.trip_id){
+    var t = (DB.deliveryTrips||[]).find(function(x){ return String(x.id)===String(d.trip_id); });
+    if(t && t.vehicle_id) return String(t.vehicle_id);
+  }
+  return '';
+}
+function b50FleetRows(p){
+  var R = b50Range(p), t = ymdLocal();
+  var soon = ymdLocal(new Date(Date.now()+30*864e5));
+  var per = {};
+  (DB.vehicles||[]).forEach(function(v){
+    per[v.id] = {id:v.id, plate:String(v.plate||''), model:[v.make,v.model].filter(Boolean).join(' '),
+      status:String(v.status||''), active:v.active!=='לא',
+      done:0, confirmed:0, cancelled:0, open:0,
+      km:Number(v.mileage_km)||0, test:dYmd(v.test_date||''), ins:dYmd(v.insurance_expiry||''),
+      nextSvc:dYmd(v.next_service_date||''), nextKm:Number(v.next_service_km)||0, unknown:false};
+  });
+  var other = {id:'', plate:'ללא שיוך רכב', model:'', status:'', active:true, done:0, confirmed:0,
+    cancelled:0, open:0, km:0, test:'', ins:'', nextSvc:'', nextKm:0, unknown:true};
+  (DB.deliveries||[]).forEach(function(d){
+    var dd = dYmd(d.date||'');
+    if(!dd || dd < R.from || dd > R.to) return;
+    var vid = b50VehOfDelivery(d);
+    var w = per[vid] || other;
+    var st = String(d.status||'');
+    if(st==='בוטל'){ if(String(d.trip_auto_cancel||'')) w.cancelled++; return; }
+    if(st==='בוצע'){ w.done++; if(String(d.trip_confirmed_by||'')) w.confirmed++; }
+    else w.open++;
+  });
+  var list = Object.keys(per).map(function(k){ return per[k]; });
+  if(other.done || other.open || other.cancelled) list.push(other);
+  list.forEach(function(w){
+    w.driverProved = w.done - w.confirmed;
+    w.flags = [];
+    if(w.test && w.test < t) w.flags.push({t:'טסט פג תוקף ('+w.test+')', bad:1});
+    else if(w.test && w.test <= soon) w.flags.push({t:'טסט מתקרב ('+w.test+')', bad:0});
+    if(w.ins && w.ins < t) w.flags.push({t:'ביטוח פג תוקף ('+w.ins+')', bad:1});
+    else if(w.ins && w.ins <= soon) w.flags.push({t:'ביטוח מתקרב ('+w.ins+')', bad:0});
+    if(w.nextSvc && w.nextSvc < t) w.flags.push({t:'טיפול עבר מועד ('+w.nextSvc+')', bad:1});
+    else if(w.nextSvc && w.nextSvc <= soon) w.flags.push({t:'טיפול מתקרב ('+w.nextSvc+')', bad:0});
+  });
+  return list.sort(function(a,b){ return (b.done+b.open) - (a.done+a.open); });
+}
+function b50RenderFleet(p){
+  var box = el('repFleet'); if(!box) return;
+  if(b50RangeBad(p)){ box.innerHTML = b50Empty('טווח התאריכים הפוך — תאריך הסיום מוקדם מתאריך ההתחלה'); return; }
+  var R = b50Range(p), rows = b50FleetRows(p);
+  var key = b50Reg('fleet', 'צי-רכב_'+R.from+'_'+R.to+'.csv',
+    ['רכב','לוחית','דגם','משלוחים שבוצעו','מתוכם הנהג תיעד','מתוכם אישור הנהלה בדיעבד','נסיעות שבוטלו בקליטה','פתוחים','ק"מ','טסט','ביטוח','טיפול הבא'],
+    rows.map(function(r){ return [r.id, r.plate, r.model, r.done, r.driverProved, r.confirmed, r.cancelled, r.open, r.km, r.test, r.ins, r.nextSvc]; }));
+  var h = b50Head(box, R.from+' — '+R.to,
+    'משלוח נספר לרכב לפי השיבוץ שלו, ואם אין — לפי הרכב של הנסיעה המשולבת. '+
+    '<b>הפילוח מחייב:</b> נסיעה שהנהג תיעד בשטח (סריקה/צילום) ונסיעה שההנהלה אישרה בדיעבד '+
+    'אינן אותו דבר — הראשונה מוכחת, השנייה מבוססת על הצהרה. '+
+    'תקלות רכב אינן נרשמות במערכת (יומן התקלות מכסה עגלות ומכונות בלבד), ולכן אין כאן עמודת תקלות.', key);
+  if(!rows.length){ box.innerHTML = h + b50Empty('לא הוגדרו רכבים במערכת'); return; }
+  var tDone = rows.reduce(function(s,r){ return s+r.done; },0);
+  var tConf = rows.reduce(function(s,r){ return s+r.confirmed; },0);
+  var tCanc = rows.reduce(function(s,r){ return s+r.cancelled; },0);
+  h += repKpiRow([{v:tDone, l:'משלוחים שבוצעו'}, {v:tDone-tConf, l:'הנהג תיעד בשטח'},
+    {v:tConf, l:'אישור הנהלה בדיעבד', alert:tConf>0}, {v:tCanc, l:'נסיעות שבוטלו בקליטה', alert:tCanc>0}]);
+  h += '<div class="card"><table><tr><th>רכב</th><th>בוצעו</th><th>הנהג תיעד</th><th>אישור הנהלה</th>'+
+    '<th>בוטלו בקליטה</th><th>פתוחים</th><th>ק\u0022מ</th><th>טסט / ביטוח / טיפול</th></tr>'+
+    rows.map(function(r){
+      var flags = r.flags.length
+        ? r.flags.map(function(f){ return '<div style="color:'+(f.bad?'var(--danger)':'#8a5a1f')+';font-size:11.5px">⚠ '+esc(f.t)+'</div>'; }).join('')
+        : '<span class="muted" style="font-size:11.5px">'+
+            [r.test?'טסט '+r.test:'', r.ins?'ביטוח '+r.ins:'', r.nextSvc?'טיפול '+r.nextSvc:''].filter(Boolean).join(' · ')+'</span>';
+      return '<tr'+(r.unknown?' style="background:#FFFDF5"':'')+'><td><b>'+esc(r.plate||r.id)+'</b>'+
+        (r.model?' <span class="muted" style="font-size:11.5px">'+esc(r.model)+'</span>':'')+
+        (r.unknown?'<div class="muted" style="font-size:11px">משלוחים שלא שובץ להם רכב</div>':'')+'</td>'+
+        '<td><b>'+r.done+'</b></td><td>'+r.driverProved+'</td>'+
+        '<td'+(r.confirmed?' style="color:#8a5a1f;font-weight:700"':'')+'>'+(r.confirmed||'—')+'</td>'+
+        '<td'+(r.cancelled?' style="color:var(--danger)"':'')+'>'+(r.cancelled||'—')+'</td>'+
+        '<td>'+(r.open||'—')+'</td><td>'+(r.km? r.km.toLocaleString('he-IL') : '—')+'</td>'+
+        '<td>'+flags+'</td></tr>';
+    }).join('')+'</table></div>';
+  box.innerHTML = h;
+}
+
+/* ============================================================
+   דוח 4 — עלות תחזוקה לפי חודש (מ-B42; היה פריט פתוח מאז)
+   מקור: fault_events.cost_agorot. הנכסים הנתמכים ביומן התקלות הם
+   עגלות ומכונות בלבד — ולכן זה דוח ציוד, לא דוח רכב.
+   ============================================================ */
+function b50MaintRows(p){
+  var R = b50Range(p);
+  var byMonth = {}, byAsset = {}, months = [];
+  (DB.faultEvents||[]).forEach(function(e){
+    var d = dYmd(String(e.ts||'').slice(0,10));
+    if(!d || d < R.from || d > R.to) return;
+    var ag = Number(e.cost_agorot)||0;
+    if(!ag) return;
+    var m = d.slice(0,7);
+    if(!byMonth[m]){ byMonth[m] = {m:m, ag:0, n:0, byType:{}}; months.push(m); }
+    byMonth[m].ag += ag; byMonth[m].n++;
+    var ty = String(e.asset_type||'אחר');
+    byMonth[m].byType[ty] = (byMonth[m].byType[ty]||0) + ag;
+    var k = ty+'|'+String(e.asset_id||'');
+    if(!byAsset[k]) byAsset[k] = {type:ty, id:String(e.asset_id||''), ag:0, n:0};
+    byAsset[k].ag += ag; byAsset[k].n++;
+  });
+  return {
+    months: months.sort().map(function(m){ return byMonth[m]; }),
+    assets: Object.keys(byAsset).map(function(k){ return byAsset[k]; })
+      .sort(function(a,b){ return b.ag-a.ag; })
+  };
+}
+function b50RenderMaint(p){
+  var box = el('repMaint'); if(!box) return;
+  if(b50RangeBad(p)){ box.innerHTML = b50Empty('טווח התאריכים הפוך — תאריך הסיום מוקדם מתאריך ההתחלה'); return; }
+  var R = b50Range(p), d = b50MaintRows(p);
+  var key = b50Reg('maint', 'עלות-תחזוקה_'+R.from+'_'+R.to+'.csv',
+    ['חודש','אירועים','עלות'],
+    d.months.map(function(m){ return [m.m, m.n, b50R2(m.ag/100)]; }));
+  var h = b50Head(box, R.from+' — '+R.to,
+    'מקור: יומן התקלות והטיפולים (B42). יומן התקלות מכסה <b>עגלות ומכונות</b> — '+
+    'תקלות רכב אינן נרשמות במערכת, ולכן אינן מופיעות כאן.', key);
+  if(!d.months.length){ box.innerHTML = h + b50Empty('לא נרשמו עלויות תחזוקה בטווח שנבחר'); return; }
+  var tot = d.months.reduce(function(s,m){ return s+m.ag; },0);
+  var maxM = d.months.reduce(function(s,m){ return Math.max(s,m.ag); },0);
+  h += repKpiRow([{v:b50KpiMoney(tot/100), l:'סה\u0022כ תחזוקה'},
+    {v:d.months.length, l:'חודשים עם עלות'},
+    {v:b50KpiMoney(tot/100/d.months.length), l:'ממוצע לחודש'}]);
+  h += '<div class="card"><h3>לפי חודש</h3><table><tr><th>חודש</th><th>אירועים</th><th>עלות (לפני מע\u0022מ)</th><th></th></tr>'+
+    d.months.map(function(m){
+      var pc = maxM>0? Math.round(m.ag/maxM*100) : 0;
+      return '<tr><td><b>'+esc(m.m)+'</b></td><td>'+m.n+'</td><td class="tot">'+b45Money(m.ag/100)+'</td>'+
+        '<td style="width:40%"><div style="background:var(--line);border-radius:6px;height:8px;overflow:hidden">'+
+        '<div style="width:'+pc+'%;height:100%;background:var(--navy)"></div></div></td></tr>';
+    }).join('')+'</table></div>';
+  h += '<h3 style="margin:14px 0 8px">לפי נכס</h3><div class="card"><table><tr><th>נכס</th><th>אירועים</th><th>עלות</th></tr>'+
+    d.assets.map(function(a){
+      return '<tr><td>'+esc(b42Label(a.type, a.id))+'</td><td>'+a.n+'</td><td class="tot">'+b45Money(a.ag/100)+'</td></tr>';
+    }).join('')+'</table></div>';
+  box.innerHTML = h;
+}
+
 async function loadSummary(){
   var box = el('repSummary'); if(!box) return;
   box.innerHTML = '<div class="card empty">טוען...</div>';
@@ -6966,30 +7419,41 @@ function renderNobleReports(containerId){
     else if(e.event_type==='סיום' && openM[k]){ if(x.t>openM[k].t) segs.push({m:e.machine_id,a:openM[k].t,b:x.t}); delete openM[k]; }
   });
   Object.keys(openM).forEach(function(k){ var o=openM[k], b=new Date(Math.min(Date.now(), o.t.getTime()+864e5)); if(b>o.t) segs.push({m:o.m,a:o.t,b:b}); });
-  var busyTot={}, busyWin={}, dayAny={}, daySpan={};
+  /* B50 / הכרעת Y1: חלון השעות הקבוע שהיה כאן עד B50 בוטל. המדד הראשון נמדד מול
+     יום העבודה של הצוות בפועל — מההחתמה הראשונה ועד האחרונה באותו יום. */
+  var teamWin = b50TeamDayWindow();
+  var busyTot={}, busyTeam={}, dayAny={}, daySpan={}, teamMin={};
   segs.forEach(function(sg){
     busyTot[sg.m]=(busyTot[sg.m]||0)+(sg.b-sg.a)/60000;
     var cur=new Date(sg.a);
-    while(cur<sg.b){ /* פירוק ליממות + חיתוך לחלון 05:00–17:00 */
+    while(cur<sg.b){ /* פירוק ליממות (יום = מ-00:00, הכרעת Y1) + חיתוך ליום העבודה של הצוות */
       var dayEnd=new Date(cur); dayEnd.setHours(24,0,0,0);
       var segEnd=sg.b<dayEnd?sg.b:dayEnd, day=ld(cur);
       dayAny[day]=1;
       if(!daySpan[day]) daySpan[day]={a:cur.getTime(),b:segEnd.getTime()};
       else { if(cur.getTime()<daySpan[day].a) daySpan[day].a=cur.getTime(); if(segEnd.getTime()>daySpan[day].b) daySpan[day].b=segEnd.getTime(); }
-      var w1=new Date(cur); w1.setHours(5,0,0,0); var w2=new Date(cur); w2.setHours(17,0,0,0);
-      var ca=Math.max(cur.getTime(),w1.getTime()), cb=Math.min(segEnd.getTime(),w2.getTime());
-      if(cb>ca) busyWin[sg.m]=(busyWin[sg.m]||0)+(cb-ca)/60000;
+      var tw = teamWin[day];
+      if(tw){
+        var mid=new Date(cur); mid.setHours(0,0,0,0);
+        var wa=mid.getTime()+tw.a*60000, wb=mid.getTime()+tw.b*60000;
+        if(teamMin[day]===undefined) teamMin[day]=tw.b-tw.a;
+        var ca=Math.max(cur.getTime(),wa), cb=Math.min(segEnd.getTime(),wb);
+        if(cb>ca) busyTeam[sg.m]=(busyTeam[sg.m]||0)+(cb-ca)/60000;
+      }
       cur=dayEnd;
     }
   });
-  var days=Object.keys(dayAny), winTotal=days.length*720, spanTotal=0;
-  days.forEach(function(d){ spanTotal+=(daySpan[d].b-daySpan[d].a)/60000; });
+  var days=Object.keys(dayAny), spanTotal=0, teamTotal=0, teamDays=0;
+  days.forEach(function(d){
+    spanTotal+=(daySpan[d].b-daySpan[d].a)/60000;
+    if(teamMin[d]!==undefined){ teamTotal+=teamMin[d]; teamDays++; }
+  });
   var maxBusy=0; Object.keys(busyTot).forEach(function(m){ if(busyTot[m]>maxBusy) maxBusy=busyTot[m]; });
   var pct=function(x,y){ return y>0?Math.min(100,Math.round(x/y*100)):0; };
   var bar=function(p,color){ return '<div style="background:var(--line);border-radius:6px;height:8px;overflow:hidden"><div style="width:'+p+'%;height:100%;background:'+color+'"></div></div>'; };
   var machRows = (DB.machines||[]).map(function(m){
     var bt=busyTot[m.id]||0;
-    return {id:m.id, stage:m.auto_stage||'', bt:bt, a:pct(busyWin[m.id]||0,winTotal), b:pct(bt,spanTotal), c:pct(bt,maxBusy)};
+    return {id:m.id, stage:m.auto_stage||'', bt:bt, a:(teamTotal>0? pct(busyTeam[m.id]||0,teamTotal) : null), b:pct(bt,spanTotal), c:pct(bt,maxBusy)};
   }).sort(function(x,y){ return y.bt-x.bt; });
 
   /* --- רינדור --- */
@@ -7007,12 +7471,15 @@ function renderNobleReports(containerId){
     (lb.length?'<table><tr><th></th><th>עובד</th><th>מעברים</th><th>זמן מעבר ממוצע</th><th>פעולות בתקופה</th></tr>'+
       lb.map(function(w,i){ return '<tr><td>'+(medals[i]||(i+1))+'</td><td><b>'+esc(w.name)+'</b></td><td>'+w.moves+'</td><td>'+(w.avg?fmtMin(w.avg):'מיידי ⚡')+'</td><td>'+w.acts+'</td></tr>'; }).join('')+'</table>'
     :'<div class="empty">אין עדיין מעברי שלבים בתקופה</div>')+'</div>';
-  h+='<div class="card"><h3>ניצולת מכונות</h3><div class="muted" style="font-size:12px;margin:2px 0 8px">'+days.length+' ימי עבודה בתקופה · שלושה מדדים: יום עבודה 05:00–17:00 · מהפעלה ראשונה עד עצירה אחרונה · יחסית למכונה העמוסה ביותר.</div>';
+  h+='<div class="card"><h3>ניצולת מכונות</h3><div class="muted" style="font-size:12px;margin:2px 0 8px">'+days.length+' ימי עבודה בתקופה · שלושה מדדים: יום העבודה של הצוות · מהפעלה ראשונה עד עצירה אחרונה · יחסית למכונה העמוסה ביותר.<br>'+
+    '<b>שינוי (B50):</b> חלון השעות הקבוע שהיה כאן עד היום בוטל (הכרעת Y1). יום העבודה נמדד עכשיו מההחתמה הראשונה של עובד מכבסה ועד האחרונה באותו יום'+
+    (teamTotal>0? (' — '+teamDays+' מתוך '+days.length+' ימים כוללים נוכחות · ממוצע '+fmtMin(Math.round(teamTotal/Math.max(1,teamDays)))+' ליום')
+      : ' — אין רישומי נוכחות בתקופה, ולכן המדד הזה אינו מוצג')+'.</div>';
   if(!machRows.length) h+='<div class="empty">לא הוגדרו מכונות</div>';
   machRows.forEach(function(m){
     h+='<div style="padding:6px 0;border-top:1px solid var(--line)"><div class="row"><b class="grow">'+esc(m.id)+'</b><span class="muted" style="font-size:12px">'+esc(m.stage)+(m.stage?' · ':'')+Math.round(m.bt/6)/10+' שעות עבודה</span></div>'+
       '<div class="grid3" style="gap:8px;margin-top:4px">'+
-      '<div><div class="muted" style="font-size:11px">יום עבודה (05:00–17:00): <b>'+m.a+'%</b></div>'+bar(m.a,'var(--teal)')+'</div>'+
+      '<div><div class="muted" style="font-size:11px">יום העבודה של הצוות: <b>'+(m.a==null?'—':m.a+'%')+'</b></div>'+bar(m.a==null?0:m.a,'var(--teal)')+'</div>'+
       '<div><div class="muted" style="font-size:11px">מהתנעה עד עצירה: <b>'+m.b+'%</b></div>'+bar(m.b,'var(--navy)')+'</div>'+
       '<div><div class="muted" style="font-size:11px">יחסית לעמוסה ביותר: <b>'+m.c+'%</b></div>'+bar(m.c,'var(--amber)')+'</div>'+
       '</div></div>';
