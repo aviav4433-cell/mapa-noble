@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.44-B49e · 28.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.45-B49d · 28.07.2026</div>
   </div>
 </div>
 
@@ -2007,6 +2007,99 @@ function b49cActiveIntakes(list){
     return i.status!=='נמסר' && !(String(i.internal||'')==='כן' && String(i.ready_ts||''));
   });
 }
+/* ===== B49d — כביסה מלקוח: הזמנת 'כביסה' → קליטת NOBLE =====
+   הכרעת אבי (28.07.2026): הקליטה נפתחת במפעל כשהכביסה מגיעה בפועל,
+   מתוך רשימת "ממתין לקליטה" בטאב הקליטה — לא אוטומטית בשדה.
+   אותו טופס של floorIntakeTab, לא טופס שני.
+   ⚠ P2: אין להסיק אופן מסירה מ-delivery_fee. רגל ההלוך נגזרת מ-ship_out. */
+var B49D_CLOSED_INTAKE = ['מוכן','במשלוח','נמסר'];
+function b49dIntakeOfOrder(oid){
+  if(!oid) return null;
+  return ((DB&&DB.laundryIntakes)||[]).find(function(i){ return String(i.order_id||'')===String(oid); }) || null;
+}
+/* הזמנות כביסה שטרם נפתחה להן קליטה. בכוונה בלי סינון תאריך — עדיף
+   שהרצפה תראה הזמנה שתאריכה שגוי מאשר שההזמנה תיעלם ממנה. */
+function b49dPendingOrders(){
+  return ((DB&&DB.orders)||[]).filter(function(o){
+    return String(o.type)==='כביסה' && ['מאושרת','סופקה'].indexOf(String(o.status))>-1 && !b49dIntakeOfOrder(o.id);
+  }).sort(function(a,b){
+    return String(b49eLegDate(a,'הלוך')||'').localeCompare(String(b49eLegDate(b,'הלוך')||''));
+  });
+}
+/* מצב רגל ההלוך — למה הכביסה כבר אצלנו, או למה עוד לא */
+function b49dLegState(o){
+  if(b49eShipMode(o,'הלוך')!==B49E_SHIP) return {txt:'איסוף עצמי — הלקוח מביא', color:'var(--navy2)'};
+  var picks = ((DB&&DB.deliveries)||[]).filter(function(d){ return d.order_id===o.id && String(d.kind)===b49eLegKind(o,'הלוך'); });
+  if(picks.some(function(d){ return String(d.status)==='בוצע'; })) return {txt:'נאסף', color:'var(--ok)'};
+  var h = picks.filter(b41DriverHandled)[0];
+  if(h) return {txt:'נאסף ע"י '+(h.driver||'הנהג'), color:'var(--ok)'};
+  if(picks.some(function(d){ return String(d.status)==='בדרך'; })) return {txt:'הנהג בדרך', color:'var(--amber)'};
+  if(!picks.length) return {txt:'אין רשומת נסיעה', color:'var(--danger)'};
+  return {txt:'טרם נאסף', color:'var(--danger)'};
+}
+/* קליטות פתוחות של לקוח — הבסיס להכרעת L2 (הוספה לקליטה קיימת) */
+function b49dOpenIntakesFor(custId){
+  if(!custId) return [];
+  return ((DB&&DB.laundryIntakes)||[]).filter(function(i){
+    return String(i.customer_id||'')===String(custId) && String(i.internal||'')!=='כן' &&
+      B49D_CLOSED_INTAKE.indexOf(String(i.status))===-1;
+  });
+}
+function b49dIntakeCartCount(iid){
+  return ((DB&&DB.intakeCarts)||[]).filter(function(b){ return b.intake_id===iid && b.active==='כן'; }).length;
+}
+/* נקודת הכניסה היחידה מכל מסך אל טופס הקליטה, עם הזמנה מאוכלסת */
+function b49dGoIntake(oid){
+  if(!allowedViews().some(function(v){ return v[0]==='floor'; })) return toast('אין לך הרשאה למסך רצפת הייצור', true);
+  FLOOR_INTAKE_ORDER = String(oid||'');
+  FLOOR_INTAKE_CARTS = [];
+  FLOOR_TAB = 'intake';
+  closeModal();
+  go('floor');
+}
+function b49dCanIntake(){
+  return ['מנהל','משרד','מכבסה','עובד רצפה'].indexOf(ROLE)>-1 && allowedViews().some(function(v){ return v[0]==='floor'; });
+}
+/* מקטע הקליטה בכרטיס הזמנת כביסה — הזמנת השכרה לא רואה אותו כלל */
+function b49dOrderIntakeHtml(o){
+  if(String(o.type)!=='כביסה') return '';
+  var ik = b49dIntakeOfOrder(o.id);
+  var st = b49dLegState(o);
+  var body;
+  if(ik){
+    var kg = Number(ik.net_weight_kg)||0;
+    body = '<div class="row"><div class="grow"><b>'+esc(ik.id)+'</b> <span class="chip" style="background:var(--teal)">'+esc(ik.status)+'</span>'+
+      '<div class="muted" style="font-size:12.5px">נפתחה '+esc(String(ik.intake_ts||'').replace('T',' '))+
+      (kg? ' · '+kg+' ק"ג נטו':' · טרם נשקלה')+
+      (Number(ik.price_per_kg)>0? ' · '+ils(ik.price_per_kg)+' לק"ג':'')+
+      (Number(ik.total_charge)>0? ' · לחיוב '+ils(ik.total_charge):'')+'</div></div>'+
+      (b49dCanIntake()?'<button class="btn ghost sm" onclick="closeModal();FLOOR_TAB=\'board\';go(\'floor\')">ללוח החי ←</button>':'')+'</div>';
+  } else if(['מאושרת','סופקה'].indexOf(String(o.status))>-1){
+    body = '<div class="row"><div class="grow"><span style="color:'+st.color+';font-weight:600">'+esc(st.txt)+'</span>'+
+      '<div class="muted" style="font-size:12.5px">טרם נפתחה קליטה במכבסה. פתח אותה כשהכביסה מגיעה פיזית למפעל — הפעולה גם תסגור את נסיעת האיסוף.</div></div>'+
+      (b49dCanIntake()?'<button class="btn sm" onclick="b49dGoIntake(\''+o.id+'\')">פתח קליטה במכבסה</button>':'')+'</div>';
+  } else {
+    body = '<div class="muted" style="font-size:12.5px">לא נפתחה קליטה במכבסה להזמנה זו.</div>';
+  }
+  return '<h3 style="margin-top:14px">קליטה במכבסה</h3><div class="card" style="padding:9px 11px">'+body+'</div>';
+}
+/* בלוק "ממתין לקליטה" — מוצג במסך המשלוחים ובטאב הקליטה */
+function b49dPendingHtml(inFloor){
+  var rows = b49dPendingOrders();
+  if(!rows.length) return inFloor? '' : '';
+  return '<div class="section-title" style="margin-top:16px"><h3>🧺 כביסת לקוח שממתינה לקליטה</h3><span class="muted">'+rows.length+'</span></div>'+
+    '<div class="muted" style="margin-bottom:6px">הזמנות כביסה שטרם נפתחה להן קליטה במכבסה. פתח קליטה כשהכביסה מגיעה פיזית למפעל.</div>'+
+    rows.map(function(o){
+      var st = b49dLegState(o);
+      return '<div class="card" style="border-right:5px solid #8a5a1f">'+
+        '<div class="row"><div class="grow" style="cursor:pointer" onclick="openOrder(\''+o.id+'\')"><b>'+esc(cust(o.customer_id))+'</b>'+
+        (o.order_number?' <span class="muted">· הזמנה #'+esc(o.order_number)+'</span>':'')+
+        '<div class="muted">'+esc(b49eLegLabel(o,'הלוך'))+' · '+esc(b49eLegDate(o,'הלוך')||'—')+'</div>'+
+        '<div style="font-size:12.5px;color:'+st.color+';font-weight:600">'+esc(st.txt)+'</div></div>'+
+        (b49dCanIntake()?'<button class="btn sm" onclick="b49dGoIntake(\''+o.id+'\')">פתח קליטה</button>':'')+
+        '</div></div>';
+    }).join('');
+}
 
 /* ================= הזמנות ================= */
 function orderCard(o){
@@ -2242,6 +2335,7 @@ function openOrder(oid){
     :'')+
     creditBarHtml(creditStatus(o.customer_id))+
     (pays.length?'<table><tr><th>קבלה</th><th>תאריך</th><th>סכום</th><th>אמצעי</th><th>מסמך</th></tr>'+pays.map(p=>'<tr><td><span style="color:var(--navy2);cursor:pointer;text-decoration:underline" onclick="openReceipt(\''+p.id+'\')">'+esc(p.receipt_number)+'</span></td><td>'+esc(p.date)+'</td><td>'+ils(p.amount)+'</td><td>'+esc(p.method)+(p.type?' · '+esc(p.type):'')+'</td><td>'+(p.pdf_url?'<a href="'+esc(p.pdf_url)+'" target="_blank">קבלה</a>':'')+'</td></tr>').join('')+'</table>':'')+
+    b49dOrderIntakeHtml(o)+
     b49eOrderShipHtml(o)+
     (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0;cursor:pointer" onclick="openDelivery(\''+d.id+'\')"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
     b44PickBlockHtml(oid)+
@@ -2423,7 +2517,11 @@ function rLaundry(){
         '</div>':'')+'</div>';
       }).join('')+'</div>';
   }).join('');
+  /* B49d: לוח הכביסה הוא טקסטיל MAPA. כביסת לקוח נכנסת דרך קליטת NOBLE —
+     קיצור אחד לכאן כדי שהעובד לא יחפש איפה פותחים אותה. */
+  var pend49d = b49dPendingOrders();
   el('main').innerHTML = '<div class="section-title"><h2>לוח כביסה</h2><span class="muted">"מוכן" מציג 3 ימים אחרונים · לחיצה על כרטיס פותחת היסטוריה</span>'+
+    ((pend49d.length && b49dCanIntake())?'<button class="btn sm" onclick="b49dGoIntake(\''+pend49d[0].id+'\')">🧺 כביסת לקוח לקליטה ('+pend49d.length+')</button>':'')+
     (allowedViews().some(function(v){ return v[0]==='reports'; })?'<button class="btn ghost sm" onclick="goReport(\'noble\')">📊 דוח ביצועי מכבסה</button>':'')+
     '</div><div class="kanban">'+cols+'</div>';
 }
@@ -2902,6 +3000,7 @@ function rDeliveries(){
       (openSup.length? openSup.map(delivCard).join(''):'<div class="card empty">אין אספקות פתוחות</div>')+
       '<div class="section-title"><h3>⬅ איסופים פתוחים (החזרות)</h3><span class="muted">'+openPick.length+'</span></div>'+
       (openPick.length? openPick.map(delivCard).join(''):'<div class="card empty">אין איסופים פתוחים</div>')+
+      b49dPendingHtml(false)+
       b41StaleHtml()+
       b44DupPickupHtml()+
       (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
@@ -3427,10 +3526,16 @@ function openDelivery(did){
   /* B39 (ליקוי 1): קליטת החזרה ידנית — בלי לעבור למסך ההזמנה.
      עד כה הכפתור היחיד היה "לקליטת החזרה בשקילה", וכדי לקלוט בלי שקילה
      היה צריך לפתוח את ההזמנה. עכשיו הפעולה יושבת כאן, ראשית. */
-  var canRecv = isMgr && isReturn && d.status!=='בוצע' && o.id && o.status==='סופקה';
+  /* B49d: נסיעת איסוף של הזמנת כביסה — הפעולה של הרגע היא פתיחת קליטה במכבסה,
+     לא "קליטת החזרה" (שהיא מסלול ההשכרה ואינה חלה כאן). */
+  var isWash49d = o.id && String(o.type)==='כביסה' && isReturn && ['מאושרת','סופקה'].indexOf(String(o.status))>-1;
+  var wash49dIk = isWash49d? b49dIntakeOfOrder(o.id) : null;
+  var canRecv = isMgr && isReturn && !isWash49d && d.status!=='בוצע' && o.id && o.status==='סופקה';
   var recvBtn = canRecv? '<button class="btn pri" onclick="closeModal();returnForm(\''+o.id+'\')">קבל החזרה (ללא שקילה)</button>' : '';
   var pri = '';
-  if(!isMgr) pri = '';
+  if(isWash49d && wash49dIk) pri = '<span class="chip" style="background:var(--ok);color:#fff;padding:9px 12px">✔ נקלטה במכבסה — '+esc(wash49dIk.id)+' · '+esc(wash49dIk.status)+'</span>';
+  else if(isWash49d && b49dCanIntake()) pri = '<button class="btn pri" onclick="b49dGoIntake(\''+o.id+'\')">פתח קליטה במכבסה</button>';
+  else if(!isMgr) pri = '';
   else if(canRecv) pri = recvBtn + ' <button class="btn ghost" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>';
   else if(d.status==='מתוכנן') pri = '<button class="btn pri" onclick="driverForm(\''+d.id+'\')">שבץ נהג ורכב</button>';
   else if(d.note_number) pri = '<button class="btn pri" onclick="printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>';
@@ -3441,7 +3546,8 @@ function openDelivery(did){
     (mgr && d.status==='מתוכנן' && !isReturn && d.order_id)?'<button class="btn" onclick="closeMore();splitDeliveryForm(\''+d.id+'\')">פצל משלוח בין נהגים</button>':'',
     (mgr && d.status!=='מתוכנן')?'<button class="btn" onclick="closeMore();driverForm(\''+d.id+'\')">שנה נהג ורכב</button>':'',
     (mgr && d.note_number && (d.status==='מתוכנן'||canRecv))?'<button class="btn" onclick="closeMore();printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>':'',
-    (mgr && isReturn && d.status!=='בוצע' && d.note_number)?'<button class="btn" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>':'',
+    (mgr && isReturn && !isWash49d && d.status!=='בוצע' && d.note_number)?'<button class="btn" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>':'',
+    (isWash49d && !wash49dIk && b49dCanIntake())?'<button class="btn" onclick="closeMore();b49dGoIntake(\''+o.id+'\')">פתח קליטה במכבסה</button>':'',
     (mgr && o.id)?'<button class="btn" onclick="closeMore();closeModal();openOrder(\''+o.id+'\')">פתח את ההזמנה</button>':'',
     (mgr && o.customer_id)?'<button class="btn" onclick="closeMore();closeModal();openCust(\''+esc(o.customer_id)+'\')">פתח כרטיס לקוח</button>':'',
     d.photo_url? '<a class="btn" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום מסירה</a>' : '<button class="btn" onclick="closeMore();deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>',
@@ -3465,7 +3571,9 @@ function openDelivery(did){
       lines.map(function(l){ return '<tr><td>'+esc(item(l.item_id))+'</td><td>'+esc(l.qty)+'</td></tr>'; }).join('')+'</table>':'<div class="muted" style="margin-top:12px">אין שורות פריטים להזמנה</div>')+
     (o.notes?'<div class="doc-meta" style="margin-top:10px">הערות הזמנה:</div><div class="sub" style="white-space:pre-wrap">'+esc(o.notes)+'</div>':'')+
     /* B39: אם זו החזרה שלא ניתן לקלוט — מסבירים למה, במקום להשאיר כפתור חסר */
-    ((isMgr && isReturn && d.status!=='בוצע' && !canRecv)?
+    (isWash49d? '<div class="muted" style="margin-top:10px;font-size:12.5px">זו נסיעת איסוף של <b>הזמנת כביסה</b> — הכביסה נכנסת למכבסה דרך פתיחת קליטה ברצפת הייצור, לא דרך "קליטת החזרה" של ההשכרה.'+
+      (wash49dIk?' הקליטה כבר נפתחה: '+esc(wash49dIk.id)+'.':' פתיחת הקליטה גם תסגור את נסיעת האיסוף הזו.')+'</div>':'')+
+    ((isMgr && isReturn && !isWash49d && d.status!=='בוצע' && !canRecv)?
       '<div class="muted" style="margin-top:10px;font-size:12.5px">'+
       (o.id? (o.status==='הוחזרה'||o.status==='הושלמה'? 'ההחזרה כבר נקלטה — ההזמנה בסטטוס '+esc(o.status)+'.'
             : 'לא ניתן לקלוט החזרה: ההזמנה בסטטוס '+esc(o.status||'—')+' (נדרש "סופקה").')
@@ -8971,6 +9079,8 @@ function b42FaultBanner(type, id){
 /* מסך עבודה לעובדי רצפה: קליטה, סריקת עגלה+מכונה (המכונה קובעת שלב), שקילה, משלוח.
    מצב טאבלט משותף: זיהוי עובד במספר אישי לפני כל פעולה — לשיוך נכון של מדדי מהירות. */
 var FLOOR_TAB = 'work', FLOOR_INFO = null, FLOOR_BC = '', FLOOR_INTAKE_CARTS = [];
+/* B49d: ההזמנה שהקליטה נפתחת עבורה (ריק = קליטה חופשית, כמו עד היום) */
+var FLOOR_INTAKE_ORDER = '';
 function floorTablet(){ return localStorage.getItem('mn_floor_tablet')==='1'; }
 function floorTabletToggle(){ // NC4 (משימה 8): כניסה ויציאה ממצב טאבלט משותף — בקוד מנהל בלבד
   var on = floorTablet();
@@ -9318,10 +9428,25 @@ function b49bManualIntakeSet(){
 }
 function floorIntakeTab(){
   var custs = DB.customers.filter(c=>c.active!=='לא');
+  /* B49d: קליטה שנפתחת עבור הזמנת כביסה — הלקוח נעול לפי ההזמנה */
+  var ord = FLOOR_INTAKE_ORDER? (DB.orders||[]).find(x=>x.id===FLOOR_INTAKE_ORDER) : null;
+  if(FLOOR_INTAKE_ORDER && (!ord || b49dIntakeOfOrder(FLOOR_INTAKE_ORDER))){ FLOOR_INTAKE_ORDER=''; ord=null; }
+  var ordCust = ord? (DB.customers||[]).find(x=>x.id===ord.customer_id) : null;
   el('floorBody').innerHTML =
+    (ord? '' : b49dPendingHtml(true))+
     '<div class="card">'+
-    '<div class="frow"><label>לקוח</label><select id="fl_cust" style="font-size:16px"><option value="">— בחר לקוח —</option>'+custs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join('')+'</select></div>'+
-    '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fl_internal" style="width:auto" onchange="el(\'fl_cust\').disabled=this.checked"> כביסה פנימית — טקסטיל השכרה של MAPA (ללא חיוב)</label>'+
+    (ord?
+      '<div class="card" style="background:#EFF6F5;border-color:var(--teal);padding:9px 11px;margin-bottom:10px">'+
+        '<div class="row"><div class="grow"><b style="font-size:15px">🧺 קליטה עבור הזמנה '+(ord.order_number?'#'+esc(ord.order_number):esc(ord.id))+'</b>'+
+        '<div class="muted" style="font-size:12.5px">'+esc(cust(ord.customer_id))+' · '+esc(b49eLegDate(ord,'הלוך')||'')+
+        (ordCust&&Number(ordCust.price_per_kg)>0?' · '+ils(ordCust.price_per_kg)+' לק"ג':' · <span style="color:var(--danger)">לא הוגדר מחיר לק"ג בכרטיס הלקוח</span>')+'</div></div>'+
+        '<button class="btn ghost sm" onclick="FLOOR_INTAKE_ORDER=\'\';floorIntakeTab()">בטל בחירה</button></div></div>'+
+      '<input type="hidden" id="fl_cust" value="'+esc(ord.customer_id)+'">'
+    :
+      '<div class="frow"><label>לקוח</label><select id="fl_cust" style="font-size:16px" onchange="b49dTargetRefresh()"><option value="">— בחר לקוח —</option>'+custs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join('')+'</select></div>'
+    )+
+    (ord?'':'<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fl_internal" style="width:auto" onchange="el(\'fl_cust\').disabled=this.checked;b49dTargetRefresh()"> כביסה פנימית — טקסטיל השכרה של MAPA (ללא חיוב)</label>')+
+    '<div id="fl_targetwrap"></div>'+
     /* B49b: קליטה ידנית — כביסה שנכנסת בלי עגלה פיזית רשומה */
     '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fl_manual" style="width:auto" onchange="floorManualToggle()"> אין עגלה פיזית — קליטה ידנית (שקים / ערימה / הלקוח הביא בעצמו)</label>'+
     '<div id="fl_manualnote" class="card" style="display:none;background:#EFF6F5;border-color:var(--teal);padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
@@ -9334,8 +9459,33 @@ function floorIntakeTab(){
     '<button class="btn ghost grow" onclick="floorAddCart()">הוסף עגלה</button></div>'+
     '<div id="fl_cartlist" style="margin-bottom:10px"></div></div>'+
     '<div class="frow"><label>הערות (לא חובה)</label><input id="fl_inotes"></div>'+
-    '<button class="btn grow" style="width:100%;font-size:17px;padding:14px" onclick="floorSaveIntake()">פתח קליטה</button></div>';
+    '<button class="btn grow" id="fl_savebtn" style="width:100%;font-size:17px;padding:14px" onclick="floorSaveIntake()">פתח קליטה</button></div>';
   floorRenderCartList();
+  b49dTargetRefresh();
+}
+/* B49d (L2): ללקוח שכבר יש קליטה פתוחה — אפשר להוסיף אליה עגלות במקום
+   לפתוח קליטה שנייה. אין תקרה על מספר העגלות בקליטה.
+   כשנבחרה הזמנה, האפשרות מוסתרת בכוונה: הקליטה חייבת להיות מקושרת
+   להזמנה הזו, והוספה לקליטה של הזמנה אחרת הייתה משאירה את שתיהן פתוחות. */
+function b49dTargetRefresh(){
+  var w = el('fl_targetwrap'); if(!w) return;
+  var btn = el('fl_savebtn');
+  var internal = el('fl_internal') && el('fl_internal').checked;
+  var cid = (el('fl_cust') && !FLOOR_INTAKE_ORDER)? el('fl_cust').value : '';
+  var opens = (internal||!cid)? [] : b49dOpenIntakesFor(cid);
+  if(!opens.length){
+    w.innerHTML='';
+    if(btn) btn.textContent='פתח קליטה';
+    return;
+  }
+  w.innerHTML = '<div class="card" style="background:#FFF3CD;border-color:#E8A33D;padding:8px 10px;margin-bottom:10px">'+
+    '<div style="font-size:12.5px;margin-bottom:6px">ללקוח הזה כבר יש קליטה פתוחה. אפשר להוסיף אליה את העגלות במקום לפתוח קליטה שנייה.</div>'+
+    '<div class="frow" style="margin:0"><label>יעד הקליטה</label><select id="fl_target" onchange="b49dTargetRefresh()">'+
+    '<option value="">פתח קליטה חדשה</option>'+
+    opens.map(function(i){
+      return '<option value="'+esc(i.id)+'"'+(el('fl_target')&&el('fl_target').value===i.id?' selected':'')+'>הוסף ל-'+esc(i.id)+' · '+esc(i.status)+' · '+b49dIntakeCartCount(i.id)+' עגלות</option>';
+    }).join('')+'</select></div></div>';
+  if(btn) btn.textContent = (el('fl_target')&&el('fl_target').value)? 'הוסף לקליטה הקיימת' : 'פתח קליטה';
 }
 /* B49b: סימון "אין עגלה פיזית" מסתיר את סריקת העגלות ומנקה רשימה שנסרקה בטעות */
 function floorManualToggle(){
@@ -9366,16 +9516,32 @@ async function floorAddCart(){
   el('fl_icart').focus();
 }
 async function floorSaveIntake(){
-  var internal = el('fl_internal').checked;
-  var cust = el('fl_cust').value;
+  var internal = !!(el('fl_internal') && el('fl_internal').checked);   // B49d: אין תיבה כשנבחרה הזמנה
+  var cust = el('fl_cust')? el('fl_cust').value : '';
   var manual = !!(el('fl_manual') && el('fl_manual').checked);
-  if(!internal && !cust) return toast('בחר לקוח או סמן כביסה פנימית', true);
+  var oid = FLOOR_INTAKE_ORDER || '';
+  var target = (!oid && el('fl_target'))? el('fl_target').value : '';   // B49d/L2
+  var notes = el('fl_inotes')? el('fl_inotes').value : '';
+  if(!oid && !internal && !cust) return toast('בחר לקוח או סמן כביסה פנימית', true);
+  /* B49d/L2: הוספה לקליטה פתוחה — עגלות בלבד, אין "קליטה ידנית" בלי עגלה */
+  if(target){
+    if(!FLOOR_INTAKE_CARTS.length) return toast('סרוק לפחות עגלה אחת להוספה לקליטה '+target, true);
+    var ra = await floorAct('b49dAddCarts',{intake_id:target, cart_barcodes:FLOOR_INTAKE_CARTS.slice(), notes:notes});
+    if(!ra) return;
+    toast('נוספו '+ra.added+' עגלות לקליטה '+target);
+    FLOOR_INTAKE_CARTS=[]; FLOOR_TAB='work'; FLOOR_INFO=null; FLOOR_BC='';
+    var ga = await api('getAll'); if(ga && ga.ok) DB=ga.db;
+    rFloor();
+    return;
+  }
   if(!manual && !FLOOR_INTAKE_CARTS.length) return toast('סרוק לפחות עגלה אחת, או סמן "אין עגלה פיזית"', true);
   var r = await floorAct('nobleIntake',{customer_id:cust,internal:internal?'כן':'',manual:manual?'כן':'',
-    cart_barcodes:manual?[]:FLOOR_INTAKE_CARTS.slice(),notes:el('fl_inotes').value});
+    order_id:oid, cart_barcodes:manual?[]:FLOOR_INTAKE_CARTS.slice(),notes:notes});
   if(r){
-    toast('נפתחה קליטה '+r.intake.id+(manual?' (ידנית — ללא עגלה פיזית)':''));
-    FLOOR_INTAKE_CARTS=[]; FLOOR_TAB='work'; FLOOR_INFO=null;
+    toast('נפתחה קליטה '+r.intake.id+(manual?' (ידנית — ללא עגלה פיזית)':'')+
+      (r.pickup && r.pickup.done? ' · נסיעת האיסוף נסגרה':'')+
+      (r.pickup && r.pickup.cancelled? ' · '+r.pickup.cancelled+' נסיעות איסוף בוטלו (לא בוצעו בפועל)':''));
+    FLOOR_INTAKE_CARTS=[]; FLOOR_INTAKE_ORDER=''; FLOOR_TAB='work'; FLOOR_INFO=null;
     /* B49b: לקליטה ידנית אין ברקוד לסרוק — נכנסים ישר לעבודה על העגלה הווירטואלית */
     FLOOR_BC = (manual && r.virtual_cart_id) ? String(r.virtual_cart_id) : '';
     var g = await api('getAll'); if(g && g.ok) DB=g.db;
