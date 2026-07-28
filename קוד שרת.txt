@@ -53,6 +53,20 @@
 //                   ⚠ b41DriverHandled ו-photo_by/scan_by לא נגעו (הכרעת B41b).
 //                     ההצהרה היא שכבה נפרדת — הצהרה מתועדת, לא ראיה.
 //                   ⚠ שתי עמודות חדשות ב-deliveries — יש להריץ setupDatabase
+//             B51 — ביצועים: קיצוץ מטען getAll + עימוד יומן הפעולות — canary v4.50-B51
+//                   • SLIM_POLICY — מדיניות פר-טבלה במקום if-ים פזורים.
+//                     audit_log / call_logs / payment_declarations / customer_messages
+//                     כלל אינן נקראות מהגיליון ונשלחות כמערך ריק.
+//                     notifications 90 יום (ממתין/נכשל תמיד) · laundry_events
+//                     ו-laundry_task_events 180 יום · date_changes 365 יום.
+//                   ⚠ stock_moves · package_moves · fault_events · attendance · payroll
+//                     **אינן נחתכות** — הממשק מסכם מהן היסטוריה מלאה (יתרות מלאי,
+//                     יתרות אריזה, עלות תחזוקה, שעות עבודה). ראה SLIM_POLICY.
+//                   • b51AuditPage — עימוד שרת ליומן הפעולות (קריאה, מנהל בלבד).
+//                   • b51ScrubAudit — ניקוי סיסמאות היסטוריות מ-audit_log,
+//                     אצוות 500 שורות, אידמפוטנטי, עם תצוגה מקדימה (כלל R1).
+//                   • b51PayloadStats — אבחון משקל הנתונים על המסך, בלי ייצוא (R1).
+//                   ⚠ אין שינוי סכימה.
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -376,7 +390,10 @@ var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופ
 var B42_NEXT_STEPS = ['ממתין לטכנאי', 'הוזמן חלק חילוף', 'בטיפול פנימי', 'ממתין להצעת מחיר', 'ממתין להחלטת הנהלה', 'אחר'];
 // B42: תוצאת הסגירה קובעת את מצב הנכס (הכרעת אבי). הערך סמלי — התרגום למצב בפועל ב-b42Asset.
 var B42_OUTCOMES = { 'תוקנה': 'fixed', 'הושבתה סופית': 'dead', 'לא הייתה תקלה': 'prev' };
-var MANAGER_ONLY = ['delete', 'b54ChargeCancel', 'b38FixPickups', 'b41CloseStalePickups', 'b49eBackfillShipModes', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
+var MANAGER_ONLY = [
+  // B51: יומן הפעולות, ניקוי הסיסמאות ההיסטוריות ומדידת משקל הנתונים — מנהל בלבד
+  'b51AuditPage', 'b51ScrubAudit', 'b51PayloadStats',
+  'delete', 'b54ChargeCancel', 'b38FixPickups', 'b41CloseStalePickups', 'b49eBackfillShipModes', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
   // B2: קביעת מסגרת אשראי — מנהל בלבד (D6)
@@ -597,12 +614,83 @@ var TMAP = {
 var LONG_TEXT_PREVIEW = 300;
 var LONG_TEXT_FIELDS = { notes: ['text'], tasks: ['details'], meetings: ['protocol'], task_comments: ['text'] };
 
+// ============================================================================
+// B51 — SLIM_POLICY: קיצוץ מטען getAll
+// ----------------------------------------------------------------------------
+// עד B51 getAll שלח את כל 55 הטבלאות במלואן בכל רענון, ולכן גם קרא את כל
+// הגיליונות. הטבלה הצומחת מהר מכולן היא audit_log — שורה לכל פעולת כתיבה.
+//
+// ⚠ כלל ברזל של ה-batch: אין חיתוך בלי רשימת צרכנים כתובה.
+// כל טבלה כאן נבדקה ב-grep מול index.html. שלוש טבלאות שה-BUILD_PLAN הציע
+// לחתוך **אינן נחתכות**, כי הממשק מסכם מהן היסטוריה מלאה:
+//   stock_moves  — יתרת מלאי = סכום כל התנועות מאז ומעולם (rDash / rItems /
+//                  b40ItemBreakdown / whQty). חיתוך = מספרי מלאי שגויים.
+//   package_moves— יתרת אריזות מחושבת באותה צורה (pkgBalance / pkgLedger).
+//   fault_events — דוח "עלות תחזוקה לפי חודש" (B50) רץ על טווח חופשי,
+//                  כולל שנים אחורה. חיתוך = עלויות שנעלמות בשקט.
+// attendance ו-payroll אינן נחתכות (דוח השעות של B50 + מדד Y1 + שכר).
+//
+// mode:'drop'  — הטבלה כלל אינה נקראת מהגיליון ונשלחת כמערך ריק
+//                (הממשק מניח שכל המערכים קיימים — ולכן [] ולא undefined).
+// mode:'days'  — רק N הימים האחרונים; רשומה בלי חותמת זמן נשמרת תמיד,
+//                כדי שנתון לא ייעלם בשקט בגלל שדה ריק.
+// ============================================================================
+var SLIM_POLICY = {
+  // צרכן יחיד — מסך היומן, שעבר ב-B51 לעימוד שרת (b51AuditPage)
+  audit_log: { drop: true },
+  // אפס צרכנים ב-index.html (יומן שיחות הנהג נכתב ואינו מוצג)
+  call_logs: { drop: true },
+  // B55 — אפס צרכנים ישירים; המסכים עובדים דרך b10ApprovalsInbox ו-portalGetData
+  payment_declarations: { drop: true },
+  customer_messages: { drop: true },
+  // ווידג'ט ההתראות במסך היומן — הממתינות והנכשלות חייבות להופיע בכל גיל
+  notifications: {
+    days: 90, ts: ['sent_at', 'scheduled_for'],
+    keep: function (r) { var st = String(r.status || ''); return st === 'ממתין' || st === 'נכשל'; }
+  },
+  // דוח ביצועי המכבסה מוגבל ל-90 יום (הכפתור הארוך ביותר) + שקילות היום
+  laundry_events: { days: 180, ts: ['ts'] },
+  // היסטוריית משימת כביסה במודאל
+  laundry_task_events: { days: 180, ts: ['ts'] },
+  // היסטוריית שינויי מועד תשלום (B43) — נדירה, טווח רחב
+  date_changes: { days: 365, ts: ['ts'] }
+};
+
+function b51CutoffYmd(days) {
+  var d = new Date();
+  d.setDate(d.getDate() - Number(days || 90));
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+function b51RowYmd(r, fields) {
+  for (var i = 0; i < fields.length; i++) {
+    var v = String(r[fields[i]] == null ? '' : r[fields[i]]).trim();
+    if (v) return v.substring(0, 10);
+  }
+  return '';
+}
+
 // G1: בונה את מטען getAll — עותק של הטבלאות שבו שדות ארוכים קוצצו וסומנו ב-<field>_trunc
+// B51: ועליו מדיניות הקיצוץ. out._slim מתאר לממשק מה נחתך, כדי שמסכי היסטוריה
+//      יציגו "מוצגים N הימים האחרונים" ולא ייראו כאילו הנתונים נעלמו.
 function getAllPayload(db) {
   var out = {};
+  var slimInfo = {};
   Object.keys(TMAP).forEach(function (t) {
     var key = TMAP[t];
+    var pol = SLIM_POLICY[t];
+    // drop: לא נוגעים ב-db[key] בכלל — הגיליון אינו נקרא (זה החיסכון האמיתי)
+    if (pol && pol.drop) { out[key] = []; slimInfo[t] = { mode: 'drop' }; return; }
     var rows = db[key];
+    if (pol && pol.days) {
+      var cut = b51CutoffYmd(pol.days);
+      var before = rows.length;
+      rows = rows.filter(function (r) {
+        if (pol.keep && pol.keep(r)) return true;
+        var d = b51RowYmd(r, pol.ts);
+        return !d || d >= cut;
+      });
+      slimInfo[t] = { mode: 'days', days: pol.days, from: cut, sent: rows.length, total: before };
+    }
     var fields = LONG_TEXT_FIELDS[t];
     if (!fields) { out[key] = rows; return; }
     out[key] = rows.map(function (r) {
@@ -619,6 +707,7 @@ function getAllPayload(db) {
       return c;
     });
   });
+  out._slim = slimInfo;
   return out;
 }
 
@@ -1110,7 +1199,10 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   // B19b (L2): בדיקת זמינות מהפורטל/חנות — קריאה בלבד
   'portalCheckAvail',
   // B54: אבחון נתוני החיובים — קריאה בלבד, אינה משנה דבר (כלל R1)
-  'b54LedgerAudit'];
+  'b54LedgerAudit',
+  // B51: עימוד יומן הפעולות ומדידת משקל הנתונים — קריאה בלבד.
+  // b51ScrubAudit בכוונה **אינה** כאן — היא כותבת לגיליון.
+  'b51AuditPage', 'b51PayloadStats'];
 
 function route(action, p, user) {
   b54Bump();   // B54: ספר חיובים נקי לכל בקשה
@@ -1197,6 +1289,9 @@ function getDriverFilteredPayload(db, employeeId) {
   out.employees = emp ? [{ id: emp.id, name: emp.name, role: emp.role }] : [];
   // B34: הנסיעות של הנהג בלבד — לצורך קיבוץ המסלול לפי נסיעות
   out.deliveryTrips = (full.deliveryTrips || []).filter(function (t) { return String(t.driver_id) === String(employeeId); });
+  // B51: הנהג יורש את אותה מדיניות קיצוץ — אף אחת מהטבלאות שלו אינה נחתכת,
+  // אבל הדגל עובר כדי שהממשק יתנהג זהה בשני המצבים.
+  out._slim = full._slim || {};
   return out;
 }
 
@@ -3503,6 +3598,11 @@ function handle(action, p, db, user) {
     case 'b54ChargeAdd': return b54ChargeAdd(db, p, user);
     case 'b54ChargeCancel': return b54ChargeCancel(db, p, user);
     case 'b54LedgerAudit': return b54LedgerAudit(db, p);
+
+    // ===================== B51 =====================
+    case 'b51AuditPage': return b51AuditPage(p);
+    case 'b51ScrubAudit': return b51ScrubAudit(p);
+    case 'b51PayloadStats': return b51PayloadStats(db);
 
     // ===================== B55: הודעות תשלום ופניות לקוח =====================
     // פעולות הפורטל מתחילות ב-'portal' ולכן עוברות ב-doPost בלי סשן — האימות
@@ -8545,4 +8645,213 @@ function b42CreateExpense(db, ev, prov, p, user) {
   var feRow = db.futureExpenses.find(function (x) { return x.id === fexpId; });
   if (feRow) { feRow.status = 'שולם'; writeTable('future_expenses', db.futureExpenses); }
   return { ok: true, fexp_id: fexpId, expense_id: expId };
+}
+
+// ============================================================================
+// B51 — יומן הפעולות: עימוד שרת, ניקוי סיסמאות היסטוריות, ומדידת משקל הנתונים
+// ----------------------------------------------------------------------------
+// עד B51 מסך היומן עבד על DB.auditLog שהגיע ב-getAll. כלומר כל משתמש, בכל
+// רענון, גרר את כל גיליון היומן. מ-B51 audit_log כלל אינו נשלח (SLIM_POLICY),
+// והמסך קורא ישירות מהגיליון בעמודים.
+//
+// עיקרון: קריאה **חסומה בגודל**. אין קריאת גיליון שלם לזיכרון בשום מסלול —
+// לא בעימוד, לא בסינון ולא בניקוי. גיליון היומן הוא הגדול במערכת.
+// ============================================================================
+var B51_AUDIT_MAX_LIMIT = 200;   // תקרת שורות לעמוד
+var B51_AUDIT_CHUNK = 2000;      // גודל אצווה בסריקה לאחור (מסלול מסונן)
+var B51_AUDIT_SCAN_CAP = 20000;  // כמה שורות מותר לסרוק בבקשה אחת
+var B51_AUDIT_META_ROWS = 5000;  // מתוך כמה שורות אחרונות נבנות רשימות הסינון
+var B51_SCRUB_BATCH = 500;       // שורות לאצוות ניקוי
+
+function b51AuditSheet() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName('audit_log');
+}
+
+// המרת שורת גיליון לאובייקט, באותה סמנטיקה של readTable (תאריכים → מחרוזת)
+function b51AuditRowToObj(v, cols) {
+  var o = {};
+  cols.forEach(function (c, i) {
+    var x = v[i];
+    if (x instanceof Date) x = Utilities.formatDate(x, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+    o[c] = x === undefined ? '' : x;
+  });
+  return o;
+}
+
+// אותה לוגיקת סינון בדיוק שהייתה בממשק עד B51 — כדי שהמסך לא ישנה התנהגות
+function b51AuditMatch(o, f) {
+  var ts = String(o.ts || '');
+  if (f.user && String(o.user || '') !== f.user) return false;
+  if (f.action && String(o.action || '') !== f.action) return false;
+  if (f.from && ts.substring(0, 10) < f.from) return false;
+  if (f.to && ts.substring(0, 10) > f.to) return false;
+  if (f.q) {
+    var s = (String(o.user || '') + ' ' + String(o.action || '') + ' ' + String(o.details || '')).toLowerCase();
+    if (s.indexOf(f.q) === -1) return false;
+  }
+  return true;
+}
+
+function b51AuditPage(p) {
+  p = p || {};
+  var cols = TABLES['audit_log'];
+  var sh = b51AuditSheet();
+  var empty = {
+    ok: true, rows: [], total: 0, offset: 0, more: false, scanned_all: true,
+    users: [], actions: [], meta_rows: 0
+  };
+  if (!sh || sh.getLastRow() < 2) return empty;
+
+  var last = sh.getLastRow();
+  var total = last - 1;
+  var limit = Math.min(Math.max(Number(p.limit || 100), 1), B51_AUDIT_MAX_LIMIT);
+  var offset = Math.max(Number(p.offset || 0), 0);
+  var f = {
+    q: String(p.q || '').trim().toLowerCase(),
+    user: String(p.user || '').trim(),
+    action: String(p.action || '').trim(),
+    from: String(p.from || '').trim(),
+    to: String(p.to || '').trim()
+  };
+  var filtered = !!(f.q || f.user || f.action || f.from || f.to);
+
+  // רשימות הסינון — משתי עמודות בלבד (user, action) ומחלון מוגבל
+  var metaFrom = Math.max(2, last - B51_AUDIT_META_ROWS + 1);
+  var uSet = {}, aSet = {};
+  var metaVals = sh.getRange(metaFrom, cols.indexOf('user') + 1, last - metaFrom + 1, 2).getValues();
+  metaVals.forEach(function (r) {
+    if (r[0] !== '' && r[0] != null) uSet[String(r[0])] = 1;
+    if (r[1] !== '' && r[1] != null) aSet[String(r[1])] = 1;
+  });
+
+  var rows = [], more = false, scannedAll = true;
+
+  if (!filtered) {
+    // מסלול מהיר: היומן נכתב ב-appendRow, כלומר כרונולוגי. חלון ישיר מהסוף.
+    var end = last - offset;
+    if (end >= 2) {
+      var start = Math.max(2, end - limit + 1);
+      var vals = sh.getRange(start, 1, end - start + 1, cols.length).getValues();
+      for (var i = vals.length - 1; i >= 0; i--) rows.push(b51AuditRowToObj(vals[i], cols));
+    }
+    more = (offset + rows.length) < total;
+  } else {
+    // מסלול מסונן: סריקה לאחור באצוות, עם תקרת סריקה
+    var cursor = last, scanned = 0, matched = 0;
+    while (cursor >= 2 && rows.length < limit && scanned < B51_AUDIT_SCAN_CAP) {
+      var s2 = Math.max(2, cursor - B51_AUDIT_CHUNK + 1);
+      var v2 = sh.getRange(s2, 1, cursor - s2 + 1, cols.length).getValues();
+      for (var j = v2.length - 1; j >= 0; j--) {
+        var o = b51AuditRowToObj(v2[j], cols);
+        if (!b51AuditMatch(o, f)) continue;
+        matched++;
+        if (matched <= offset) continue;
+        rows.push(o);
+        if (rows.length >= limit) break;
+      }
+      scanned += (cursor - s2 + 1);
+      cursor = s2 - 1;
+    }
+    scannedAll = (cursor < 2);
+    // "יש עוד" = מילאנו עמוד, או שנעצרנו בתקרת הסריקה לפני סוף הגיליון.
+    more = (rows.length >= limit) || !scannedAll;
+  }
+
+  return {
+    ok: true, rows: rows, total: total, offset: offset, more: more,
+    scanned_all: scannedAll, filtered: filtered,
+    users: Object.keys(uSet).sort(), actions: Object.keys(aSet).sort(),
+    meta_rows: Math.min(total, B51_AUDIT_META_ROWS)
+  };
+}
+
+// ----------------------------------------------------------------------------
+// ניקוי סיסמאות היסטוריות מ-audit_log
+// ----------------------------------------------------------------------------
+// עד B36 היומן רשם את גוף הבקשה כמות שהוא — כלומר כל setPassword כתב את הסיסמה
+// בטקסט גלוי. מ-B36 auditPayload מסתיר את הערכים (AUDIT_REDACT_RE), אבל השורות
+// ההיסטוריות נשארו. הפעולה הזו מנקה אותן. אידמפוטנטית: ריצה שנייה מחזירה 0.
+// ----------------------------------------------------------------------------
+var B51_SENSITIVE_KEY = /(^|_)(pass|password|pwd|pin|token|secret|hash|credential|credentials|cvv|card)($|_)/i;
+var B51_REDACTED = '[הוסר]';
+
+function b51ScrubText(txt) {
+  var s = String(txt == null ? '' : txt);
+  if (!s) return s;
+  // צורה 1 — JSON: "password":"1234" / "pin": 4321
+  s = s.replace(/"([^"]{1,40})"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|true|false|null)/g,
+    function (m, k) { return B51_SENSITIVE_KEY.test(k) ? '"' + k + '":"' + B51_REDACTED + '"' : m; });
+  // צורה 2 — טקסט חופשי: password=1234 · pin: 4321
+  s = s.replace(/\b(new_password|old_password|password|passwd|pwd|pass|pin|token|secret)\b\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;}]+)/gi,
+    function (m, k) { return k + '=' + B51_REDACTED; });
+  return s;
+}
+
+function b51ScrubAudit(p) {
+  p = p || {};
+  var cols = TABLES['audit_log'];
+  var dcol = cols.indexOf('details') + 1;
+  var sh = b51AuditSheet();
+  var offset = Math.max(Number(p.offset || 0), 0);
+  var preview = !!p.preview;
+  if (!sh || sh.getLastRow() < 2) {
+    return { ok: true, scrubbed: 0, scanned: 0, more: false, next_offset: 0, total: 0, preview: preview, sample: [], auditNote: 'ניקוי יומן — אין רשומות' };
+  }
+  var last = sh.getLastRow(), total = last - 1;
+  var startRow = 2 + offset;
+  if (startRow > last) {
+    return { ok: true, scrubbed: 0, scanned: 0, more: false, next_offset: offset, total: total, preview: preview, sample: [], auditNote: 'ניקוי יומן — הסתיים' };
+  }
+  var count = Math.min(B51_SCRUB_BATCH, last - startRow + 1);
+  var rng = sh.getRange(startRow, dcol, count, 1);
+  var vals = rng.getValues();
+  var n = 0, changed = false, sample = [];
+  for (var i = 0; i < vals.length; i++) {
+    var before = String(vals[i][0] == null ? '' : vals[i][0]);
+    var after = b51ScrubText(before);
+    if (after !== before) {
+      n++; changed = true;
+      if (sample.length < 5) sample.push(before.substring(0, 90));
+      vals[i][0] = after;
+    }
+  }
+  if (changed && !preview) rng.setValues(vals);
+  return {
+    ok: true, scrubbed: n, scanned: count, total: total,
+    more: (startRow + count - 1) < last, next_offset: offset + count,
+    preview: preview, sample: sample,
+    auditNote: (preview ? 'תצוגה מקדימה לניקוי יומן' : 'ניקוי יומן') + ' · שורות ' + offset + '–' + (offset + count) + ' · נמצאו ' + n
+  };
+}
+
+// ----------------------------------------------------------------------------
+// אבחון משקל הנתונים — כלל R1: אבי לא מייצא כלום. הוא לוחץ ורואה על המסך.
+// מודד את המטען המלא מול המטען אחרי SLIM_POLICY, טבלה-טבלה.
+// ⚠ הפעולה קוראת בכוונה את כל הגיליונות (כולל audit_log) — לכן היא כפתור
+//   ידני ולא חלק מזרימה רגילה.
+// ----------------------------------------------------------------------------
+function b51PayloadStats(db) {
+  var slim = getAllPayload(db);
+  var rows = [], fullTotal = 0, sentTotal = 0;
+  Object.keys(TMAP).forEach(function (t) {
+    var key = TMAP[t];
+    var pol = SLIM_POLICY[t] || {};
+    var all = db[key] || [];
+    var fb = 0, sb = 0;
+    try { fb = JSON.stringify(all).length; } catch (e) { fb = 0; }
+    var sent = slim[key] || [];
+    try { sb = JSON.stringify(sent).length; } catch (e) { sb = 0; }
+    fullTotal += fb; sentTotal += sb;
+    rows.push({
+      table: t, full_rows: all.length, sent_rows: sent.length,
+      full_bytes: fb, sent_bytes: sb,
+      policy: pol.drop ? 'לא נשלח' : (pol.days ? (pol.days + ' ימים') : 'מלא')
+    });
+  });
+  rows.sort(function (a, b) { return b.full_bytes - a.full_bytes; });
+  return {
+    ok: true, rows: rows, full_bytes: fullTotal, sent_bytes: sentTotal,
+    saved_bytes: fullTotal - sentTotal,
+    saved_pct: fullTotal ? Math.round((1 - sentTotal / fullTotal) * 1000) / 10 : 0
+  };
 }
