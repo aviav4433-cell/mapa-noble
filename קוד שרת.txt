@@ -43,6 +43,16 @@
 //                     מופקת לו חשבונית לפני הגבייה, גם במשרד וגם מהפורטל.
 //                   ⚠ שתי טבלאות חדשות (payment_declarations, customer_messages) —
 //                     יש להריץ setupDatabase
+//             B49f — אישור הנהלה שהנסיעה בוצעה בפועל — canary v4.48-B49f
+//                   • שלושת אתרי ההכרעה (b49eClosePickupsAfterReturn ×2 קוראים,
+//                     b49dClosePickupAfterIntake) אוחדו לליבה אחת: b49fCloseLegs.
+//                   • שאלה מפורשת בשער הקליטה: "האם הנהג ביצע את הנסיעה בפועל?"
+//                     כן → 'בוצע' + תעודה + trip_confirmed_by · לא → 'בוטל' + trip_auto_cancel.
+//                   • רשאים להצהיר: מנהל ומשרד בלבד (b49fDeclareGate → b34OfficeOk).
+//                   • b49fRestoreTrip — ריפוי בדיעבד לנסיעה שבוטלה אוטומטית, אידמפוטנטי.
+//                   ⚠ b41DriverHandled ו-photo_by/scan_by לא נגעו (הכרעת B41b).
+//                     ההצהרה היא שכבה נפרדת — הצהרה מתועדת, לא ראיה.
+//                   ⚠ שתי עמודות חדשות ב-deliveries — יש להריץ setupDatabase
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -212,7 +222,7 @@ var TABLES = {
   // B10: נוסף removal_ack (סימון "טופל" להסרת כתובת בדשבורד ההנהלה) — בסוף בלבד (מיגרציה בטוחה)
   // B16: נוסף signature_url (חתימת לקוח למסירה) — בסוף בלבד (מיגרציה בטוחה)
   // B34: נוספו trip_id, trip_order (שיוך לנסיעה), scan_status ('נסרק'/'ללא סריקה'), scan_ack (אישור מנהל בדיעבד) — בסוף בלבד (מיגרציה בטוחה)
-  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url', 'trip_id', 'trip_order', 'scan_status', 'scan_ack', 'manual_intake_reason', 'manual_intake_by', 'photo_by', 'scan_by'],   // B41/B41b: קליטה ידנית ללא סריקת נהג · מי צילם ומי סרק
+  deliveries: ['id', 'order_id', 'kind', 'date', 'driver', 'status', 'note', 'note_number', 'vehicle_id', 'photo_url', 'route_order', 'eta_text', 'removal_ack', 'signature_url', 'trip_id', 'trip_order', 'scan_status', 'scan_ack', 'manual_intake_reason', 'manual_intake_by', 'photo_by', 'scan_by', 'trip_confirmed_by', 'trip_auto_cancel'],   // B41/B41b: קליטה ידנית ללא סריקת נהג · מי צילם ומי סרק | B49f: אישור הנהלה שהנסיעה בוצעה · סימון ביטול אוטומטי בקליטה
   // B49e (P4): הוכחת מסירה/החזרה — חתימה או צילום — שאינה תלויה ברשומת משלוח.
   // entity_type: 'order' (נלקח מכרטיס ההזמנה, P8) / 'delivery' (נלקח ממסך הנהג).
   // leg: 'הלוך' (תאריך ההתחלה) / 'חזור' (תאריך ההחזרה). kind: 'חתימה' / 'צילום'.
@@ -780,23 +790,69 @@ function b49eHasProof(db, order, leg) { return b49eProofsOf(db, order, leg).leng
 // עם תעודת משלוח כרגיל. אחרת → 'בוטל', בלי תעודת משלוח, עם הסבר על הנסיעה.
 // ⚠ שינוי מכוון של התנהגות קיימת. מוחל בשני מסלולי הקליטה בדיוק אותו דבר.
 // ============================================================
-function b49eClosePickupsAfterReturn(db, orderId, user) {
-  var done = 0, cancelled = 0;
+// ============================================================
+// B49f — הצהרת הנהלה שהנסיעה בוצעה בפועל (הכרעת אבי 28.07.2026)
+// ------------------------------------------------------------
+// הפער ש-B49e השאיר: נהג שנסע ואסף בפועל והטלפון שלו מת — הנסיעה בוטלה,
+// והדלק, השעות והתעודה נעלמו מדוח הצי בלי דרך לתקן.
+// מעכשיו נשאלת בשער הקליטה שאלה מפורשת: "האם הנהג ביצע את הנסיעה בפועל?"
+//   כן → 'בוצע' + תעודת משלוח + trip_confirmed_by (אישור הנהלה מתועד)
+//   לא → 'בוטל' + trip_auto_cancel (מאפשר ריפוי בדיעבד ב-b49fRestoreTrip)
+//
+// ⚠ עיקרון מחייב: b41DriverHandled ו-photo_by/scan_by לא נגעו (הכרעת B41b).
+//   ההצהרה היא שכבה נפרדת — הצהרה מתועדת, לא ראיה. דוח הצי חייב להמשיך
+//   להפריד: trip_confirmed_by ריק = הנהג הוכיח; trip_confirmed_by מלא =
+//   ההנהלה אישרה בדיעבד. אין לאחד בין השניים בשום דוח.
+//
+// ⚠ trip_auto_cancel קיים כדי להבדיל בין ביטול אוטומטי בקליטה לבין שני
+//   מקורות הביטול האחרים ('בטל הזמנה' ו-b49eApplyLegMode לאיסוף עצמי).
+//   בלעדיו רשימת הריפוי הייתה מציעה לשחזר נסיעות שבוטלו מסיבה לגיטימית.
+// ============================================================
+var B49F_YES = 'כן';
+
+// רשאים להצהיר: מנהל ומשרד בלבד. עובד רצפה/מכבסה קולט כרגיל — הנסיעה
+// מבוטלת, וההנהלה מרפאת אותה אחר כך מרשימת "נסיעות שבוטלו בקליטה".
+function b49fDeclareGate(db, user, declared) {
+  var want = String(declared == null ? '' : declared).trim();
+  if (want !== B49F_YES) return { ok: true, declared: '' };
+  if (!b34OfficeOk(db, user))
+    return { ok: false, error: 'רק מנהל או משרד רשאים להצהיר שנסיעה בוצעה בפועל' };
+  return { ok: true, declared: B49F_YES };
+}
+
+// ליבה אחת לשלושת אתרי ההכרעה. עד B49f הלוגיקה הזו הייתה משוכפלת מילה
+// במילה ב-b49eClosePickupsAfterReturn וב-b49dClosePickupAfterIntake, ולכן
+// כל תיקון היה צריך להיעשות פעמיים. מעכשיו נקודה אחת.
+function b49fCloseLegs(db, orderId, kind, user, declared, ctx) {
+  var out = { done: 0, cancelled: 0, confirmed: 0 };
+  var stamp = String(user || '') + ' · ' + today();
   (db.deliveries || []).forEach(function (d) {
-    if (d.order_id !== orderId || String(d.kind) !== 'איסוף') return;
+    if (d.order_id !== orderId || String(d.kind) !== String(kind)) return;
     if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
     d.eta_text = '';
     if (b41DriverHandled(d)) {
       d.status = 'בוצע';
       if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
-      done++;
+      out.done++;
+    } else if (String(declared || '') === B49F_YES) {
+      d.status = 'בוצע';
+      if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
+      d.trip_confirmed_by = stamp;
+      d.trip_auto_cancel = '';
+      d.note = (d.note ? d.note + ' · ' : '') + 'ההנהלה אישרה ' + ctx + ' שהנסיעה בוצעה בפועל (' + stamp + ')';
+      out.confirmed++;
     } else {
       d.status = 'בוטל';
-      d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה בקליטת ההחזרה — הנסיעה לא בוצעה בפועל (' + String(user || '') + ')';
-      cancelled++;
+      d.trip_auto_cancel = stamp;
+      d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה ' + ctx + ' — הנסיעה לא בוצעה בפועל (' + String(user || '') + ')';
+      out.cancelled++;
     }
   });
-  return { done: done, cancelled: cancelled };
+  return out;
+}
+
+function b49eClosePickupsAfterReturn(db, orderId, user, declared) {
+  return b49fCloseLegs(db, orderId, 'איסוף', user, declared, 'בקליטת ההחזרה');
 }
 
 // B38 (תיקון החזרות): תאריכי ההזמנה זזו — משלוחי האספקה והאיסוף הפתוחים זזים איתם.
@@ -1393,6 +1449,32 @@ function handle(action, p, db, user) {
       return { ok: true, closed: closed41, auditNote: 'B41 סגירת איסופים שנקלטו · ' + closed41 + ' נסיעות' };
     }
 
+    // B49f: ריפוי בדיעבד — נסיעה שבוטלה אוטומטית בקליטה (trip_auto_cancel),
+    // וההנהלה מצהירה שהיא כן בוצעה בפועל. מנהל/משרד.
+    // אידמפוטנטי: הרצה שנייה על אותה נסיעה מחזירה already ואינה משנה דבר.
+    // נסיעה שבוטלה משני מקורות הביטול האחרים ('בטל הזמנה' / איסוף עצמי)
+    // אינה נושאת trip_auto_cancel ולכן נדחית כאן במפורש — לא מרפאים ביטול לגיטימי.
+    case 'b49fRestoreTrip': {
+      if (!b34OfficeOk(db, user)) return { ok: false, error: 'רק מנהל או משרד רשאים לאשר שנסיעה בוצעה בפועל' };
+      var d49f = (db.deliveries || []).find(function (x) { return x.id === p.delivery_id; });
+      if (!d49f) return { ok: false, error: 'נסיעה לא נמצאה' };
+      if (String(d49f.status) === 'בוצע') return { ok: true, already: 1, delivery: d49f, note_number: d49f.note_number || '' };
+      if (!String(d49f.trip_auto_cancel || '').trim())
+        return { ok: false, error: 'הנסיעה הזו לא בוטלה אוטומטית בקליטה — לא ניתן לאשר אותה כאן' };
+      var stamp49f = String(user || '') + ' · ' + today();
+      d49f.status = 'בוצע';
+      d49f.eta_text = '';
+      if (!d49f.note_number) d49f.note_number = nextNumber(db, 'delivery_note', 3001);
+      d49f.trip_confirmed_by = stamp49f;
+      d49f.trip_auto_cancel = '';
+      d49f.note = (d49f.note ? d49f.note + ' · ' : '') + 'ההנהלה אישרה בדיעבד שהנסיעה בוצעה בפועל (' + stamp49f + ')';
+      writeTable('deliveries', db.deliveries);
+      return {
+        ok: true, delivery: d49f, note_number: d49f.note_number,
+        auditNote: 'B49f אישור הנהלה בדיעבד · נסיעה ' + d49f.id + ' · תעודה ' + d49f.note_number
+      };
+    }
+
     // B38: סנכרון איסופים — משלים רשומות איסוף חסרות ומיישר תאריכים שנותקו.
     // מנהל בלבד. קיים כדי לרפא הזמנות ותיקות שאושרו לפני האוטומציה,
     // או שתאריך ההחזרה שלהן שונה בלי שרשומת האיסוף זזה.
@@ -1643,6 +1725,9 @@ function handle(action, p, db, user) {
       return { ok: true, delivery: spNew, auditNote: 'פיצול משלוח ' + spDv.id + ' → ' + spNew.id + ' (' + moved.join(', ') + ')' };
     }
     case 'receiveReturn': {
+      // B49f: הצהרת הנהלה שהנסיעה בוצעה בפועל — נבדקת לפני כל כתיבה.
+      var dg49f = b49fDeclareGate(db, user, p.trip_done);
+      if (!dg49f.ok) return dg49f;
       // B41: קליטה שלא עברה דרך הנהג — מותרת, אך מחייבת פירוט סיבה שנרשם על נסיעת האיסוף.
       var g41 = b41IntakeGate(db, p.order_id, p.no_scan_reason, user, today());
       if (!g41.ok) return g41;
@@ -1660,8 +1745,10 @@ function handle(action, p, db, user) {
         }
         // B39 (ליקוי 2): נסגר כל איסוף בסטטוס פתוח (מתוכנן/בדרך), לא רק 'מתוכנן'.
         // B49e (P7): נסיעה שנהג תיעד בשטח → 'בוצע'; נסיעה שלא בוצעה → 'בוטל'.
-        var cl49e = b49eClosePickupsAfterReturn(db, p.order_id, user);
+        var cl49e = b49eClosePickupsAfterReturn(db, p.order_id, user, dg49f.declared);
         if (cl49e.cancelled) r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B49e ' + cl49e.cancelled + ' נסיעות איסוף בוטלו (לא בוצעו בפועל)';
+        if (cl49e.confirmed) r3.auditNote = (r3.auditNote ? r3.auditNote + ' · ' : '') + 'B49f ' + cl49e.confirmed + ' נסיעות איסוף אושרו ע"י ההנהלה (הנהג לא תיעד בשטח)';
+        r3.pickup = cl49e;
         writeTable('deliveries', db.deliveries);
       }
       return r3;
@@ -2701,6 +2788,9 @@ function handle(action, p, db, user) {
         else needCount.push({ line_id: l2.id, item: it3.name, reason: 'סטייה ' + (Math.round(devPct * 10) / 10) + '% מעל המותר (' + dev2 + '%) — נדרשת ספירה ידנית', measured: measured });
       }
       if (needCount.length) return { ok: false, need_count: needCount, error: 'נדרשת ספירה ידנית לחלק מהפריטים' };
+      // B49f: אותה הצהרה בדיוק כמו במסלול הקליטה ללא שקילה.
+      var dg49fW = b49fDeclareGate(db, user, p.trip_done);
+      if (!dg49fW.ok) return dg49fW;
       // B41: אותה אכיפה בדיוק כמו במסלול הקליטה ללא שקילה — שני המסלולים מתנהגים זהה.
       var g41w = b41IntakeGate(db, ow.id, p.no_scan_reason, user, today());
       if (!g41w.ok) return g41w;
@@ -2716,13 +2806,14 @@ function handle(action, p, db, user) {
         writeTable('carts', db.carts);
       }
       // B39 (ליקוי 2) + B49e (P7): אותה לוגיקה בדיוק כמו במסלול receiveReturn.
-      var cl49eW = b49eClosePickupsAfterReturn(db, ow.id, user);
+      var cl49eW = b49eClosePickupsAfterReturn(db, ow.id, user, dg49fW.declared);
       writeTable('deliveries', db.deliveries);
       var noteW = [];
       if (g41w.applied) noteW.push('B41 קליטה בשקילה ללא סריקת נהג · הזמנה ' + (ow.order_number || ow.id) + ' · סיבה: ' + g41w.reason);
       if (cl49eW.cancelled) noteW.push('B49e ' + cl49eW.cancelled + ' נסיעות איסוף בוטלו (לא בוצעו בפועל)');
+      if (cl49eW.confirmed) noteW.push('B49f ' + cl49eW.confirmed + ' נסיעות איסוף אושרו ע"י ההנהלה (הנהג לא תיעד בשטח)');
       return {
-        ok: true, shortages: rr.shortages, shortage_charge: rr.shortage_charge,
+        ok: true, shortages: rr.shortages, shortage_charge: rr.shortage_charge, pickup: cl49eW,
         auditNote: noteW.length ? noteW.join(' · ') : undefined
       };
     }
@@ -4289,26 +4380,11 @@ function b49dResolveOrder(db, orderId) {
    ⚠ סמנטיקה זהה ל-b49eClosePickupsAfterReturn (הכרעת P7), בכוונה:
    נהג שתיעד בשטח (b41DriverHandled) → 'בוצע' עם תעודת משלוח;
    נסיעה שאיש לא תיעד → 'בוטל'. איסוף עצמי — אין נסיעה כלל, מחזיר אפסים.
-   הפער הידוע (נהג שנסע והטלפון שלו מת) מטופל במפרט B49f. */
-function b49dClosePickupAfterIntake(db, order, user) {
-  var out = { done: 0, cancelled: 0 };
-  if (b49eShipMode(order, 'הלוך') !== B49E_SHIP) return out;
-  var kind = b49eLegKind(order, 'הלוך');
-  (db.deliveries || []).forEach(function (d) {
-    if (d.order_id !== order.id || String(d.kind) !== kind) return;
-    if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
-    d.eta_text = '';
-    if (b41DriverHandled(d)) {
-      d.status = 'בוצע';
-      if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
-      out.done++;
-    } else {
-      d.status = 'בוטל';
-      d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה בקליטת הכביסה — הנסיעה לא בוצעה בפועל (' + String(user || '') + ')';
-      out.cancelled++;
-    }
-  });
-  return out;
+   ⚠ B49f: הליבה אוחדה — שלושת אתרי ההכרעה קוראים ל-b49fCloseLegs.
+   declared==='כן' (הצהרת מנהל/משרד) הופך ביטול ל'בוצע' עם סימון אישור הנהלה. */
+function b49dClosePickupAfterIntake(db, order, user, declared) {
+  if (b49eShipMode(order, 'הלוך') !== B49E_SHIP) return { done: 0, cancelled: 0, confirmed: 0 };
+  return b49fCloseLegs(db, order.id, b49eLegKind(order, 'הלוך'), user, declared, 'בקליטת הכביסה');
 }
 
 /* L2 — הוספת עגלות לקליטה פתוחה קיימת. אין תקרה על מספר העגלות.
@@ -5462,7 +5538,13 @@ function nobleIntake(db, p, user) {
     if (!rOrd49d.ok) return rOrd49d;
     b49dOrd = rOrd49d.order;
     cust = rOrd49d.customer;
-  } else if (!internal) {
+  }
+  /* B49f: ההצהרה נבדקת מול העובד שזוהה בפועל (w.name) ולא מול הסשן — ברצפת
+     הייצור הזיהוי נעשה במספר אישי, וזה מי שמצהיר. נבדק כאן, לפני כל push,
+     כדי שדחיית הרשאה לא תשאיר קליטה חצי-בנויה בזיכרון. */
+  var dg49fI = b49fDeclareGate(db, w.name, p.trip_done);
+  if (!dg49fI.ok) return dg49fI;
+  if (!b49dOid && !internal) {
     cust = db.customers.find(function (c) { return c.id === p.customer_id && c.active !== 'לא'; });
     if (!cust) return { ok: false, error: 'יש לבחור לקוח (או לסמן כביסה פנימית)' };
   }
@@ -5515,8 +5597,8 @@ function nobleIntake(db, p, user) {
      נשארה פתוחה לנצח כי receiveReturn רץ רק על הזמנות השכרה. */
   var pick49d = null;
   if (b49dOrd) {
-    pick49d = b49dClosePickupAfterIntake(db, b49dOrd, w.name);
-    if (pick49d.done || pick49d.cancelled) writeTable('deliveries', db.deliveries);
+    pick49d = b49dClosePickupAfterIntake(db, b49dOrd, w.name, dg49fI.declared);
+    if (pick49d.done || pick49d.cancelled || pick49d.confirmed) writeTable('deliveries', db.deliveries);
   }
   writeTable('laundry_intakes', db.laundryIntakes);
   writeTable('intake_carts', db.intakeCarts);
