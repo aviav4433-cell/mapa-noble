@@ -24,6 +24,13 @@
 //                     ⚠ P2: delivery_fee הוא שדה כספי בלבד ואין להסיק ממנו אופן מסירה.
 //                   • טבלה חדשה signatures — הוכחת מסירה/החזרה שאינה תלויה ברשומת משלוח (P4).
 //                   ⚠ עמודות/טבלה חדשות — יש להריץ setupDatabase
+//             B49d — כביסה מלקוח: הזמנת 'כביסה' → קליטת NOBLE — canary v4.45-B49d
+//                   • nobleIntake מקבל order_id: הלקוח נגזר מההזמנה, price_per_kg
+//                     מכרטיס הלקוח, והקליטה מקושרת (laundry_intakes.order_id).
+//                   • פתיחת הקליטה סוגרת את רגל ההלוך (b49dClosePickupAfterIntake)
+//                     באותה סמנטיקה של B49e/P7 — נהג שתיעד → 'בוצע', אחרת 'בוטל'.
+//                   • b49dAddCarts (L2) — הוספת עגלות לקליטה פתוחה, בלי תקרה.
+//                   ⚠ אין שינוי סכימה — order_id ו-carts.virtual כבר קיימים
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -3318,6 +3325,7 @@ function handle(action, p, db, user) {
     case 'nobleDriverScan': return nobleDriverScan(db, p, user);
     case 'nobleDeliver': return nobleDeliver(db, p, user);
     case 'nobleReleaseCart': return nobleReleaseCart(db, p, user); // B39b
+    case 'b49dAddCarts': return b49dAddCarts(db, p, user);         // B49d (L2): הוספת עגלות לקליטה פתוחה
     case 'nobleCreateInvoice': return nobleCreateInvoice(db, p, user);
 
     // ---- B1: חשבוניות מורחבות ----
@@ -4132,6 +4140,138 @@ function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
   return out;
 }
 
+/* ============================================================
+   B49d — כביסה מלקוח: הזמנת 'כביסה' → קליטת NOBLE
+   ------------------------------------------------------------
+   הרקע: הזמנת לקוח מסוג 'כביסה' מעולם לא ידעה לפתוח קליטת רצפה.
+   הכביסה הגיעה למפעל, העובד פתח קליטה "יתומה" בלי קשר להזמנה, ולכן
+   ההזמנה לא נסגרה לעולם ונסיעת האיסוף שלה נשארה פתוחה עד אינסוף
+   (receiveReturn — שסוגר איסופים — רץ רק על הזמנות השכרה).
+
+   הכרעת אבי (28.07.2026): הקליטה נפתחת **במפעל**, כשהכביסה מגיעה
+   בפועל — לא בשדה. הרצפה רואה בטאב "קליטה חדשה" רשימת
+   "ממתין לקליטה" (הזמנות כביסה שטרם נקלטו), בוחרת אחת, וסורקת עגלות
+   כרגיל. אותו טופס — לא טופס שני, ולא נתיב קוד מקביל.
+   הנימוק: הקליטה דורשת זיהוי עובד וסריקת עגלות, ושניהם ידועים רק
+   במפעל. קליטה שנפתחת בשדה יושבת שעתיים עם 0 ק"ג ומנפחת את הלוח החי.
+
+   ⚠ P2 (B49e): אין להסיק אופן מסירה מ-delivery_fee. רגל ההלוך של
+   הזמנת כביסה היא 'איסוף' לפי b49eLegKind; אם היא ב'איסוף עצמי' אין
+   לה רשומת נסיעה כלל, והקליטה היא האירוע היחיד שמתעד את ההגעה.
+
+   L2 (הכרעת אבי): ברירת מחדל קליטה אחת לאירוע, עם אפשרות להוסיף
+   עגלות לקליטה פתוחה קיימת (b49dAddCarts). אין תקרה על מספר עגלות.
+============================================================ */
+var B49D_ORDER_OPEN = ['מאושרת', 'סופקה'];
+var B49D_CLOSED_INTAKE = ['מוכן', 'במשלוח', 'נמסר'];
+
+/* הקליטה שנפתחה להזמנה — אחת בלבד (L2: קליטה אחת לאירוע) */
+function b49dIntakeOfOrder(db, orderId) {
+  if (!orderId) return null;
+  return (db.laundryIntakes || []).find(function (i) { return String(i.order_id) === String(orderId); }) || null;
+}
+
+/* אימות ההזמנה לפני פתיחת קליטה. מחזיר {ok, order, customer} או שגיאה עברית. */
+function b49dResolveOrder(db, orderId) {
+  var o = (db.orders || []).find(function (x) { return String(x.id) === String(orderId); });
+  if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
+  if (String(o.type) !== 'כביסה')
+    return { ok: false, error: 'קליטה מהזמנה אפשרית רק להזמנת כביסה (סוג ההזמנה: ' + (o.type || '—') + ')' };
+  if (B49D_ORDER_OPEN.indexOf(String(o.status)) === -1)
+    return { ok: false, error: 'ההזמנה בסטטוס ' + (o.status || '—') + ' — נדרש "מאושרת" או "סופקה"' };
+  var exist = b49dIntakeOfOrder(db, o.id);
+  if (exist)
+    return { ok: false, error: 'להזמנה כבר נפתחה קליטה ' + exist.id + ' — אפשר להוסיף אליה עגלות במקום לפתוח חדשה' };
+  /* לקוח שהושבת אחרי אישור ההזמנה אינו חוסם — ההזמנה כבר קיימת ומאושרת,
+     והכביסה שלו כבר פיזית אצלנו. חוסמים רק כשאין כרטיס כלל. */
+  var c = (db.customers || []).find(function (x) { return x.id === o.customer_id; });
+  if (!c) return { ok: false, error: 'ללקוח של ההזמנה אין כרטיס במערכת' };
+  return { ok: true, order: o, customer: c };
+}
+
+/* סגירת רגל ההלוך אחרי שהכביסה נקלטה בפועל.
+   ⚠ סמנטיקה זהה ל-b49eClosePickupsAfterReturn (הכרעת P7), בכוונה:
+   נהג שתיעד בשטח (b41DriverHandled) → 'בוצע' עם תעודת משלוח;
+   נסיעה שאיש לא תיעד → 'בוטל'. איסוף עצמי — אין נסיעה כלל, מחזיר אפסים.
+   הפער הידוע (נהג שנסע והטלפון שלו מת) מטופל במפרט B49f. */
+function b49dClosePickupAfterIntake(db, order, user) {
+  var out = { done: 0, cancelled: 0 };
+  if (b49eShipMode(order, 'הלוך') !== B49E_SHIP) return out;
+  var kind = b49eLegKind(order, 'הלוך');
+  (db.deliveries || []).forEach(function (d) {
+    if (d.order_id !== order.id || String(d.kind) !== kind) return;
+    if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+    d.eta_text = '';
+    if (b41DriverHandled(d)) {
+      d.status = 'בוצע';
+      if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
+      out.done++;
+    } else {
+      d.status = 'בוטל';
+      d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה בקליטת הכביסה — הנסיעה לא בוצעה בפועל (' + String(user || '') + ')';
+      out.cancelled++;
+    }
+  });
+  return out;
+}
+
+/* L2 — הוספת עגלות לקליטה פתוחה קיימת. אין תקרה על מספר העגלות.
+   אם הקליטה יושבת על עגלה וירטואלית (B49b/B49c) ונוספה עגלה פיזית —
+   הווירטואלית משתחררת, בדיוק בדפוס b49cBindRealCart. אין שכפול לוגיקה:
+   השחרור עצמו עובר דרך b49cUnbindCart הקיימת. */
+function b49dAddCarts(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var ik = nobleIntakeById(db, String(p.intake_id || ''));
+  if (!ik) return { ok: false, error: 'קליטה לא נמצאה' };
+  if (B49D_CLOSED_INTAKE.indexOf(String(ik.status)) > -1)
+    return { ok: false, error: 'הקליטה כבר ' + ik.status + ' — לא ניתן להוסיף אליה עגלות' };
+  var bcs = (p.cart_barcodes || []).map(String).filter(function (s) { return s.trim() !== ''; });
+  if (!bcs.length) return { ok: false, error: 'יש לסרוק לפחות עגלה אחת' };
+  var carts = [], seen = {};
+  for (var i = 0; i < bcs.length; i++) {
+    var c = nobleFindCart(db, bcs[i]);
+    if (!c) return { ok: false, error: 'עגלה לא נמצאה: ' + bcs[i] };
+    if (seen[c.id]) return { ok: false, error: 'העגלה ' + c.id + ' נסרקה פעמיים' };
+    seen[c.id] = 1;
+    var bind = nobleActiveBinding(db, c.id);
+    if (bind && bind.intake_id === ik.id) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה הזו' };
+    if (bind) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה פעילה' };
+    if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
+    carts.push(c);
+  }
+  carts.forEach(function (c) {
+    db.intakeCarts.push({ id: genId('IC'), intake_id: ik.id, cart_id: c.id, bind_ts: nowTs(), release_ts: '', active: 'כן' });
+    c.status = 'בשימוש';
+    nobleEvent(db, {
+      intake_id: ik.id, customer_id: ik.customer_id, cart_id: c.id, stage: ik.status,
+      event_type: 'שיוך עגלה', worker_id: w.id, worker_name: w.name,
+      note: String(p.notes || '').trim() || 'הוספה לקליטה פתוחה'
+    });
+  });
+  var released = [];
+  if (carts.some(function (c) { return String(c.virtual || '') !== 'כן'; })) {
+    db.intakeCarts.slice().forEach(function (b) {
+      if (b.intake_id !== ik.id || b.active !== 'כן') return;
+      if (carts.some(function (c) { return c.id === b.cart_id; })) return;
+      var vc = db.carts.find(function (x) { return x.id === b.cart_id; });
+      if (!vc || String(vc.virtual || '') !== 'כן') return;
+      vc.status = 'פנויה';
+      b49cUnbindCart(db, ik, b.cart_id, w, 'הוחלפה בעגלה פיזית שנוספה לקליטה');
+      released.push(b.cart_id);
+    });
+  }
+  var noteAdd = String(p.notes || '').trim();
+  if (noteAdd) ik.notes = String(ik.notes ? ik.notes + ' · ' : '') + noteAdd.slice(0, 200);
+  writeTable('laundry_intakes', db.laundryIntakes);
+  writeTable('intake_carts', db.intakeCarts);
+  writeTable('carts', db.carts);
+  return {
+    ok: true, intake: ik, added: carts.length, released: released,
+    auditNote: 'B49d הוספת ' + carts.length + ' עגלות לקליטה ' + ik.id +
+      (released.length ? ' · שוחררו עגלות וירטואליות: ' + released.join(', ') : '')
+  };
+}
+
 function orderTotal(db, orderId) {
   var o = db.orders.find(function (x) { return x.id === orderId; });
   var lines = db.orderLines.filter(function (l) { return l.order_id === orderId; })
@@ -4371,7 +4511,17 @@ function nobleIntake(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var internal = p.internal === 'כן' || p.internal === true;
   var cust = null;
-  if (!internal) {
+  /* B49d: קליטה שנפתחת מהזמנת לקוח מסוג 'כביסה'. הלקוח נלקח מההזמנה
+     ולא מהבחירה בטופס — כך לא ייפתח שיוך ללקוח אחר בטעות. */
+  var b49dOid = String(p.order_id || '').trim();
+  var b49dOrd = null;
+  if (b49dOid) {
+    if (internal) return { ok: false, error: 'קליטה מהזמנת לקוח אינה כביסה פנימית — בטל את סימון "כביסה פנימית"' };
+    var rOrd49d = b49dResolveOrder(db, b49dOid);
+    if (!rOrd49d.ok) return rOrd49d;
+    b49dOrd = rOrd49d.order;
+    cust = rOrd49d.customer;
+  } else if (!internal) {
     cust = db.customers.find(function (c) { return c.id === p.customer_id && c.active !== 'לא'; });
     if (!cust) return { ok: false, error: 'יש לבחור לקוח (או לסמן כביסה פנימית)' };
   }
@@ -4401,11 +4551,15 @@ function nobleIntake(db, p, user) {
     if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
     carts.push(c);
   }
+  /* B49d: המחיר לק"ג נלקח מכרטיס הלקוח כבר בפתיחת הקליטה, לא רק בשקילה.
+     nobleWeigh ממשיך לגזור אותו מאותו מקור בדיוק, ולכן השניים לא יכולים
+     להתפצל — זה רק מקדים את התצוגה למסך הקליטה ולדוח. */
   var intake = {
     id: genId('INTK'), customer_id: internal ? '' : cust.id, internal: internal ? 'כן' : '',
-    status: 'התקבל', net_weight_kg: '', price_per_kg: '', total_charge: '',
-    intake_ts: nowTs(), delivered_ts: '', delivery_id: '', notes: p.notes || '', created_by: w.name,
-    order_id: '', ready_ts: '' // B49c: עמודות חדשות — קליטת רצפה אינה קשורה להזמנה
+    status: 'התקבל', net_weight_kg: '', price_per_kg: internal ? '' : (Number(cust.price_per_kg) || 0), total_charge: '',
+    intake_ts: nowTs(), delivered_ts: '', delivery_id: '', created_by: w.name,
+    notes: (b49dOrd ? 'כביסת לקוח — הזמנה ' + (b49dOrd.order_number ? '#' + b49dOrd.order_number : b49dOrd.id) + (p.notes ? ' · ' : '') : '') + (p.notes || ''),
+    order_id: b49dOrd ? b49dOrd.id : '', ready_ts: '' // B49c/B49d: קישור הקליטה להזמנה
   };
   db.laundryIntakes.push(intake);
   carts.forEach(function (c) {
@@ -4416,13 +4570,25 @@ function nobleIntake(db, p, user) {
       stage: 'התקבל', event_type: 'קליטה', worker_id: w.id, worker_name: w.name, note: p.notes || ''
     });
   });
+  /* B49d: הכביסה אצלנו — רגל ההלוך של ההזמנה נסגרת עכשיו. עד היום היא
+     נשארה פתוחה לנצח כי receiveReturn רץ רק על הזמנות השכרה. */
+  var pick49d = null;
+  if (b49dOrd) {
+    pick49d = b49dClosePickupAfterIntake(db, b49dOrd, w.name);
+    if (pick49d.done || pick49d.cancelled) writeTable('deliveries', db.deliveries);
+  }
   writeTable('laundry_intakes', db.laundryIntakes);
   writeTable('intake_carts', db.intakeCarts);
   writeTable('carts', db.carts);
   return {
     ok: true, intake: intake, virtual_cart_id: vCart ? vCart.id : '', manual: manual ? 'כן' : '',
+    order_id: b49dOrd ? b49dOrd.id : '', pickup: pick49d,
+    deliveries: b49dOrd ? (db.deliveries || []).filter(function (d) { return d.order_id === b49dOrd.id; }) : undefined,
     auditNote: 'קליטה ' + intake.id + ' · ' + (internal ? 'פנימי' : cust.name) + ' · ' +
-      (manual ? 'ידנית ללא עגלה פיזית (' + vCart.id + ')' : carts.length + ' עגלות')
+      (manual ? 'ידנית ללא עגלה פיזית (' + vCart.id + ')' : carts.length + ' עגלות') +
+      (b49dOrd ? ' · B49d הזמנה ' + (b49dOrd.order_number ? '#' + b49dOrd.order_number : b49dOrd.id) +
+        (pick49d && pick49d.done ? ' · נסיעת האיסוף נסגרה' : '') +
+        (pick49d && pick49d.cancelled ? ' · ' + pick49d.cancelled + ' נסיעות איסוף בוטלו (לא בוצעו בפועל)' : '') : '')
   };
 }
 
