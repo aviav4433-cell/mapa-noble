@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.46-B54 · 28.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.47-B55 · 28.07.2026</div>
   </div>
 </div>
 
@@ -1811,11 +1811,42 @@ function collectCustModal(cid){
       '<tr><td><b>סה"כ</b></td><td><b>'+ils(tot)+'</b></td><td></td></tr></table></div>'
       +'<div class="muted" style="font-size:12px;margin-top:6px">"גבה" בשורה — גביה כנגד אותו מסמך בלבד. לחיצה על שם המסמך פותחת אותו.</div>'
     : '<div class="card empty">אין יתרות פתוחות ללקוח זה</div>')+
+    /* B55: חיוב ידני ללא חשבונית אינו ניתן לגבייה עד שמופק לו מסמך — מציגים אותו
+       במפורש עם כפתור הפקה, במקום שייעלם מהמסך והחוב לא יסתדר. */
+    b55LooseChargesHtml(cid)+
     '<div class="row" style="margin-top:12px;gap:6px">'+
       (rows.length&&CAN_EDIT?'<button class="btn" onclick="collectPayForm(\''+cid+'\')">גבה על כל החוב</button>':'')+
       '<button class="btn ghost" onclick="collectListModal()">חזרה לרשימה</button> '+
       '<button class="btn ghost" onclick="closeModal();openCust(\''+cid+'\',\'finance\')">כרטיס הלקוח</button></div>');
 }
+/* B55: חיובים ידניים פתוחים שאין להם חשבונית ואינם משויכים להזמנה.
+   הם נספרים בחוב הלקוח אך אינם ניתנים לגבייה עד שמופק להם מסמך. */
+function b55LooseCharges(cid){
+  return (DB.charges||[]).filter(function(ch){
+    return ch.customer_id===cid && String(ch.status||'פתוח')!=='בוטל'
+      && !String(ch.invoice_id||'').trim() && !String(ch.order_id||'').trim()
+      && Number(ch.amount)>0;
+  });
+}
+function b55LooseChargesHtml(cid){
+  var list = b55LooseCharges(cid);
+  if(!list.length) return '';
+  var tot = list.reduce(function(s,c){ return s+Number(c.amount||0); },0);
+  return '<div class="card" style="margin-top:8px;border-color:var(--amber)">'+
+    '<div class="row"><b class="grow">חיובים ידניים ללא מסמך — '+ils(tot)+'</b></div>'+
+    '<div class="muted" style="font-size:12px;margin:4px 0 6px">חיובים אלה נספרים בחוב הלקוח, אך לא ניתן לגבות אותם עד שתופק להם חשבונית.</div>'+
+    list.map(function(c){ return '<div class="row" style="font-size:13px;padding:2px 0"><div class="grow">'+b54SrcChip(c.source)+' '+esc(c.description||'')+'</div><b>'+ils(c.amount)+'</b></div>'; }).join('')+
+    (CAN_EDIT?'<button class="btn sm" style="margin-top:6px" onclick="b55IssueLoose(\''+cid+'\')">הפק חשבונית וגבה</button>':'')+
+    '</div>';
+}
+async function b55IssueLoose(cid){
+  var r = await act('b31EnsureInvoice', {customer_id:cid, invoice_type:'חשבונית מס'});
+  if(!r) return;
+  toast(r.created? 'הופקו '+r.created+' מסמכים' : 'אין מסמכים חסרים');
+  await reloadData();
+  collectCustModal(cid);
+}
+
 /* ===== B31c: בחירת מסמך בכל גביה =====
    ברירת המחדל היא "חשבונית מס", והיא מופקת רק ברגע התשלום — לא לפניו.
    בכל גביה המערכת שואלת מה להפיק, כולל האפשרות לא להפיק כלום. */
@@ -1881,20 +1912,26 @@ function collectPayForm(cid, docKind, docId){
     '<div class="grid2">'+
       '<div class="frow"><label>סכום לגביה (₪)</label><input id="cp_amt" type="number" min="0" step="0.01" max="'+max+'" value="'+max+'"></div>'+
       '<div class="frow"><label>תאריך</label><input id="cp_date" type="date" value="'+ymdLocal()+'"></div>'+
-      '<div class="frow"><label>אמצעי גביה</label><select id="cp_method" onchange="cpMethodChg()"><option>אשראי</option><option>העברה</option><option>מזומן</option></select></div>'+
+      '<div class="frow"><label>אמצעי גביה</label><select id="cp_method" onchange="cpMethodChg()"><option>אשראי</option><option>העברה</option><option>מזומן</option><option>שיק</option></select></div>'+
     '</div>'+
     '<div class="frow"><label id="cp_reflbl">אסמכתא / הערה</label><input id="cp_ref" placeholder="מספר אסמכתא, בנק, פרטי התשלום"></div>'+
     '<div id="cp_hint" class="muted" style="font-size:12px;margin-bottom:8px"></div>'+
-    '<button class="btn" onclick="doCollectPay()">בצע גביה ורשום קבלה</button>');
+    '<button class="btn" id="cp_go" onclick="doCollectPay()">בצע גביה ורשום קבלה</button>');
   cpMethodChg();
 }
 function cpMethodChg(){
-  var m = el('cp_method').value, isT = m.indexOf('העברה')>-1;
-  el('cp_reflbl').textContent = isT? 'מספר אסמכתא / הערה (חובה)' : 'אסמכתא / הערה (רשות)';
-  el('cp_hint').textContent = isT
-    ? 'בהעברה חובה אסמכתא או הערה. מיד לאחר השמירה ייפתח חלון לצירוף צילום/קובץ.'
-    : (m==='אשראי' ? 'סליקת האשראי תוטמע בהמשך — בשלב זה זהו רישום ידני של תשלום שהתקבל.'
-                   : 'גביית מזומן נכנסת אוטומטית לקופת המזומן.');
+  var m = el('cp_method').value, isT = m.indexOf('העברה')>-1, isChk = (m==='שיק');
+  el('cp_reflbl').textContent = isChk? 'מספר שיק (חובה) · אפשר להוסיף בנק ותאריך פירעון'
+    : (isT? 'מספר אסמכתא / הערה (חובה)' : 'אסמכתא / הערה (רשות)');
+  /* B55 (הכרעת אבי): שיק אינו מקזז חוב עד שרואים את הכסף בחשבון. */
+  el('cp_hint').textContent = isChk
+    ? 'השיק נרשם כהמתנה לפירעון. החוב לא יקטן ולא תופק קבלה עד שתאשר במרכז האישורים שהכסף התקבל.'
+    : (isT
+      ? 'בהעברה חובה אסמכתא או הערה. מיד לאחר השמירה ייפתח חלון לצירוף צילום/קובץ.'
+      : (m==='אשראי' ? 'סליקת האשראי תוטמע בהמשך — בשלב זה זהו רישום ידני של תשלום שהתקבל.'
+                     : 'גביית מזומן נכנסת אוטומטית לקופת המזומן.'));
+  var b = el('cp_go');
+  if(b) b.textContent = isChk? 'רשום שיק (ממתין לפירעון)' : 'בצע גביה ורשום קבלה';
 }
 async function doCollectPay(){
   if(!COLLECT_CTX) return;
@@ -1903,6 +1940,16 @@ async function doCollectPay(){
   var ref = String(el('cp_ref').value||'').trim();
   var dt = el('cp_date').value;
   if(amt<=0) return toast('סכום לא תקין', true);
+  /* B55: שיק אינו תשלום עד שנפרע — נרשם כהודעת תשלום ממתינה, בלי קבלה ובלי קיזוז. */
+  if(method==='שיק'){
+    if(!ref) return toast('מספר שיק חובה', true);
+    var rc = await act('b55CheckDeclare', {customer_id:COLLECT_CTX.cid, amount:amt,
+      check_number:ref, check_bank:'', check_due:dt, note:'נרשם ממסך הגביה'},
+      'השיק נרשם וממתין לפירעון · '+ils(amt));
+    if(!rc) return;
+    COLLECT_CTX = null; closeModal();
+    return;
+  }
   if(method.indexOf('העברה')>-1 && !ref) return toast('בהעברה חובה לרשום מספר אסמכתא או הערה', true);
   var cid=COLLECT_CTX.cid, kind=COLLECT_CTX.kind, id=COLLECT_CTX.id, mx=COLLECT_CTX.max, txn=COLLECT_CTX.txn;
   var pend = collectMissingInv(cid, kind, id);
@@ -6578,6 +6625,34 @@ async function loadApprovals(){
       (canAct?'<button class="btn ghost sm" onclick="event.stopPropagation();apprAckScan(\''+x.delivery_id+'\')">אשר בדיעבד</button>':'')+
       '</div>';
   });
+  /* B55 (P3): הודעות תשלום ממתינות לאימות — פורטל ושיקים. הכסף יורד רק כאן. */
+  html += apprSection('הודעות תשלום ממתינות לאימות (B55)', r.payment_declarations, function(x){
+    return '<div class="attn-row"><span class="tag" style="background:var(--teal)">'+esc(x.method||'תשלום')+'</span>'+
+      '<div class="grow" style="cursor:pointer" onclick="openCust(\''+x.customer_id+'\',\'finance\')">'+esc(x.customer)+' · <b>'+ils(x.amount)+'</b>'+
+      '<div class="muted">'+esc(x.source==='פורטל'?'הודעה מהפורטל':'נרשם במשרד')+' · '+esc(x.date)+' · חוב פתוח '+ils(x.debt)+
+      (x.check_number?' · שיק '+esc(x.check_number)+(x.check_bank?' ('+esc(x.check_bank)+')':'')+(x.check_due?' · לפירעון '+esc(x.check_due):''):'')+
+      (x.note?'<br>הערת הלקוח: '+esc(x.note):'')+'</div>'+
+      (x.asmachta_url?'<a href="'+esc(x.asmachta_url)+'" target="_blank" onclick="event.stopPropagation()" style="font-size:12px">צפייה באסמכתא</a>':'<span class="muted" style="font-size:12px">לא צורפה אסמכתא</span>')+
+      '</div>'+
+      (canAct?
+        '<button class="btn sm" onclick="event.stopPropagation();apprConfirmDecl(\''+x.id+'\','+Number(x.amount||0)+',\''+esc(String(x.customer).replace(/\'/g,''))+'\',\''+esc(x.method||'')+'\')">אמת ואשר</button> '+
+        '<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();apprRejectDecl(\''+x.id+'\')">דחה</button>'
+        : '<span class="muted">אישור — מנהל/משרד</span>')+
+      '</div>';
+  });
+  /* B55 (P5): פניות לקוח פתוחות */
+  html += apprSection('פניות לקוח (B55)', r.customer_messages, function(x){
+    return '<div class="attn-row"><span class="tag" style="background:var(--navy2)">פניה</span>'+
+      '<div class="grow" style="cursor:pointer" onclick="openCust(\''+x.customer_id+'\')">'+esc(x.customer)+' · <b>'+esc(x.subject)+'</b>'+
+      '<div class="muted" style="white-space:pre-wrap">'+esc(x.body)+'</div>'+
+      (x.ref_id?'<div class="muted" style="font-size:11px">מתייחס ל: '+esc(x.ref_type)+' '+esc(x.ref_id)+'</div>':'')+
+      '<div class="muted" style="font-size:11px">'+esc(x.date)+'</div></div>'+
+      (canAct?
+        '<button class="btn sm" onclick="event.stopPropagation();apprReplyMsg(\''+x.id+'\')">השב</button> '+
+        '<button class="btn ghost sm" onclick="event.stopPropagation();apprCloseMsg(\''+x.id+'\')">סגור</button>'
+        : '')+
+      '</div>';
+  });
   html += apprSection('הסרות כתובת ממסלול נהג (B5)', r.address_removals, function(x){
     return '<div class="attn-row"><span class="tag" style="background:#94A3B8">הוסר</span>'+
       '<div class="grow">'+(x.order_id?'הזמנה #'+esc(x.order_number)+' · ':'')+esc(x.customer||'')+(x.driver?' · נהג '+esc(x.driver):'')+
@@ -6587,6 +6662,61 @@ async function loadApprovals(){
   });
   box.innerHTML = html;
 }
+/* ===== B55: אימות ואישור הודעת תשלום =====
+   הסכום ניתן לעריכה — במשרד רואים כמה באמת נכנס לחשבון ומתקנים לפי זה.
+   האישור מפיק מסמכים חסרים ואז גובה דרך המנוע הקיים (b2ProcessPayment). */
+function apprConfirmDecl(did, amount, custName, method){
+  var mOpts = ['העברה בנקאית','כרטיס אשראי','שיק','מזומן','אחר'].map(function(m){
+    return '<option'+(m===method?' selected':'')+'>'+m+'</option>'; }).join('');
+  openModal('<h2>אימות תשלום — '+esc(custName||'')+'</h2>'+
+    '<p class="muted" style="font-size:13px">אשר רק אחרי שראית את הכסף בפועל. הסכום ניתן לתיקון — יירשם הסכום שהתקבל.</p>'+
+    '<div class="frow"><label>סכום שהתקבל בפועל</label><input id="ac_amt" type="number" step="0.01" min="0.01" value="'+Number(amount||0)+'"></div>'+
+    '<div class="frow"><label>אמצעי</label><select id="ac_method">'+mOpts+'</select></div>'+
+    '<div class="frow"><label>אסמכתא / הערה</label><input id="ac_note" placeholder="מספר אסמכתא בבנק, מספר שיק וכד\'"></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">אם חסר מסמך לחוב — תופק חשבונית אוטומטית לפני הקבלה.</div>'+
+    '<button class="btn" style="width:100%" id="ac_go" onclick="apprConfirmDeclGo(\''+did+'\')">אשר וקזז מהחוב</button>');
+}
+async function apprConfirmDeclGo(did){
+  var btn = el('ac_go'); if(btn && btn.disabled) return;
+  var amt = Number((el('ac_amt')||{}).value||0);
+  if(!(amt>0)) return toast('סכום לא תקין', true);
+  if(btn){ btn.disabled = true; btn.textContent = 'מאשר...'; }
+  var r = await act('b55ConfirmDeclaration', { declaration_id: did, amount: amt,
+    method: (el('ac_method')||{}).value||'', note: String((el('ac_note')||{}).value||'').trim() });
+  if(!r){ if(btn){ btn.disabled=false; btn.textContent='אשר וקזז מהחוב'; } return; }
+  closeModal();
+  toast((r.docs_created? 'הופקו '+r.docs_created+' מסמכים · ':'')+'קבלה '+r.receipt_number+' הופקה · '+ils(amt));
+  b46AfterDoc(r, function(){ loadApprovals(); });
+}
+function apprRejectDecl(did){
+  openModal('<h2>דחיית הודעת תשלום</h2>'+
+    '<p class="muted" style="font-size:13px">הלקוח יראה את הסיבה בפורטל. החוב יישאר פתוח.</p>'+
+    '<div class="frow"><label>סיבה</label><input id="ar_reason" placeholder="לדוגמה: הכסף לא נמצא בחשבון"></div>'+
+    '<button class="btn" style="width:100%;background:var(--danger)" onclick="apprRejectDeclGo(\''+did+'\')">דחה</button>');
+}
+async function apprRejectDeclGo(did){
+  var reason = String((el('ar_reason')||{}).value||'').trim();
+  if(!reason) return toast('סיבת דחייה חובה', true);
+  var r = await act('b55RejectDeclaration', {declaration_id:did, reason:reason}, 'ההודעה נדחתה');
+  if(r){ closeModal(); loadApprovals(); }
+}
+/* ===== B55: מענה לפניית לקוח ===== */
+function apprReplyMsg(mid){
+  openModal('<h2>תשובה לפניה</h2>'+
+    '<div class="frow"><label>תשובה</label><textarea id="am_ans" rows="4" placeholder="התשובה תוצג ללקוח בפורטל ותישלח אליו במייל"></textarea></div>'+
+    '<button class="btn" style="width:100%" onclick="apprReplyMsgGo(\''+mid+'\')">שלח תשובה</button>');
+}
+async function apprReplyMsgGo(mid){
+  var ans = String((el('am_ans')||{}).value||'').trim();
+  if(!ans) return toast('לא ניתן לשלוח תשובה ריקה', true);
+  var r = await act('b55MessageReply', {message_id:mid, answer:ans}, 'התשובה נשלחה');
+  if(r){ closeModal(); loadApprovals(); }
+}
+async function apprCloseMsg(mid){
+  var r = await act('b55MessageClose', {message_id:mid}, 'הפניה נסגרה');
+  if(r) loadApprovals();
+}
+
 /* אישור ערבות — מנהל בלבד (נאכף גם בשרת) */
 async function apprApproveGuarantee(cid){
   var r = await act('b3ApproveGuarantee',{customer_id:cid},'הערבות אושרה');
@@ -7367,7 +7497,7 @@ function printPayslip(pid){
 }
 
 /* ================= מיתוג והגדרות ================= */
-var SETTING_FIELDS = [['default_deviation_pct','אחוז סטייה מותר בשקילת החזרות (ברירת מחדל)'],['default_delivery_fee','מחיר שינוע ברירת מחדל (₪) — לחנות באתר ולהזמנות'],['payment_link','קישור תשלום (יוצג ללקוח בסיום הזמנה מהאתר)'],['notify_email','אימייל להתראות (הזמנות חדשות מהאתר)'],['laundry_days','ימי עבודה לכביסה (יעד שחרור — לא נספרים שבת וחג)'],['avail_depreciation_pct','אחוז פחת לחישוב זמינות (0 = ללא; מפחית מהמלאי בחישוב זמינות בלבד)'],['business_name','שם העסק'],['business_address','כתובת'],['business_phone','טלפון'],
+var SETTING_FIELDS = [['default_deviation_pct','אחוז סטייה מותר בשקילת החזרות (ברירת מחדל)'],['default_delivery_fee','מחיר שינוע ברירת מחדל (₪) — לחנות באתר ולהזמנות'],['payment_link','קישור תשלום (יוצג ללקוח בסיום הזמנה מהאתר)'],['portal_bank_details','פרטי חשבון להעברה — מוצגים ללקוח בפורטל כשהוא מודיע על תשלום (B55)'],['notify_email','אימייל להתראות (הזמנות חדשות מהאתר)'],['laundry_days','ימי עבודה לכביסה (יעד שחרור — לא נספרים שבת וחג)'],['avail_depreciation_pct','אחוז פחת לחישוב זמינות (0 = ללא; מפחית מהמלאי בחישוב זמינות בלבד)'],['business_name','שם העסק'],['business_address','כתובת'],['business_phone','טלפון'],
   ['business_vat','ע.מ / ח.פ'],['logo_url','כתובת לוגו (URL לתמונה)'],['doc_footer','שורת סיום במסמכים'],
   // B1: הגדרות חדשות
   ['vat_rate','שיעור מע"מ (0.18 = 18%)'],['business_id','ח.פ / עוסק מורשה (לחשבוניות)'],['invoice_prefix','קידומת מספר חשבונית (רשות)'],['order_center_phone','טלפון מרכז הזמנות (למקרי חריגת אשראי)'],['gateway_provider','שם ספק סליקה (Tranzila / Cardcom / Meshulam)'],
@@ -8277,9 +8407,12 @@ function renderPortal(){
     (d.laundry&&d.laundry.length?'<h3 style="color:var(--navy);margin:16px 0 6px">הכביסה שלי</h3>'+d.laundry.map(portalLaundryHtml).join(''):'')+
     (d.orders.length?'<h3 style="color:var(--navy);margin:16px 0 6px">ההזמנות שלי</h3>'+
       d.orders.slice(-8).reverse().map(portalOrderRow).join(''):'')+
-    /* B2 (D11): מסגרת אשראי, חוב פתוח, קבלות (הורדה קבועה — D15) וחשבוניות */
-    (d.credit && (d.credit.limit_ag>0 || d.credit.used_ag>0)?'<h3 style="color:var(--navy);margin:16px 0 6px">מסגרת אשראי וחובות</h3>'+creditBarHtml(d.credit)+
-      (Number(d.debt)>0.001?'<div class="row" style="font-size:14px;padding:4px 0"><div class="grow">חוב פתוח: <b style="color:var(--danger)">'+ils(d.debt)+'</b></div><button class="btn sm" onclick="portalPayDebt()">שלם חוב</button></div>':''):'')+
+    /* B55 (P4/P6): החיובים שלי — מקור הכסף היחיד בפורטל, עם תשלום ופניה */
+    portalChargesHtml(d)+
+    /* B2 (D11): מסגרת אשראי */
+    (d.credit && (d.credit.limit_ag>0 || d.credit.used_ag>0)?'<h3 style="color:var(--navy);margin:16px 0 6px">מסגרת אשראי</h3>'+creditBarHtml(d.credit):'')+
+    /* B55 (P5): פניות למשרד */
+    portalMessagesHtml(d)+
     /* B3-2 (D5/D10): פקדון — אימות כרטיס / ערבות חלופית */
     '<h3 style="color:var(--navy);margin:16px 0 6px">פקדון ואימות אשראי</h3>'+portalDepositHtml(d.deposit)+
     (d.receipts&&d.receipts.length?'<h3 style="color:var(--navy);margin:16px 0 6px">הקבלות שלי</h3>'+
@@ -8296,15 +8429,213 @@ function portalOrderRow(o){
       (o.delivery.status==='בדרך' && o.delivery.driver_phone? ' · <a href="tel:'+encodeURIComponent(o.delivery.driver_phone)+'">צור קשר עם הנהג</a>':'')+
       '</div>';
   }
-  return '<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);font-size:13px"><div class="grow">'+esc(o.start)+' — '+esc(o.end)+(o.total?' · '+ils(o.total):'')+(o.payment_status?'<br><span class="muted" style="font-size:11px">תשלום: '+esc(o.payment_status)+'</span>':'')+dHtml+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>';
+  return '<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);font-size:13px"><div class="grow">'+esc(o.start)+' — '+esc(o.end)+(o.payment_status?'<br><span class="muted" style="font-size:11px">תשלום: '+esc(o.payment_status)+'</span>':'')+dHtml+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>';
 }
-/* B2: תשלום חוב מהפורטל — הסליקה בפועל תחובר ב-B3; בינתיים קישור תשלום / מרכז הזמנות */
-function portalPayDebt(){
+/* =========================================================================
+   B55: פורטל הלקוח — חיובים, הודעת תשלום ופניות
+   -------------------------------------------------------------------------
+   הכרעת אבי: הלקוח אינו "משלם" בפורטל אלא **מודיע על תשלום** — מקליד כמה
+   העביר ומצרף אסמכתא. שיק ומזומן במשרד בלבד. החוב יורד רק אחרי אימות
+   ואישור במשרד, ואז מופק המסמך. אין כאן שום חישוב כסף — כל המספרים
+   מגיעים מ-portalGetData, שגוזר אותם מספר החיובים של B54.
+   ========================================================================= */
+
+/* טבלת החיובים — סכום היתרות שלה הוא בדיוק d.debt */
+function portalChargesHtml(d){
+  var rows = d.charges || [];
+  var debt = Number(d.debt||0);
+  var declared = Number(d.declared_open||0);
+  var h = '<h3 style="color:var(--navy);margin:16px 0 6px">החיובים שלי</h3>';
+  if(!rows.length && Number(d.payable_total||0)<=0.009){
+    return h+'<div class="card empty" style="padding:12px">אין חיובים פתוחים ✓</div>';
+  }
+  h += '<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden">';
+  rows.forEach(function(r){
+    var openAmt = Number(r.open||0);
+    var isOpen = openAmt > 0.009;
+    h += '<div style="padding:8px 9px;border-bottom:1px solid var(--line);font-size:13px">'+
+      '<div class="row" style="align-items:flex-start">'+
+        '<div class="grow" style="min-width:0">'+
+          b54SrcChip(r.source)+' <b>'+esc(r.description||r.label||'')+'</b>'+
+          '<div class="muted" style="font-size:11.5px;margin-top:2px">'+esc(r.label||'')+
+            (r.date?' · '+esc(r.date):'')+
+            (r.due_date?' · לתשלום עד '+esc(r.due_date):'')+
+          '</div>'+
+        '</div>'+
+        '<div style="text-align:left;flex:none">'+
+          '<b style="color:'+(isOpen?'var(--danger)':'var(--ok)')+'">'+ils(isOpen?openAmt:r.amount)+'</b>'+
+          /* B45: נטו כמספר ראשי, כולל מע"מ בכתב קטן. הסכום לתשלום הוא payable. */
+          (isOpen && !r.has_doc? '<div class="muted" style="font-size:11px">כולל מע&quot;מ '+ils(r.payable)+'</div>' : '')+
+          '<div class="muted" style="font-size:11px">'+(isOpen? (Number(r.paid||0)>0.009? 'שולם '+ils(r.paid)+' מתוך '+ils(r.amount) : 'לתשלום') : 'שולם ✓')+'</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="row" style="margin-top:5px;gap:6px">'+
+        (r.invoice_url? '<a href="'+esc(r.invoice_url)+'" target="_blank" style="font-size:12px">חשבונית '+esc(r.invoice_number)+'</a>' : '')+
+        '<div class="grow"></div>'+
+        '<button class="btn ghost sm" style="font-size:11.5px;padding:2px 8px" onclick="portalAskForm(\'charge\',\''+esc(r.id)+'\',\''+esc(String(r.description||r.label||'').replace(/'/g,''))+'\')">שאלה על חיוב זה</button>'+
+      '</div>'+
+    '</div>';
+  });
+  var payable = Number(d.payable_total||0);
+  h += '<div class="row" style="padding:9px;background:var(--bg2,#f6f7f9);font-size:14px">'+
+    '<div class="grow"><b>סה&quot;כ לתשלום</b>'+
+      (payable-debt>0.009? '<div class="muted" style="font-size:11px">'+ils(debt)+' לפני מע&quot;מ</div>' : '')+
+    '</div>'+
+    '<b style="color:'+(payable>0.009?'var(--danger)':'var(--ok)')+'">'+ils(payable)+'</b></div>';
+  h += '</div>';
+
+  /* הודעות תשלום שנשלחו וממתינות לאימות */
+  var decl = (d.declarations||[]);
+  var openDecl = decl.filter(function(x){ return x.status==='ממתין לאישור'; });
+  if(declared>0.009 || openDecl.length){
+    h += '<div style="border:1px solid var(--amber);border-radius:10px;padding:9px;margin-top:8px;font-size:13px">'+
+      '<b style="color:var(--amber)">ממתין לאימות המשרד: '+ils(declared)+'</b>'+
+      '<div class="muted" style="font-size:12px;margin-top:3px">החוב יתעדכן אחרי שנאמת את קבלת הכסף. תקבל הודעה כאן.</div>'+
+      '</div>';
+  }
+  var decided = decl.filter(function(x){ return x.status!=='ממתין לאישור'; }).slice(0,4);
+  if(decided.length){
+    h += '<div style="margin-top:6px">'+decided.map(function(x){
+      return '<div class="row" style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line)">'+
+        '<div class="grow">'+esc(x.date)+' · '+ils(x.status==='אושר'? (x.confirmed||x.amount) : x.amount)+' · '+esc(x.method)+
+        (x.status==='נדחה'&&x.reason?'<div class="muted">סיבה: '+esc(x.reason)+'</div>':'')+
+        (x.status==='אושר'&&x.receipt_number?'<div class="muted">קבלה '+esc(String(x.receipt_number))+'</div>':'')+
+        '</div>'+
+        '<span class="chip" style="background:'+(x.status==='אושר'?'var(--ok)':'var(--danger)')+';color:#fff">'+esc(x.status)+'</span></div>';
+    }).join('')+'</div>';
+  }
+
+  /* כפתורי הפעולה */
+  if(payable>0.009){
+    h += '<div class="row" style="margin-top:9px;gap:6px">'+
+      (d.payment_link? '<button class="btn" style="flex:1" onclick="portalCardPay()">תשלום בכרטיס אשראי</button>' : '')+
+      '<button class="btn ghost" style="flex:1" onclick="portalDeclareForm()">הודעה על תשלום</button>'+
+    '</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:5px">תשלום בשיק או במזומן — דרך המשרד'+
+      (d.order_center_phone? ': <a href="tel:'+esc(d.order_center_phone)+'">'+esc(d.order_center_phone)+'</a>' : '')+'</div>';
+  }
+  return h;
+}
+
+/* תשלום בכרטיס אשראי — פותח את דף התשלום המאובטח ומדווח עליו למשרד לאימות.
+   כשיחובר ספק סליקה, ה-callback שלו יאשר את אותה הודעה אוטומטית. */
+function portalCardPay(){
   var d = PORTAL.data;
-  openModal('<h2>תשלום חוב</h2><p>חוב פתוח: <b>'+ils(d.debt)+'</b></p>'+
-    (d.payment_link?'<a href="'+esc(d.payment_link)+'" target="_blank" class="btn" style="display:block;text-align:center;text-decoration:none;margin:10px 0">מעבר לתשלום מאובטח</a>':'')+
-    (d.order_center_phone?'<p>או התקשרו למרכז ההזמנות: <a href="tel:'+esc(d.order_center_phone)+'"><b>'+esc(d.order_center_phone)+'</b></a></p>':'<p class="muted">נציג ישמח לעזור בהסדרת התשלום.</p>')+
-    '<p class="muted" style="font-size:12px">לאחר התשלום תופק קבלה מיידית ותופיע כאן בפורטל לצמיתות.</p>');
+  if(!d.payment_link) return toast('לא הוגדר קישור תשלום — פנה למשרד', true);
+  window.open(d.payment_link, '_blank');
+  portalDeclareForm('כרטיס אשראי');
+}
+
+/* הודעה על תשלום: סכום + אסמכתא + הערה */
+function portalDeclareForm(method){
+  var d = PORTAL.data;
+  var max = Math.max(0, Number(d.payable_total||0) - Number(d.declared_open||0));
+  if(max<=0.009) return toast('כל החוב כבר מדווח וממתין לאימות', true);
+  var mSel = ['העברה בנקאית','כרטיס אשראי','אחר'].map(function(m){
+    return '<option'+(m===method?' selected':'')+'>'+m+'</option>'; }).join('');
+  openModal('<h2>הודעה על תשלום</h2>'+
+    '<p class="muted" style="font-size:13px">כמה שילמת בפועל? ההודעה נשלחת למשרד לאימות. החוב יתעדכן אחרי האישור, ואז תופק לך קבלה.</p>'+
+    '<div class="frow"><label>סכום ששולם</label><input id="pd_amt" type="number" step="0.01" min="0.01" max="'+max+'" value="'+max+'"></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:-4px">ניתן לדווח על תשלום חלקי. מקסימום כרגע: '+ils(max)+'</div>'+
+    '<div class="frow"><label>אמצעי</label><select id="pd_method">'+mSel+'</select></div>'+
+    '<div class="frow"><label>אסמכתא (צילום העברה / אישור תשלום)</label><input id="pd_file" type="file" accept="image/*,application/pdf"></div>'+
+    '<div class="frow"><label>הערה (רשות)</label><input id="pd_note" placeholder="מספר אסמכתא, תאריך העברה וכד\'"></div>'+
+    (d.bank_details? '<div style="border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.5px;white-space:pre-wrap;margin-bottom:8px"><b>פרטים להעברה:</b>\n'+esc(d.bank_details)+'</div>' : '')+
+    '<button class="btn" style="width:100%" id="pd_send" onclick="portalDeclareSend()">שלח הודעה למשרד</button>');
+}
+
+async function portalDeclareSend(){
+  var btn = el('pd_send'); if(btn && btn.disabled) return;
+  var amt = Number((el('pd_amt')||{}).value||0);
+  if(!(amt>0)) return toast('יש להקליד סכום', true);
+  var payload = { code: PORTAL.code, amount: amt,
+    method_intent: (el('pd_method')||{}).value || 'אחר',
+    note: String((el('pd_note')||{}).value||'').trim() };
+  var f = (el('pd_file')||{}).files ? el('pd_file').files[0] : null;
+  if(btn){ btn.disabled = true; btn.textContent = 'שולח...'; }
+  try{
+    if(f){
+      if(f.size > 4*1024*1024){ toast('הקובץ גדול מדי (עד 4MB)', true); if(btn){btn.disabled=false;btn.textContent='שלח הודעה למשרד';} return; }
+      payload.base64 = await fileToB64(f);
+      payload.mime = f.type || 'application/octet-stream';
+    }
+    var r = await api('portalPayDeclare', payload);
+    if(!r || !r.ok){ toast((r&&r.error)||'שגיאה בשליחה', true); if(btn){btn.disabled=false;btn.textContent='שלח הודעה למשרד';} return; }
+    closeModal();
+    toast(r.duplicate? 'ההודעה כבר נשלחה וממתינה לאימות' : 'ההודעה נשלחה. נאמת ונעדכן אותך כאן.');
+    await portalReload();
+  }catch(e){
+    toast('שגיאת חיבור — ההודעה לא נשלחה', true);
+    if(btn){ btn.disabled=false; btn.textContent='שלח הודעה למשרד'; }
+  }
+}
+
+/* קובץ → base64 (בלי הקידומת data:) */
+function fileToB64(file){
+  return new Promise(function(res, rej){
+    var fr = new FileReader();
+    fr.onload = function(){ res(String(fr.result).split(',')[1]||''); };
+    fr.onerror = function(){ rej(new Error('קריאת הקובץ נכשלה')); };
+    fr.readAsDataURL(file);
+  });
+}
+
+/* רענון נתוני הפורטל בלי לאבד את המסך */
+async function portalReload(){
+  try{
+    var r = await api('portalGetData', {code: PORTAL.code});
+    if(r && r.ok){ PORTAL.data = r; renderPortal(); }
+  }catch(e){ /* אין רשת — המסך נשאר כפי שהוא */ }
+}
+
+/* P5/P6: פניות למשרד — שרשור מלא, כולל הודעות המערכת על אישור/דחייה */
+function portalMessagesHtml(d){
+  var msgs = d.messages || [];
+  var h = '<h3 style="color:var(--navy);margin:16px 0 6px">פניות למשרד</h3>'+
+    '<button class="btn ghost sm" style="margin-bottom:6px" onclick="portalAskForm(\'\',\'\',\'\')">פניה חדשה</button>';
+  if(!msgs.length) return h+'<div class="muted" style="font-size:12.5px">אין פניות. אפשר לשאול על כל חיוב או חשבונית.</div>';
+  h += msgs.map(function(m){
+    var mine = m.direction==='מלקוח';
+    return '<div style="border:1px solid var(--line);border-radius:9px;padding:8px;margin-bottom:6px;font-size:13px">'+
+      '<div class="row"><div class="grow"><b>'+esc(m.subject||'')+'</b>'+
+        (m.ref_id?' <span class="muted" style="font-size:11px">· '+esc(m.ref_id)+'</span>':'')+'</div>'+
+        '<span class="chip" style="background:'+(m.status==='נענתה'?'var(--ok)':(m.status==='נסגרה'?'#94A3B8':'var(--amber)'))+';color:#fff">'+esc(m.status||'')+'</span></div>'+
+      '<div style="margin-top:4px;white-space:pre-wrap">'+esc(m.body||'')+'</div>'+
+      '<div class="muted" style="font-size:11px;margin-top:3px">'+(mine?'נשלח על ידך':'מהמשרד')+' · '+esc(m.date||'')+'</div>'+
+      (m.answer? '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px;white-space:pre-wrap"><b>תשובת המשרד:</b>\n'+esc(m.answer)+
+        '<div class="muted" style="font-size:11px;margin-top:3px">'+esc(m.answered_at||'')+'</div></div>' : '')+
+    '</div>';
+  }).join('');
+  return h;
+}
+
+/* טופס פניה — ref מאוכלס אוטומטית, הלקוח לא מקליד מזהים (P6) */
+function portalAskForm(refType, refId, label){
+  var subj = refType==='charge' ? ('שאלה על חיוב: '+(label||refId)) : (refType==='invoice'? ('שאלה על חשבונית '+refId) : '');
+  openModal('<h2>פניה למשרד</h2>'+
+    (refId? '<div class="muted" style="font-size:12.5px;margin-bottom:6px">מתייחס ל: '+esc(label||refId)+'</div>' : '')+
+    '<div class="frow"><label>נושא</label><input id="pm_subj" value="'+esc(subj)+'" placeholder="נושא הפניה"></div>'+
+    '<div class="frow"><label>תוכן הפניה</label><textarea id="pm_body" rows="4" placeholder="במה נוכל לעזור?"></textarea></div>'+
+    '<button class="btn" style="width:100%" id="pm_send" onclick="portalAskSend(\''+esc(refType||'')+'\',\''+esc(refId||'')+'\')">שלח</button>');
+}
+
+async function portalAskSend(refType, refId){
+  var btn = el('pm_send'); if(btn && btn.disabled) return;
+  var body = String((el('pm_body')||{}).value||'').trim();
+  if(!body) return toast('לא ניתן לשלוח פניה ריקה', true);
+  if(btn){ btn.disabled = true; btn.textContent = 'שולח...'; }
+  try{
+    var r = await api('portalMessageSend', { code: PORTAL.code,
+      subject: String((el('pm_subj')||{}).value||'').trim() || 'פניה כללית',
+      body: body, ref_type: refType||'', ref_id: refId||'' });
+    if(!r || !r.ok){ toast((r&&r.error)||'שגיאה בשליחה', true); if(btn){btn.disabled=false;btn.textContent='שלח';} return; }
+    closeModal();
+    toast('הפניה נשלחה. נחזור אליך בהקדם.');
+    await portalReload();
+  }catch(e){
+    toast('שגיאת חיבור — הפניה לא נשלחה', true);
+    if(btn){ btn.disabled=false; btn.textContent='שלח'; }
+  }
 }
 /* ===== B3-2 (D5/D10): פקדון בפורטל — אימות כרטיס ₪1 / ערבות חלופית ===== */
 /* d.deposit מגיע מ-portalGetData: {exists,status,verified,has_token,guarantee_type,approval_pending,verified_at} — לעולם לא כולל token */
@@ -8390,7 +8721,8 @@ function portalLaundryHtml(lk){
     return '<div style="flex:1;text-align:center;min-width:0"><div style="height:7px;border-radius:4px;margin:0 1px;background:'+(on?(cur?'var(--amber)':'var(--teal)'):'var(--line)')+'"></div><div style="font-size:9px;color:'+(on?'var(--ink)':'var(--muted)')+';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(s)+'</div></div>';
   }).join('');
   var eta = (lk.status!=='נמסר'&&lk.eta_min)? '<div class="muted" style="font-size:12px;margin-top:5px">זמן משוער לסיום: '+fmtMin(lk.eta_min)+'</div>' : '';
-  var wt = lk.net? '<div class="muted" style="font-size:12px">נשקל: '+lk.net+' ק&quot;ג'+(lk.charge?' · לתשלום: '+ils(lk.charge):'')+'</div>' : '';
+  /* B55 (P4): המשקל הוא מידע תפעולי. החיוב מוצג רק בטבלת החיובים — מקור כסף אחד. */
+  var wt = lk.net? '<div class="muted" style="font-size:12px">נשקל: '+lk.net+' ק&quot;ג</div>' : '';
   return '<div style="border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:8px">'+
     '<div class="row" style="font-size:13px"><div class="grow"><b>'+esc(String(lk.ts||'').slice(0,10))+'</b> <span class="muted">· '+esc(lk.id)+'</span></div><span class="chip" style="background:'+(lk.status==='נמסר'?'var(--ok)':'var(--teal)')+'">'+esc(lk.status)+'</span></div>'+
     '<div class="row" style="gap:0;margin-top:8px;align-items:flex-end">'+dots+'</div>'+eta+wt+'</div>';
