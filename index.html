@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.47-B55 · 28.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.48-B49f · 28.07.2026</div>
   </div>
 </div>
 
@@ -2102,6 +2102,7 @@ function b49dGoIntake(oid){
   if(!allowedViews().some(function(v){ return v[0]==='floor'; })) return toast('אין לך הרשאה למסך רצפת הייצור', true);
   FLOOR_INTAKE_ORDER = String(oid||'');
   FLOOR_INTAKE_CARTS = [];
+  b49fReset();   /* B49f: הזמנה חדשה = הצהרה נקייה */
   FLOOR_TAB = 'intake';
   closeModal();
   go('floor');
@@ -2456,6 +2457,7 @@ async function addLine(oid){
   if(r) openOrder(oid);
 }
 function returnForm(oid){
+  b49fReset();   /* B49f: כל פתיחת טופס מתחילה בלי הצהרה קודמת */
   var lines = DB.orderLines.filter(l=>l.order_id===oid);
   openModal('<h2>קבלת החזרה</h2><p class="muted" style="margin-bottom:12px">עדכן כמה חזר בפועל. חוסרים יירשמו כגריעת מלאי, והכמות שחזרה תיכנס לכביסה.</p>'+
     b41IntakeBannerHtml(oid)+
@@ -2464,10 +2466,11 @@ function returnForm(oid){
 }
 async function doReturn(oid){
   var reason = b41ReasonGuard(oid); if(reason===null) return;   /* B41 */
+  var decl = b49fGuardOrder(oid); if(decl===null) return;       /* B49f */
   var returns = {};
   DB.orderLines.filter(l=>l.order_id===oid).forEach(l=>{ returns[l.id]=Number(el('ret_'+l.id).value); });
-  var r = await act('receiveReturn',{order_id:oid,returns:returns,no_scan_reason:reason});
-  if(r){ closeModal(); toast(r.shortages&&r.shortages.length?'נקלט. חוסרים נגרעו מהמלאי אוטומטית':'נקלט. הפריטים נכנסו לכביסה'); go('laundry'); }
+  var r = await act('receiveReturn',{order_id:oid,returns:returns,no_scan_reason:reason,trip_done:decl});
+  if(r){ closeModal(); b49fReset(); toast((r.shortages&&r.shortages.length?'נקלט. חוסרים נגרעו מהמלאי אוטומטית':'נקלט. הפריטים נכנסו לכביסה')+b49fToastSuffix(r.pickup)); go('laundry'); }
 }
 /* B2: מסך תשלום D9 — סכום הזמנה, חוב קודם, גרף ניצול, קיזוז חוב אופציונלי, קבלה מיידית (D15) */
 var PAY_CTX = null;
@@ -2764,8 +2767,13 @@ function b41IntakeState(oid){
   var o = (DB.orders||[]).find(x=>x.id===oid)||{};
   var expects = b38PlannedForOrder(o).some(pl=>pl.kind==='איסוף');
   var picks = (DB.deliveries||[]).filter(d=>d.order_id===oid && d.kind==='איסוף');
+  var open = picks.filter(d=>B5_OPEN_STATUSES.indexOf(String(d.status))>-1);
   var anyHandled = picks.some(b41DriverHandled);
-  return {expects:expects, picks:picks, anyHandled:anyHandled, needsReason: expects && !anyHandled};
+  /* B49f: unhandled = נסיעות פתוחות שאיש לא תיעד — בדיוק אלה שההכרעה חלה עליהן.
+     אותה הגדרה בדיוק כמו b41IntakeState בשרת, כדי ששני הצדדים לא יתפצלו. */
+  return {expects:expects, picks:picks, open:open,
+    unhandled: open.filter(d=>!b41DriverHandled(d)),
+    anyHandled:anyHandled, needsReason: expects && !anyHandled};
 }
 /* איסוף שנקלט בפועל — או שנסגר, או שההזמנה כבר הוחזרה/הושלמה.
    התנאי השני מכסה רשומות שנשארו פתוחות מלפני תיקון B39. */
@@ -2796,7 +2804,8 @@ function b41IntakeBannerHtml(oid){
     '<div class="frow" style="margin-top:8px"><label>סיבה (חובה)</label>'+
     '<select id="b41_sel" onchange="b41ReasonPick()"><option value="">— בחר סיבה —</option>'+
       B41_REASONS.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><input id="b41_reason" maxlength="300" placeholder="פירוט" value="'+esc(B41_LAST_REASON)+'"></div></div>';
+    '<div class="frow"><input id="b41_reason" maxlength="300" placeholder="פירוט" value="'+esc(B41_LAST_REASON)+'"></div></div>'+
+    b49fQuestionHtml(st.unhandled.length);
 }
 /* B41b: מסביר בדיוק למה הנסיעה אינה נחשבת מתועדת — כדי שלא ייראה שרירותי */
 function b41WhyNotHandled(d){
@@ -2821,6 +2830,73 @@ function b41ReasonGuard(oid){
   if(v.length<3){ toast('יש לציין סיבה לקליטה ללא סריקת נהג (לפחות 3 תווים)', true); if(t) t.focus(); return null; }
   B41_LAST_REASON = v;
   return v;
+}
+/* ============================================================
+   B49f — "האם נהג ביצע את הנסיעה בפועל?" (הכרעת אבי 28.07.2026)
+   ------------------------------------------------------------
+   הפער ש-B49e השאיר: נהג שנסע ואסף בפועל והטלפון שלו מת — הנסיעה בוטלה,
+   והדלק, השעות והתעודה נעלמו מדוח הצי בלי דרך לתקן.
+   השאלה נשאלת לצד סיבת B41, לא במקומה — שתי שאלות שונות:
+   סיבת B41 = מדוע ההנהלה קולטת · שאלת B49f = האם הנסיעה בכלל קרתה.
+   ⚠ הצהרה ≠ ראיה. b41DriverHandled ו-photo_by/scan_by לא נגעו.
+   נסיעה מאושרת נושאת trip_confirmed_by ונשארת ניתנת להפרדה בכל דוח.
+   רשאים להצהיר: מנהל ומשרד בלבד. עובד רצפה רואה את המצב ואינו נשאל.
+   ============================================================ */
+function b49fCanDeclare(){ return ['מנהל','משרד'].indexOf(ROLE)>-1; }
+var B49F_DECL = '';   /* '' = טרם נענתה · 'כן' · 'לא' */
+function b49fReset(){ B49F_DECL = ''; }
+function b49fQuestionHtml(nOpen){
+  if(!b49fCanDeclare() || !nOpen) return '';
+  return '<div class="card" id="b49f_box" style="border-right:5px solid var(--amber);background:#FFF9EC;margin-bottom:10px">'+
+    '<b>האם נהג ביצע את הנסיעה בפועל?</b>'+
+    '<div class="muted" style="font-size:12.5px;margin:3px 0 8px">'+
+      (nOpen>1? nOpen+' נסיעות איסוף פתוחות לא תועדו' : 'נסיעת האיסוף לא תועדה')+
+      ' ע"י הנהג המשובץ. אם הוא באמת נסע ואסף (טלפון שהתרוקן, תקלה במכשיר) — סמן <b>כן</b>: '+
+      'הנסיעה תיסגר כ"בוצע" עם תעודת משלוח, ותסומן כאישור הנהלה ולא כתיעוד של הנהג. '+
+      'אם הנסיעה לא בוצעה — סמן <b>לא</b> והיא תבוטל.</div>'+
+    '<div class="row" style="gap:6px">'+
+      '<button type="button" class="btn'+(B49F_DECL==='כן'?'':' ghost')+' grow" id="b49f_yes" onclick="b49fPick(\'כן\')">כן — הנהג נסע ואסף</button>'+
+      '<button type="button" class="btn'+(B49F_DECL==='לא'?'':' ghost')+' grow" id="b49f_no" onclick="b49fPick(\'לא\')">לא — הנסיעה לא בוצעה</button>'+
+    '</div></div>';
+}
+function b49fPick(v){
+  B49F_DECL = v;
+  var y = el('b49f_yes'), n = el('b49f_no');
+  if(y) y.className = 'btn grow'+(v==='כן'? '' : ' ghost');
+  if(n) n.className = 'btn grow'+(v==='לא'? '' : ' ghost');
+}
+/* מחזיר 'כן' כשההנהלה הצהירה שהנסיעה בוצעה · '' כשלא נדרשת או שנענה "לא"
+   · null כשנדרשת וטרם נענתה (ואז נעצרים, כמו ב-b41ReasonGuard) */
+function b49fGuard(nOpen){
+  if(!nOpen || !b49fCanDeclare()) return '';
+  if(B49F_DECL!=='כן' && B49F_DECL!=='לא'){
+    toast('ענה על השאלה: האם נהג ביצע את הנסיעה בפועל?', true);
+    var b = el('b49f_box'); if(b && b.scrollIntoView) b.scrollIntoView({block:'center'});
+    return null;
+  }
+  return B49F_DECL==='כן'? 'כן' : '';
+}
+function b49fGuardOrder(oid){ return b49fGuard(b41IntakeState(oid).unhandled.length); }
+/* רגל ההלוך של הזמנת כביסה — אותה הכרעה בדיוק, במסלול הקליטה במכבסה */
+function b49fOrderLegOpen(o){
+  if(!o || b49eShipMode(o,'הלוך')!==B49E_SHIP) return [];
+  var kind = b49eLegKind(o,'הלוך');
+  return ((DB&&DB.deliveries)||[]).filter(function(d){
+    return d.order_id===o.id && String(d.kind)===kind &&
+      B5_OPEN_STATUSES.indexOf(String(d.status))>-1 && !b41DriverHandled(d);
+  });
+}
+/* תוספת אחידה לטוסט אחרי קליטה — אותו נוסח בשלושת המסלולים */
+function b49fToastSuffix(pk){
+  if(!pk) return '';
+  return (pk.confirmed? ' · '+pk.confirmed+' נסיעות אושרו ע"י ההנהלה' : '')+
+         (pk.cancelled? ' · '+pk.cancelled+' נסיעות בוטלו (לא בוצעו בפועל)' : '');
+}
+/* סימון על כרטיס נסיעה שההנהלה אישרה בדיעבד — לא נסיעה שהנהג הוכיח.
+   ⚠ ההפרדה הזו חייבת להישמר בכל תצוגה ובכל דוח, כולל דוח הצי של B50. */
+function b49fConfirmedLine(d){
+  return String(d.trip_confirmed_by||'').trim()
+    ? '<div style="margin-top:3px;color:var(--amber);font-weight:600;font-size:12.5px">✓ ההנהלה אישרה שהנסיעה בוצעה — הנהג לא תיעד בשטח</div>' : '';
 }
 /* סימון על כרטיס משלוח שנקלט ידנית */
 function b41ManualLine(d){
@@ -2860,7 +2936,7 @@ function dispatchTodayHtml(){
       /* B33: שם הנהג בשורה מודגשת משלו, כמו בכרטיס "כל המשלוחים" */
       (d.driver?'<div style="margin-top:3px;font-weight:700;color:var(--navy)">נהג: '+esc(d.driver)+'</div>'
               :'<div style="margin-top:3px;font-weight:700;color:var(--danger)">טרם שובץ נהג</div>')+
-      b41ManualLine(d)+
+      b41ManualLine(d)+b49fConfirmedLine(d)+
       '<div class="muted">'+esc(d.date||'')+(late?' <span style="color:var(--danger)">· באיחור</span>':'')+'</div></div>'+
       (mode==='back'? backChip
                     : '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>')+
@@ -3011,6 +3087,47 @@ async function b41CloseStale(){
   var r = await act('b41CloseStalePickups',{});
   if(r) toast('נסגרו '+r.closed+' נסיעות איסוף');
 }
+/* ============================================================
+   B49f — ריפוי בדיעבד: נסיעות שבוטלו אוטומטית בקליטה
+   ------------------------------------------------------------
+   נסיעה שבוטלה בקליטה נושאת trip_auto_cancel. שני מקורות הביטול האחרים
+   ("בטל הזמנה" ומעבר רגל לאיסוף עצמי) אינם מסמנים אותו — ולכן ביטול
+   לגיטימי לעולם אינו מוצע כאן לשחזור. חלון 30 יום: מעבר לזה זה כבר
+   תיקון היסטוריה, לא תיקון תפעולי.
+   ============================================================ */
+var B49F_DAYS = 30;
+function b49fSince(){ var d=new Date(); d.setDate(d.getDate()-B49F_DAYS); return ymdLocal(d); }
+function b49fAutoCancelled(){
+  var since = b49fSince();
+  return (DB.deliveries||[]).filter(function(d){
+    return String(d.status)==='בוטל' && String(d.trip_auto_cancel||'').trim()!=='' && dYmd(d.date)>=since;
+  }).sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+}
+function b49fCancelledHtml(){
+  var rows = b49fAutoCancelled();
+  if(!rows.length) return '';
+  return '<div class="section-title" style="margin-top:16px"><h3 style="color:var(--amber)">נסיעות שבוטלו בקליטה</h3><span class="muted">'+rows.length+'</span></div>'+
+    '<div class="muted" style="margin-bottom:6px">הנהג המשובץ לא תיעד אותן בשטח, ולכן הן בוטלו אוטומטית בקליטה. אם נהג כן נסע ואסף בפועל — אשר כאן, והנסיעה תחזור ל"בוצע" עם תעודת משלוח ותסומן כאישור הנהלה. מוצגים '+B49F_DAYS+' הימים האחרונים.</div>'+
+    rows.map(function(d){
+      var o = (DB.orders||[]).find(x=>x.id===d.order_id)||{};
+      return '<div class="card" style="border-right:5px solid var(--amber)"><div class="row">'+
+        '<div class="grow" style="cursor:pointer" onclick="openDelivery(\''+d.id+'\')"><b>'+esc(cust(o.customer_id))+'</b>'+
+        (o.order_number?' <span class="muted">· הזמנה #'+esc(o.order_number)+'</span>':'')+
+        '<div class="muted">'+esc(d.kind||'')+' · '+esc(d.date||'')+' · '+(d.driver?'נהג: '+esc(d.driver):'<span style="color:var(--danger)">ללא נהג</span>')+'</div>'+
+        '<div class="muted" style="font-size:12px">בוטלה: '+esc(d.trip_auto_cancel)+'</div></div>'+
+        (['מנהל','משרד'].indexOf(ROLE)>-1 && String(d.driver||'').trim()
+          ? '<button class="btn sm" onclick="b49fRestore(\''+d.id+'\')">הנסיעה כן בוצעה</button>'
+          : '<span class="muted" style="font-size:12px">'+(String(d.driver||'').trim()?'':'אין נהג לשייך אליו')+'</span>')+
+        '</div></div>';
+    }).join('');
+}
+async function b49fRestore(did){
+  var d = (DB.deliveries||[]).find(x=>x.id===did); if(!d) return;
+  var o = (DB.orders||[]).find(x=>x.id===d.order_id)||{};
+  if(!confirm('לאשר שהנהג '+(d.driver||'')+' ביצע בפועל את הנסיעה מ-'+(d.date||'')+' עבור '+cust(o.customer_id)+'?\n\nהנסיעה תחזור ל"בוצע", תונפק לה תעודת משלוח, והיא תסומן כאישור הנהלה (לא כתיעוד של הנהג).')) return;
+  var r = await act('b49fRestoreTrip',{delivery_id:did});
+  if(r) toast(r.already? 'הנסיעה כבר מסומנת כבוצעה' : 'הנסיעה אושרה · תעודה '+r.note_number);
+}
 function b38UnsyncedReturnsHtml(){
   var rows = b38ReturnsNeedingAttention();
   var canFix = ROLE==='מנהל';
@@ -3054,6 +3171,7 @@ function rDeliveries(){
       (openPick.length? openPick.map(delivCard).join(''):'<div class="card empty">אין איסופים פתוחים</div>')+
       b49dPendingHtml(false)+
       b41StaleHtml()+
+      b49fCancelledHtml()+
       b44DupPickupHtml()+
       (done.length?'<div class="section-title"><h3>אחרונים</h3></div>'+done.map(delivCard).join(''):'');
   var canPlan = ['מנהל','משרד'].includes(ROLE);
@@ -3554,7 +3672,7 @@ function delivCard(d){
     ? '<div style="margin-top:3px;font-weight:700;color:var(--navy)">נהג: '+esc(d.driver)+(vehD?' · רכב '+esc(vehD.plate||vehD.id):'')+'</div>'
     : '<div style="margin-top:3px;font-weight:700;color:var(--danger)">טרם שובץ נהג</div>';
   return '<div class="card" style="cursor:pointer;border-right:5px solid '+(isPickup(d)?'#8a5a1f':'var(--teal,#1f7a6b)')+'" title="לחץ לפרטי המשלוח" onclick="if(!event.target.closest(\'button,a\'))openDelivery(\''+d.id+'\')"><div class="row"><div class="grow">'+kindChip(d)+' '+esc(cust(o.customer_id))+
-    drvLine+b41ManualLine(d)+
+    drvLine+b41ManualLine(d)+b49fConfirmedLine(d)+
     '<div class="muted">'+esc(d.date)+'</div></div>'+
     (drv?contactBtns(drv.phone,''):'')+
     '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
@@ -3615,6 +3733,8 @@ function openDelivery(did){
       (d.note_number?'<br>תעודה מס\' '+esc(d.note_number):'')+
       /* B41: קליטה ידנית — מוצגת בגוף הכרטיס עם הסיבה ומי ביצע */
       (d.manual_intake_reason?'<br><span style="color:var(--danger);font-weight:600">⚠ נקלט ע"י ההנהלה ללא סריקת נהג</span> · '+esc(d.manual_intake_reason)+(d.manual_intake_by?' ('+esc(d.manual_intake_by)+')':''):'')+
+      /* B49f: אישור הנהלה שהנסיעה בוצעה — הצהרה מתועדת, לא ראיה של הנהג */
+      (String(d.trip_confirmed_by||'').trim()?'<br><span style="color:var(--amber);font-weight:600">✓ ההנהלה אישרה שהנסיעה בוצעה בפועל</span> · '+esc(d.trip_confirmed_by)+' <span class="muted">(הנהג לא תיעד בשטח)</span>':'')+
       /* B41: איסוף פתוח שהנהג לא נגע בו — נאמר מראש, לפני שנכנסים לקליטה */
       ((isReturn && B5_OPEN_STATUSES.includes(d.status) && !d.manual_intake_reason && !b41DriverHandled(d))?
         '<br><span style="color:var(--danger);font-weight:600">⚠ האיסוף לא תועד ע"י הנהג המשובץ</span> — קליטה דרך ההנהלה תדרוש פירוט סיבה':'')+
@@ -8030,6 +8150,8 @@ async function findReturn(code){
   var r = await api('findOrderByScan',{code:code});
   if(!r.ok){ el('retBody').innerHTML = '<div class="card empty">'+esc(r.error)+'</div>'; return; }
   RET = r;
+  b49fReset();   /* B49f: החזרה חדשה = הצהרה נקייה. אין איפוס ב-renderReturn,
+                    שרץ שוב גם אחרי need_count — ואז הבחירה הייתה נמחקת. */
   renderReturn({});
 }
 function renderReturn(needMap){
@@ -8056,7 +8178,8 @@ async function submitReturn(){
     var c = el('rc_'+l.line_id); if(c && c.value!=='') counts[l.line_id] = Number(c.value);
   });
   var reason = b41ReasonGuard(RET.order.id); if(reason===null) return;   /* B41 */
-  var r = await act('returnByWeight',{order_id:RET.order.id,weights:weights,counts:counts,no_scan_reason:reason});
+  var decl = b49fGuardOrder(RET.order.id); if(decl===null) return;       /* B49f */
+  var r = await act('returnByWeight',{order_id:RET.order.id,weights:weights,counts:counts,no_scan_reason:reason,trip_done:decl});
   if(!r){ return; }
   if(r.need_count){ // המקרה הזה חוזר כ-ok:false ולכן act הציג טוסט — נטפל ידנית
     return;
@@ -10220,7 +10343,10 @@ function floorIntakeTab(){
         '<div class="row"><div class="grow"><b style="font-size:15px">🧺 קליטה עבור הזמנה '+(ord.order_number?'#'+esc(ord.order_number):esc(ord.id))+'</b>'+
         '<div class="muted" style="font-size:12.5px">'+esc(cust(ord.customer_id))+' · '+esc(b49eLegDate(ord,'הלוך')||'')+
         (ordCust&&Number(ordCust.price_per_kg)>0?' · '+ils(ordCust.price_per_kg)+' לק"ג':' · <span style="color:var(--danger)">לא הוגדר מחיר לק"ג בכרטיס הלקוח</span>')+'</div></div>'+
-        '<button class="btn ghost sm" onclick="FLOOR_INTAKE_ORDER=\'\';floorIntakeTab()">בטל בחירה</button></div></div>'+
+        '<button class="btn ghost sm" onclick="FLOOR_INTAKE_ORDER=\'\';floorIntakeTab()">בטל בחירה</button></div>'+
+        /* B49f: מצב רגל ההלוך גלוי לכל מי שקולט — גם לעובד רצפה שאינו רשאי להצהיר */
+        '<div style="font-size:12.5px;font-weight:600;margin-top:4px;color:'+b49dLegState(ord).color+'">'+esc(b49dLegState(ord).txt)+'</div></div>'+
+      b49fQuestionHtml(b49fOrderLegOpen(ord).length)+
       '<input type="hidden" id="fl_cust" value="'+esc(ord.customer_id)+'">'
     :
       '<div class="frow"><label>לקוח</label><select id="fl_cust" style="font-size:16px" onchange="b49dTargetRefresh()"><option value="">— בחר לקוח —</option>'+custs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join('')+'</select></div>'
@@ -10315,12 +10441,19 @@ async function floorSaveIntake(){
     return;
   }
   if(!manual && !FLOOR_INTAKE_CARTS.length) return toast('סרוק לפחות עגלה אחת, או סמן "אין עגלה פיזית"', true);
+  /* B49f: אותה שאלה בדיוק כמו בשער קליטת ההחזרה, על רגל ההלוך של הזמנת הכביסה.
+     עובד רצפה אינו רשאי להצהיר — b49fGuard מחזיר לו '' והנסיעה תבוטל כרגיל,
+     וההנהלה תרפא אותה מרשימת "נסיעות שבוטלו בקליטה" במסך המשלוחים. */
+  var ord49f = oid? (DB.orders||[]).find(x=>x.id===oid) : null;
+  var decl49f = b49fGuard(ord49f? b49fOrderLegOpen(ord49f).length : 0);
+  if(decl49f===null) return;
   var r = await floorAct('nobleIntake',{customer_id:cust,internal:internal?'כן':'',manual:manual?'כן':'',
-    order_id:oid, cart_barcodes:manual?[]:FLOOR_INTAKE_CARTS.slice(),notes:notes});
+    order_id:oid, trip_done:decl49f, cart_barcodes:manual?[]:FLOOR_INTAKE_CARTS.slice(),notes:notes});
   if(r){
     toast('נפתחה קליטה '+r.intake.id+(manual?' (ידנית — ללא עגלה פיזית)':'')+
       (r.pickup && r.pickup.done? ' · נסיעת האיסוף נסגרה':'')+
-      (r.pickup && r.pickup.cancelled? ' · '+r.pickup.cancelled+' נסיעות איסוף בוטלו (לא בוצעו בפועל)':''));
+      b49fToastSuffix(r.pickup));
+    b49fReset();
     FLOOR_INTAKE_CARTS=[]; FLOOR_INTAKE_ORDER=''; FLOOR_TAB='work'; FLOOR_INFO=null;
     /* B49b: לקליטה ידנית אין ברקוד לסרוק — נכנסים ישר לעבודה על העגלה הווירטואלית */
     FLOOR_BC = (manual && r.virtual_cart_id) ? String(r.virtual_cart_id) : '';
