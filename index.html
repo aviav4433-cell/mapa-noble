@@ -427,7 +427,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.49-B50 · 28.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.50-B51 · 29.07.2026</div>
   </div>
 </div>
 
@@ -2585,6 +2585,8 @@ function b40Events(tid){
   return (DB.laundryTaskEvents||[]).filter(e=>String(e.task_id)===String(tid))
     .sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
 }
+/* B51: יומן המשימות נחתך ל-180 יום ברענון — משימה ותיקה תציג היסטוריה חלקית */
+function b40EventsNote(){ return b51SlimNote('laundry_task_events','היסטוריית שלבים'); }
 /* אחיות — כל המשימות שנוצרו מאותה שורת הזמנה (כולל פיצולים) */
 function b40Siblings(t){
   return (DB.laundryTasks||[]).filter(x=>x.order_id===t.order_id && x.item_id===t.item_id)
@@ -2632,7 +2634,7 @@ function openLaundryTask(tid){
         '<td>'+(x.id===t.id?'זו':'<span class="lnk" onclick="openLaundryTask(\''+esc(x.id)+'\')">'+esc(x.id)+'</span>')+'</td>'+
         '<td>'+esc(x.qty)+'</td><td>'+esc(x.stage)+'</td><td>'+esc(x.cart_id||'—')+'</td><td>'+esc(x.machine_id||'—')+'</td></tr>'; }).join('')+
       '<tr><td colspan="1"><b>סה"כ</b></td><td colspan="4"><b>'+totalSplit+'</b> יח\' ב-'+sib.length+' משימות</td></tr></table>':'')+
-    '<h3 style="margin-top:14px">יומן מלא</h3>'+
+    '<h3 style="margin-top:14px">יומן מלא</h3>'+b40EventsNote()+
     (evs.length?'<table><tr><th>מתי</th><th>מה קרה</th><th>עגלה</th><th>מכונה</th><th>מי</th></tr>'+
       evs.map(function(e){ return '<tr><td>'+esc(fmtTs(e.ts))+'</td>'+
         '<td>'+esc(e.event_type)+(e.stage_from||e.stage_to?' — '+esc(e.stage_from||'')+' ← '+esc(e.stage_to||''):'')+
@@ -4495,7 +4497,7 @@ function b43HistBtn(etype,id){
 }
 function b43HistModal(etype,id){
   var h = b43Hist(etype,id);
-  openModal('<h2>יומן שינויי מועד תשלום</h2>'+
+  openModal('<h2>יומן שינויי מועד תשלום</h2>'+b51SlimNote('date_changes')+
     (h.length? '<div class="card"><table><tr><th>מתי</th><th>מי</th><th>ממועד</th><th>למועד</th><th>סיבה</th></tr>'+
       h.map(x=>'<tr><td style="white-space:nowrap">'+esc(x.ts)+'</td><td>'+esc(x.user||'')+'</td>'+
         '<td>'+esc(x.old_date||'—')+'</td><td><b>'+esc(x.new_date||'')+'</b></td><td>'+esc(x.reason||'')+'</td></tr>').join('')+
@@ -6275,46 +6277,183 @@ async function doScan(){
   el('scanIn').value=''; el('scanIn').focus();
 }
 
-/* ================= B4: יומן פעולות (Audit) — מנהל בלבד ================= */
+/* ================= B4: יומן פעולות (Audit) — מנהל בלבד =================
+   B51: היומן כבר אינו מגיע ב-getAll (SLIM_POLICY). המסך קורא עמודים מהשרת
+   דרך b51AuditPage. אותם פילטרים בדיוק, אותה תצוגה — רק המקור השתנה.
+   ====================================================================== */
 var AUDIT_FILTER = { q:'', user:'', action:'', from:'', to:'' };
-var AUDIT_SHOW = 200; // כמות שורות מוצגות (טעינה הדרגתית — הנתונים כבר טעונים במלואם ב-DB)
+var AUDIT_PAGE = 100;              /* שורות לעמוד (תקרת השרת: 200) */
+var AUDIT_ROWS = [];               /* מה שנטען עד כה */
+var AUDIT_META = { users:[], actions:[], total:0, more:false, scanned_all:true, meta_rows:0 };
+var AUDIT_LOADING = false;
+var AUDIT_ERR = '';
+var AUDIT_SEQ = 0;                 /* מונע מרוץ בין בקשות כשמקלידים מהר */
+
 function rAudit(){
-  var all = (DB.auditLog||[]).slice().sort((a,b)=> a.ts>b.ts?-1:(a.ts<b.ts?1:0));
-  var users = Array.from(new Set(all.map(x=>x.user).filter(Boolean))).sort();
-  var actions = Array.from(new Set(all.map(x=>x.action).filter(Boolean))).sort();
-  var f = AUDIT_FILTER;
-  var rows = all.filter(function(r){
-    if(f.user && r.user!==f.user) return false;
-    if(f.action && r.action!==f.action) return false;
-    if(f.from && String(r.ts).slice(0,10)<f.from) return false;
-    if(f.to && String(r.ts).slice(0,10)>f.to) return false;
-    if(f.q){
-      var s=(r.user+' '+r.action+' '+r.details).toLowerCase();
-      if(s.indexOf(f.q.toLowerCase())===-1) return false;
-    }
-    return true;
-  });
-  var shown = rows.slice(0, AUDIT_SHOW);
-  el('main').innerHTML = '<div class="section-title"><h2>יומן פעולות</h2><span class="muted">'+rows.length+' רשומות (מתוך '+all.length+' סה"כ)</span></div>'+
+  AUDIT_ROWS = []; AUDIT_ERR = '';
+  el('main').innerHTML = auditShell();
+  auditLoad(false);
+}
+function auditShell(){
+  var f = AUDIT_FILTER, m = AUDIT_META;
+  return '<div class="section-title"><h2>יומן פעולות</h2>'+
+    '<span class="muted" id="au_count">'+(AUDIT_LOADING?'טוען...':(AUDIT_ROWS.length+' מוצגות · '+m.total+' רשומות ביומן'))+'</span></div>'+
     '<div class="card"><div class="grid3">'+
-    '<div class="frow"><label>חיפוש חופשי</label><input id="au_q" value="'+esc(f.q)+'" placeholder="משתמש / פעולה / פרטים" oninput="auditSetFilter()"></div>'+
-    '<div class="frow"><label>משתמש</label><select id="au_user" onchange="auditSetFilter()"><option value="">הכל</option>'+users.map(u=>'<option'+(f.user===u?' selected':'')+'>'+esc(u)+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>פעולה</label><select id="au_action" onchange="auditSetFilter()"><option value="">הכל</option>'+actions.map(a=>'<option'+(f.action===a?' selected':'')+'>'+esc(a)+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>חיפוש חופשי</label><input id="au_q" value="'+esc(f.q)+'" placeholder="משתמש / פעולה / פרטים" onchange="auditSetFilter()"></div>'+
+    '<div class="frow"><label>משתמש</label><select id="au_user" onchange="auditSetFilter()"><option value="">הכל</option>'+m.users.map(function(u){ return '<option'+(f.user===u?' selected':'')+'>'+esc(u)+'</option>'; }).join('')+'</select></div>'+
+    '<div class="frow"><label>פעולה</label><select id="au_action" onchange="auditSetFilter()"><option value="">הכל</option>'+m.actions.map(function(a){ return '<option'+(f.action===a?' selected':'')+'>'+esc(a)+'</option>'; }).join('')+'</select></div>'+
     '<div class="frow"><label>מתאריך</label><input id="au_from" type="date" value="'+esc(f.from)+'" onchange="auditSetFilter()"></div>'+
     '<div class="frow"><label>עד תאריך</label><input id="au_to" type="date" value="'+esc(f.to)+'" onchange="auditSetFilter()"></div>'+
-    '</div></div>'+
+    '</div>'+
+    '<div class="muted" style="font-size:12px;margin-top:6px">היומן נטען מהשרת בעמודים — הוא כבר אינו חלק מרענון הנתונים הרגיל.'+
+    (m.meta_rows? ' רשימות "משתמש" ו"פעולה" מבוססות על '+m.meta_rows.toLocaleString('he-IL')+' הרשומות האחרונות.':'')+'</div>'+
+    '</div>'+
     b4NotificationsWidget()+
-    '<div class="card"><table><tr><th>תאריך ושעה</th><th>משתמש</th><th>פעולה</th><th>פרטים</th></tr>'+
-    (shown.length? shown.map(function(r){
-      return '<tr><td class="muted" style="white-space:nowrap">'+esc(r.ts)+'</td><td>'+esc(r.user)+'</td><td>'+esc(r.action)+'</td><td style="max-width:520px;word-break:break-word">'+esc(r.details)+'</td></tr>';
+    b51ToolsCard()+
+    '<div id="au_box">'+auditTableHtml()+'</div>';
+}
+function auditTableHtml(){
+  if(AUDIT_ERR) return '<div class="card empty" style="color:var(--danger)">'+esc(AUDIT_ERR)+'</div>';
+  if(AUDIT_LOADING && !AUDIT_ROWS.length) return '<div class="card empty">טוען...</div>';
+  var m = AUDIT_META;
+  return '<div class="card"><table><tr><th>תאריך ושעה</th><th>משתמש</th><th>פעולה</th><th>פרטים</th></tr>'+
+    (AUDIT_ROWS.length? AUDIT_ROWS.map(function(r){
+      return '<tr><td class="muted" style="white-space:nowrap">'+esc(r.ts)+'</td><td>'+esc(r.user)+'</td><td>'+esc(r.action)+'</td>'+
+        '<td style="max-width:520px;word-break:break-word">'+esc(r.details)+'</td></tr>';
     }).join('') : '<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">אין רשומות תואמות</td></tr>')+
     '</table></div>'+
-    (rows.length>AUDIT_SHOW? '<div class="row" style="justify-content:center;margin-top:10px"><button class="btn ghost" onclick="AUDIT_SHOW+=200;rAudit()">טען עוד ('+(rows.length-AUDIT_SHOW)+' נוספות)</button></div>' : '');
+    (m.more? '<div class="row" style="justify-content:center;margin-top:10px"><button class="btn ghost" onclick="auditLoad(true)"'+(AUDIT_LOADING?' disabled':'')+'>'+(AUDIT_LOADING?'טוען...':'טען עוד')+'</button></div>'
+           : (AUDIT_ROWS.length? '<div class="muted" style="text-align:center;margin-top:10px;font-size:12px">אין רשומות נוספות</div>':''))+
+    ((m.filtered && !m.scanned_all)? '<div class="muted" style="text-align:center;margin-top:6px;font-size:12px">החיפוש סרק את הרשומות האחרונות בלבד — צמצם את טווח התאריכים לחיפוש עמוק יותר.</div>':'');
 }
 function auditSetFilter(){
   AUDIT_FILTER = { q: el('au_q').value, user: el('au_user').value, action: el('au_action').value, from: el('au_from').value, to: el('au_to').value };
-  AUDIT_SHOW = 200;
-  rAudit();
+  AUDIT_ROWS = []; AUDIT_ERR = '';
+  auditLoad(false);
+}
+async function auditLoad(append){
+  /* B51: לא חוסמים כניסה חוזרת — שינוי פילטר תוך כדי טעינה חייב לנצח.
+     המרוץ נשלט ב-AUDIT_SEQ: תשובה שאינה של הבקשה האחרונה נזרקת. */
+  var seq = ++AUDIT_SEQ;
+  AUDIT_LOADING = true;
+  auditPaint();
+  var f = AUDIT_FILTER;
+  var r = await api('b51AuditPage', { offset: append? AUDIT_ROWS.length : 0, limit: AUDIT_PAGE,
+    q:f.q, user:f.user, action:f.action, from:f.from, to:f.to });
+  if(seq !== AUDIT_SEQ){ return; }   /* תשובה ישנה — מתעלמים */
+  AUDIT_LOADING = false;
+  if(!r || !r.ok){ AUDIT_ERR = (r && r.error) || 'טעינת היומן נכשלה'; auditPaint(); return; }
+  AUDIT_ERR = '';
+  AUDIT_ROWS = append? AUDIT_ROWS.concat(r.rows||[]) : (r.rows||[]);
+  AUDIT_META = { users:r.users||[], actions:r.actions||[], total:r.total||0, more:!!r.more,
+                 scanned_all:r.scanned_all!==false, filtered:!!r.filtered, meta_rows:r.meta_rows||0 };
+  if(VIEW==='audit') el('main').innerHTML = auditShell();
+}
+function auditPaint(){
+  var c = el('au_count'); if(c) c.textContent = AUDIT_LOADING? 'טוען...' : (AUDIT_ROWS.length+' מוצגות · '+AUDIT_META.total+' רשומות ביומן');
+  var b = el('au_box'); if(b) b.innerHTML = auditTableHtml();
+}
+
+/* ---- B51: כלי מנהל — משקל הנתונים + ניקוי סיסמאות היסטוריות ---- */
+var B51_STATS = null, B51_SCRUB = null;
+function b51ToolsCard(){
+  if(ROLE!=='מנהל') return '';
+  return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">'+
+    '<h3 class="grow">כלי תחזוקה (B51)</h3></div>'+
+    '<div class="row" style="gap:6px;flex-wrap:wrap">'+
+    '<button class="btn ghost sm" onclick="b51LoadStats()">📊 משקל הנתונים</button>'+
+    '<button class="btn ghost sm" onclick="b51ScrubStart()">🧹 ניקוי סיסמאות היסטוריות מהיומן</button>'+
+    '</div>'+
+    '<div id="b51ToolsOut">'+b51ToolsOutHtml()+'</div></div>';
+}
+function b51ToolsOutHtml(){
+  var h = '';
+  if(B51_SCRUB) h += b51ScrubHtml();
+  if(B51_STATS) h += b51StatsHtml();
+  return h;
+}
+function b51ToolsPaint(){ var b = el('b51ToolsOut'); if(b) b.innerHTML = b51ToolsOutHtml(); }
+function b51Kb(n){ n=Number(n)||0; return n>=1048576? (Math.round(n/104857.6)/10)+' MB' : (Math.round(n/102.4)/10)+' KB'; }
+
+async function b51LoadStats(){
+  B51_STATS = { loading:true }; b51ToolsPaint();
+  var r = await api('b51PayloadStats', {});
+  B51_STATS = (r && r.ok)? r : { error: (r && r.error) || 'המדידה נכשלה' };
+  b51ToolsPaint();
+}
+function b51StatsHtml(){
+  var s = B51_STATS;
+  if(s.loading) return '<div class="card empty" style="margin-top:8px">מודד... (הפעולה קוראת את כל הגיליונות — עשויה לקחת מספר שניות)</div>';
+  if(s.error) return '<div class="card empty" style="margin-top:8px;color:var(--danger)">'+esc(s.error)+'</div>';
+  var top = (s.rows||[]).filter(function(x){ return x.full_bytes>0; }).slice(0,15);
+  return '<div class="card" style="margin-top:8px"><b>משקל מטען getAll</b>'+
+    '<div class="muted" style="font-size:12px;margin:2px 0 8px">מלא: '+b51Kb(s.full_bytes)+' · נשלח בפועל: <b>'+b51Kb(s.sent_bytes)+'</b> · חיסכון: '+s.saved_pct+'%</div>'+
+    '<table><tr><th>טבלה</th><th>מדיניות</th><th>שורות בגיליון</th><th>נשלחות</th><th>מלא</th><th>נשלח</th></tr>'+
+    top.map(function(x){
+      var cut = x.sent_bytes < x.full_bytes;
+      return '<tr><td>'+esc(x.table)+'</td><td'+(cut?' style="color:var(--teal);font-weight:600"':'')+'>'+esc(x.policy)+'</td>'+
+        '<td>'+x.full_rows.toLocaleString('he-IL')+'</td><td>'+x.sent_rows.toLocaleString('he-IL')+'</td>'+
+        '<td>'+b51Kb(x.full_bytes)+'</td><td>'+b51Kb(x.sent_bytes)+'</td></tr>';
+    }).join('')+'</table>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:6px">15 הטבלאות הכבדות. "לא נשלח" = הגיליון כלל אינו נקרא ברענון.</div></div>';
+}
+
+/* ניקוי: תמיד תצוגה מקדימה קודם (כלל R1), ורק אז ביצוע. אידמפוטנטי. */
+async function b51ScrubStart(){
+  B51_SCRUB = { phase:'preview', scrubbed:0, scanned:0, total:0, sample:[], running:true };
+  b51ToolsPaint();
+  var offset = 0, found = 0, scanned = 0, total = 0, sample = [], more = true, guard = 0;
+  while(more && guard++ < 200){
+    var r = await api('b51ScrubAudit', { offset: offset, preview: 1 });
+    if(!r || !r.ok){ B51_SCRUB = { phase:'error', error:(r&&r.error)||'הבדיקה נכשלה' }; b51ToolsPaint(); return; }
+    found += r.scrubbed; scanned += r.scanned; total = r.total;
+    (r.sample||[]).forEach(function(x){ if(sample.length<5) sample.push(x); });
+    more = !!r.more; offset = r.next_offset;
+    B51_SCRUB = { phase:'preview', scrubbed:found, scanned:scanned, total:total, sample:sample, running:more };
+    b51ToolsPaint();
+  }
+  B51_SCRUB.running = false; b51ToolsPaint();
+}
+async function b51ScrubRun(){
+  B51_SCRUB = { phase:'run', scrubbed:0, scanned:0, total:0, running:true };
+  b51ToolsPaint();
+  var offset = 0, done = 0, scanned = 0, total = 0, more = true, guard = 0;
+  while(more && guard++ < 200){
+    var r = await api('b51ScrubAudit', { offset: offset });
+    if(!r || !r.ok){ B51_SCRUB = { phase:'error', error:(r&&r.error)||'הניקוי נכשל' }; b51ToolsPaint(); return; }
+    done += r.scrubbed; scanned += r.scanned; total = r.total;
+    more = !!r.more; offset = r.next_offset;
+    B51_SCRUB = { phase:'run', scrubbed:done, scanned:scanned, total:total, running:more };
+    b51ToolsPaint();
+  }
+  B51_SCRUB = { phase:'done', scrubbed:done, scanned:scanned, total:total, running:false };
+  b51ToolsPaint();
+  toast('הניקוי הסתיים — '+done+' רשומות נוקו');
+}
+function b51ScrubHtml(){
+  var s = B51_SCRUB;
+  if(s.phase==='error') return '<div class="card empty" style="margin-top:8px;color:var(--danger)">'+esc(s.error)+'</div>';
+  if(s.phase==='preview'){
+    return '<div class="card" style="margin-top:8px"><b>תצוגה מקדימה — לא בוצע שינוי</b>'+
+      '<div class="muted" style="font-size:12px;margin:4px 0">נסרקו '+s.scanned.toLocaleString('he-IL')+' מתוך '+s.total.toLocaleString('he-IL')+' · נמצאו <b>'+s.scrubbed+'</b> רשומות עם ערך רגיש גלוי.</div>'+
+      (s.sample.length? '<div class="muted" style="font-size:11.5px;word-break:break-word">דוגמאות: '+s.sample.map(function(x){ return '<div>• '+esc(x)+'…</div>'; }).join('')+'</div>':'')+
+      (s.running? '<div class="muted" style="margin-top:6px">סורק...</div>'
+        : (s.scrubbed? '<button class="btn sm" style="margin-top:8px" onclick="b51ScrubRun()">בצע ניקוי ('+s.scrubbed+')</button>'
+                     : '<div class="muted" style="margin-top:6px">✓ אין ערכים רגישים גלויים ביומן — אין מה לנקות.</div>'))+
+      '</div>';
+  }
+  if(s.phase==='run') return '<div class="card" style="margin-top:8px">מנקה... '+s.scanned.toLocaleString('he-IL')+'/'+s.total.toLocaleString('he-IL')+' · נוקו '+s.scrubbed+'</div>';
+  return '<div class="card" style="margin-top:8px">✓ הניקוי הסתיים — '+s.scrubbed+' רשומות נוקו מתוך '+s.total.toLocaleString('he-IL')+'. הרצה חוזרת תחזיר 0.</div>';
+}
+
+/* ---- B51: הודעת "מוצגים N הימים האחרונים" למסכי היסטוריה שנחתכו ---- */
+function b51Slim(table){
+  var s = (typeof DB==='object' && DB && DB._slim) ? DB._slim[table] : null;
+  return (s && s.mode==='days') ? s : null;
+}
+function b51SlimNote(table, what){
+  var s = b51Slim(table); if(!s) return '';
+  return '<div class="muted" style="font-size:11.5px;margin-top:4px">מוצגים '+s.days+' הימים האחרונים'+(what?' ('+what+')':'')+' — מ-'+s.from+'.</div>';
 }
 // B4: תקציר תור ההתראות + כפתור הרצה ידנית (למנהל) — לבדיקות, בלי להמתין לטריגר היומי (08:00)
 function b4NotificationsWidget(){
@@ -6333,6 +6472,7 @@ function b4NotificationsWidget(){
         '<div class="grow">'+esc(n.type)+' · '+esc(n.recipient)+(vars.customer_name?' ('+esc(vars.customer_name)+')':'')+'</div>'+
         '<span class="muted">'+esc(n.sent_at||n.scheduled_for||'')+'</span></div>';
     }).join('') : '<div class="muted" style="padding:6px 2px">אין התראות עדיין</div>')+
+    b51SlimNote('notifications','ממתינות ונכשלות מוצגות בכל גיל')+
     '</div>';
 }
 async function doB4RunNow(){
@@ -7460,7 +7600,7 @@ function renderNobleReports(containerId){
   var rng=function(d,l){ return '<button class="btn '+(NOBLE_REP_DAYS===d?'':'ghost')+' sm" onclick="nobleRepRange('+d+',\''+containerId+'\')">'+l+'</button>'; };
   var mini=function(v,l){ return '<div style="flex:1;min-width:120px;text-align:center;padding:8px 4px"><div style="font-size:22px;font-weight:700;color:var(--navy)">'+v+'</div><div class="muted" style="font-size:12px">'+l+'</div></div>'; };
   var medals=['🥇','🥈','🥉'];
-  var h='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3>'+
+  var h='<h3 style="margin:16px 0 8px">מכבסה — ביצועים</h3>'+b51SlimNote('laundry_events','יומן אירועי המכבסה')+
     '<div class="card"><div class="row" style="align-items:center;flex-wrap:wrap"><div class="row grow" style="gap:6px">'+rng(7,'7 ימים')+rng(30,'30 יום')+rng(90,'90 יום')+'</div>'+internalChk(containerId==='repNoble'?'renderNobleReports':'biNobleToggle')+'</div>'+
     '<div class="row" style="flex-wrap:wrap;margin-top:6px">'+mini(Math.round(kg*100)/100,'ק&quot;ג (קליטות שהושלמו)')+mini(ils(rev),'הכנסות מכבסה (לפני מע&quot;מ)')+mini(del,'קליטות הושלמו')+'</div>'+
     '<div class="muted" style="font-size:12px;border-top:1px solid var(--line);padding-top:6px">'+
