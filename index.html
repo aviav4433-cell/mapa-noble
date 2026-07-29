@@ -497,7 +497,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.52-B53 · 29.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.53-B56 · 29.07.2026</div>
   </div>
 </div>
 
@@ -7045,10 +7045,12 @@ function b50FleetRows(p){
       status:String(v.status||''), active:v.active!=='לא',
       done:0, confirmed:0, cancelled:0, open:0,
       km:Number(v.mileage_km)||0, test:dYmd(v.test_date||''), ins:dYmd(v.insurance_expiry||''),
-      nextSvc:dYmd(v.next_service_date||''), nextKm:Number(v.next_service_km)||0, unknown:false};
+      nextSvc:dYmd(v.next_service_date||''), nextKm:Number(v.next_service_km)||0, unknown:false,
+      fOpen:0, fClosed:0, maintAg:0};   // B56
   });
   var other = {id:'', plate:'ללא שיוך רכב', model:'', status:'', active:true, done:0, confirmed:0,
-    cancelled:0, open:0, km:0, test:'', ins:'', nextSvc:'', nextKm:0, unknown:true};
+    cancelled:0, open:0, km:0, test:'', ins:'', nextSvc:'', nextKm:0, unknown:true,
+    fOpen:0, fClosed:0, maintAg:0};   // B56
   (DB.deliveries||[]).forEach(function(d){
     var dd = dYmd(d.date||'');
     if(!dd || dd < R.from || dd > R.to) return;
@@ -7059,11 +7061,27 @@ function b50FleetRows(p){
     if(st==='בוצע'){ w.done++; if(String(d.trip_confirmed_by||'')) w.confirmed++; }
     else w.open++;
   });
+  /* B56 — תקלות רכב נרשמות עכשיו במערכת, ולכן הדוח מקבל שתי עמודות שהיו
+     חסרות מאז B50: תקלות פתוחות ועלות תחזוקה בטווח. התקלות הפתוחות אינן
+     מוגבלות לטווח (תקלה פתוחה היא מצב נוכחי), העלות כן. */
+  (DB.assetFaults||[]).forEach(function(f){
+    if(String(f.asset_type)!=='רכב') return;
+    var w = per[String(f.asset_id)]; if(!w) return;
+    if(String(f.status)==='פתוחה') w.fOpen++; else w.fClosed++;
+  });
+  (DB.faultEvents||[]).forEach(function(e){
+    if(String(e.asset_type)!=='רכב') return;
+    var w = per[String(e.asset_id)]; if(!w) return;
+    var ed = String(e.ts||'').substring(0,10);
+    if(!ed || ed < R.from || ed > R.to) return;
+    w.maintAg += (Number(e.cost_agorot)||0);
+  });
   var list = Object.keys(per).map(function(k){ return per[k]; });
   if(other.done || other.open || other.cancelled) list.push(other);
   list.forEach(function(w){
     w.driverProved = w.done - w.confirmed;
     w.flags = [];
+    if(w.fOpen) w.flags.push({t:w.fOpen+' תקלות פתוחות', bad:1});
     if(w.test && w.test < t) w.flags.push({t:'טסט פג תוקף ('+w.test+')', bad:1});
     else if(w.test && w.test <= soon) w.flags.push({t:'טסט מתקרב ('+w.test+')', bad:0});
     if(w.ins && w.ins < t) w.flags.push({t:'ביטוח פג תוקף ('+w.ins+')', bad:1});
@@ -7078,21 +7096,23 @@ function b50RenderFleet(p){
   if(b50RangeBad(p)){ box.innerHTML = b50Empty('טווח התאריכים הפוך — תאריך הסיום מוקדם מתאריך ההתחלה'); return; }
   var R = b50Range(p), rows = b50FleetRows(p);
   var key = b50Reg('fleet', 'צי-רכב_'+R.from+'_'+R.to+'.csv',
-    ['רכב','לוחית','דגם','משלוחים שבוצעו','מתוכם הנהג תיעד','מתוכם אישור הנהלה בדיעבד','נסיעות שבוטלו בקליטה','פתוחים','ק"מ','טסט','ביטוח','טיפול הבא'],
-    rows.map(function(r){ return [r.id, r.plate, r.model, r.done, r.driverProved, r.confirmed, r.cancelled, r.open, r.km, r.test, r.ins, r.nextSvc]; }));
+    ['רכב','לוחית','דגם','משלוחים שבוצעו','מתוכם הנהג תיעד','מתוכם אישור הנהלה בדיעבד','נסיעות שבוטלו בקליטה','פתוחים','ק"מ','טסט','ביטוח','טיפול הבא','תקלות פתוחות','תקלות שנסגרו','עלות תחזוקה בטווח'],
+    rows.map(function(r){ return [r.id, r.plate, r.model, r.done, r.driverProved, r.confirmed, r.cancelled, r.open, r.km, r.test, r.ins, r.nextSvc, r.fOpen, r.fClosed, (r.maintAg/100)]; }));
   var h = b50Head(box, R.from+' — '+R.to,
     'משלוח נספר לרכב לפי השיבוץ שלו, ואם אין — לפי הרכב של הנסיעה המשולבת. '+
     '<b>הפילוח מחייב:</b> נסיעה שהנהג תיעד בשטח (סריקה/צילום) ונסיעה שההנהלה אישרה בדיעבד '+
     'אינן אותו דבר — הראשונה מוכחת, השנייה מבוססת על הצהרה. '+
-    'תקלות רכב אינן נרשמות במערכת (יומן התקלות מכסה עגלות ומכונות בלבד), ולכן אין כאן עמודת תקלות.', key);
+    '<b>תקלות רכב (B56):</b> נרשמות מכרטיס הרכב ומוצגות במסך "צי רכב" בלבד — הן אינן מתערבבות '+
+    'עם תקלות המכבסה. "תקלות פתוחות" הוא מצב נוכחי ואינו מוגבל לטווח; "עלות תחזוקה" היא סך '+
+    'העלויות שנרשמו על הרכב בתוך הטווח בלבד.', key);
   if(!rows.length){ box.innerHTML = h + b50Empty('לא הוגדרו רכבים במערכת'); return; }
   var tDone = rows.reduce(function(s,r){ return s+r.done; },0);
   var tConf = rows.reduce(function(s,r){ return s+r.confirmed; },0);
   var tCanc = rows.reduce(function(s,r){ return s+r.cancelled; },0);
   h += repKpiRow([{v:tDone, l:'משלוחים שבוצעו'}, {v:tDone-tConf, l:'הנהג תיעד בשטח'},
     {v:tConf, l:'אישור הנהלה בדיעבד', alert:tConf>0}, {v:tCanc, l:'נסיעות שבוטלו בקליטה', alert:tCanc>0}]);
-  h += '<div class="card"><table><tr><th>רכב</th><th>בוצעו</th><th>הנהג תיעד</th><th>אישור הנהלה</th>'+
-    '<th>בוטלו בקליטה</th><th>פתוחים</th><th>ק\u0022מ</th><th>טסט / ביטוח / טיפול</th></tr>'+
+  h += '<div class="card" style="overflow-x:auto"><table><tr><th>רכב</th><th>בוצעו</th><th>הנהג תיעד</th><th>אישור הנהלה</th>'+
+    '<th>בוטלו בקליטה</th><th>פתוחים</th><th>ק\u0022מ</th><th>תקלות</th><th>עלות תחזוקה</th><th>טסט / ביטוח / טיפול</th></tr>'+
     rows.map(function(r){
       var flags = r.flags.length
         ? r.flags.map(function(f){ return '<div style="color:'+(f.bad?'var(--danger)':'#8a5a1f')+';font-size:11.5px">⚠ '+esc(f.t)+'</div>'; }).join('')
@@ -7105,6 +7125,10 @@ function b50RenderFleet(p){
         '<td'+(r.confirmed?' style="color:#8a5a1f;font-weight:700"':'')+'>'+(r.confirmed||'—')+'</td>'+
         '<td'+(r.cancelled?' style="color:var(--danger)"':'')+'>'+(r.cancelled||'—')+'</td>'+
         '<td>'+(r.open||'—')+'</td><td>'+(r.km? r.km.toLocaleString('he-IL') : '—')+'</td>'+
+        '<td'+(r.fOpen?' style="color:var(--danger);font-weight:700"':'')+'>'+
+          (r.fOpen? r.fOpen+' פתוחות' : (r.fClosed? '✓' : '—'))+
+          (r.fClosed?'<div class="muted" style="font-size:11px">'+r.fClosed+' נסגרו</div>':'')+'</td>'+
+        '<td>'+(r.maintAg? b42Agor(r.maintAg) : '—')+'</td>'+
         '<td>'+flags+'</td></tr>';
     }).join('')+'</table></div>';
   box.innerHTML = h;
@@ -10044,22 +10068,44 @@ function rFleet(){
     var warns = b46VehWarns(v);
     var stCol = b46VehStatusColor(v);
     var col = (v.status==='פעיל' && warns.length) ? 'var(--amber)' : stCol;
+    var fltV = b42FaultOf('רכב', v.id);   // B56 — תקלה פתוחה גוברת על כל דגל אחר
+    if(fltV) col = 'var(--danger)';
     return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(v.plate||v.id)+(v.model?' · '+esc(v.model):'')+'" onclick="openVeh(\''+esc(v.id)+'\')">'+
-      (warns.length?'<span class="eq-flag" style="color:var(--amber)" title="'+esc(warns.join(' · '))+'">⚠</span>':'')+
+      (fltV?'<span class="eq-flag" style="color:var(--danger)" title="תקלה פתוחה">🛠</span>'
+           :(warns.length?'<span class="eq-flag" style="color:var(--amber)" title="'+esc(warns.join(' · '))+'">⚠</span>':''))+
       '<div class="eq-ic">'+b46Avatar(v.photo_url,'vehicle',58)+'</div>'+
       '<div class="eq-t">'+esc(v.plate||v.id)+'</div>'+
       '<div class="eq-s">'+esc((v.make||'')+' '+(v.model||'')).trim()+'</div>'+
       '<div class="eq-s">'+(v.mileage_km?'ק"מ '+esc(v.mileage_km):esc(v.vtype||'—'))+'</div>'+
       '<div class="eq-b"><span class="eq-chip" style="background:'+stCol+'">'+esc(v.status||'')+'</span>'+
+      (fltV?'<span class="eq-chip" style="background:var(--danger)">תקלה פתוחה</span>':'')+
       (warns.length?'<span class="eq-chip" style="background:var(--amber)">תוקף קרוב</span>':'')+'</div></div>';
   };
-  el('main').innerHTML = '<div class="section-title"><h2>צי רכב</h2><button class="btn" onclick="vehForm()">+ רכב</button></div>'+
-    (DB.vehicles.length? '<div class="eqgrid">'+DB.vehicles.map(vehTile).join('')+'</div>' : '<div class="card empty">אין רכבים בצי</div>')+
-    '<div class="section-title"><h3>יומן נסיעות (שינוע)</h3></div>'+
-    (DB.trips.length?'<div class="card"><table><tr><th>תאריך</th><th>סוג</th><th>שיטה</th><th>נהג/שליח</th><th>רכב</th><th>מסלול</th><th>עלות</th></tr>'+
+  /* B56 — מסך הצי מקבל טאבים, בדפוס rAssets. ההפרדה שאבי הכריע עליה:
+     "תקלות רכב" הוא מקום ייעודי כאן, ואינו מופיע במסך העגלות והמכונות. */
+  if(FLEET_TAB==='faults' && !b42Can()) FLEET_TAB='vehicles';
+  var openFV = b42Can()? b42OpenFaults('fleet').length : 0;
+  var tabsV = '<div class="tabs">'+
+    '<button class="'+(FLEET_TAB==='vehicles'?'on':'')+'" onclick="b56SetFleetTab(\'vehicles\')">רכבים</button>'+
+    '<button class="'+(FLEET_TAB==='trips'?'on':'')+'" onclick="b56SetFleetTab(\'trips\')">יומן נסיעות</button>'+
+    (b42Can()?'<span class="tabsep"></span>'+
+      '<button class="mnt '+(FLEET_TAB==='faults'?'on':'')+'" onclick="b56SetFleetTab(\'faults\')">תקלות רכב'+
+        (openFV?'<span class="tabbadge">'+openFV+'</span>':'')+'</button>':'')+
+    '</div>';
+  var bodyV;
+  if(FLEET_TAB==='faults') bodyV = b42FaultsHtml('fleet');
+  else if(FLEET_TAB==='trips')
+    bodyV = (DB.trips.length?'<div class="card" style="overflow-x:auto"><table><tr><th>תאריך</th><th>סוג</th><th>שיטה</th><th>נהג/שליח</th><th>רכב</th><th>מסלול</th><th>עלות</th></tr>'+
       DB.trips.slice(-25).reverse().map(t=>'<tr><td>'+esc(t.date)+'</td><td>'+esc(t.kind)+'</td><td>'+esc(t.method)+'</td><td>'+esc(t.method==='שליח חיצוני'?t.external_carrier:empName(t.driver_id))+'</td><td>'+esc(vehName(t.vehicle_id))+'</td><td>'+esc(t.from_loc)+' ← '+esc(t.to_loc)+'</td><td>'+(t.cost?ils(t.cost):'—')+'</td></tr>').join('')+'</table></div>'
-    :'<div class="card empty">אין נסיעות מתועדות — נסיעה נרשמת אוטומטית בהעברת מלאי עם שינוע</div>');
+      :'<div class="card empty">אין נסיעות מתועדות — נסיעה נרשמת אוטומטית בהעברת מלאי עם שינוע</div>');
+  else
+    bodyV = (DB.vehicles.length? '<div class="eqgrid">'+DB.vehicles.map(vehTile).join('')+'</div>' : '<div class="card empty">אין רכבים בצי</div>');
+  el('main').innerHTML = '<div class="section-title"><h2>צי רכב</h2>'+
+      (FLEET_TAB==='vehicles'?'<button class="btn" onclick="vehForm()">+ רכב</button>':'')+'</div>'+
+    tabsV + bodyV;
 }
+var FLEET_TAB = 'vehicles';
+function b56SetFleetTab(t){ FLEET_TAB = t; rFleet(); window.scrollTo(0,0); }
 /* B46: כרטיס רכב — מקביל ל-openCart / openMach / openEmp */
 function openVeh(vid){
   var v = (DB.vehicles||[]).find(x=>x.id===vid); if(!v) return;
@@ -10071,6 +10117,7 @@ function openVeh(vid){
       '<div class="sub">'+esc((v.make||'')+' '+(v.model||'')+' '+(v.year||'')).trim()+(v.vtype?' · '+esc(v.vtype):'')+'</div></div>'+
       '<span class="chip" style="background:'+b46VehStatusColor(v)+'">'+esc(v.status||'')+'</span></div>'+
     (warns.length?'<div class="card" style="background:#FFF7E6;border-color:var(--amber);margin-top:10px;padding:8px 10px;font-size:13px">⚠ '+esc(warns.join(' · '))+'</div>':'')+
+    b42FaultBanner('רכב', v.id)+   /* B56 */
     '<table style="margin-top:12px">'+
       row('בעלות', esc(v.ownership||'')+(v.leasing_company?' · '+esc(v.leasing_company):''))+
       row('דלק', esc(v.fuel||''))+
@@ -10086,6 +10133,7 @@ function openVeh(vid){
     (v.notes?'<div class="doc-meta" style="margin-top:10px">הערות:</div><div class="sub" style="white-space:pre-wrap">'+esc(v.notes)+'</div>':'')+
     '<div class="actrow" style="margin-top:12px">'+
       '<button class="btn ghost" onclick=\'vehForm('+JSON.stringify(v).replace(/'/g,"&#39;")+')\'>ערוך פרטים</button>'+
+      (b42Can()?'<button class="btn ghost" onclick="b42Menu(\'רכב\',\''+esc(v.id)+'\')">תיקונים / תקלות</button>':'')+   /* B56 */
       b46PhotoBtn('veh', v.id, !!v.photo_url)+
       notesBtn('vehicle',v.id)+tagBtn('vehicle',v.id)+
       (ROLE==='מנהל'?'<button class="btn ghost" style="color:var(--danger)" onclick="closeModal();delRecord(\'vehicles\',\''+esc(v.id)+'\',\'את הרכב\')">מחק רכב</button>':'')+
@@ -10298,7 +10346,7 @@ function rAssets(){
   var bad = realCarts.filter(c=>String(c.condition||'תקינה')!=='תקינה');
   /* B42: שני טאבי ציוד ושני טאבי תחזוקה, מופרדים ויזואלית — תפקיד שונה, קבוצה שונה */
   if(['faults','visits'].includes(ASSET_TAB) && !b42Can()) ASSET_TAB='carts';
-  var openF = b42Can()? b42OpenFaults().length : 0;
+  var openF = b42Can()? b42OpenFaults('laundry').length : 0;   // B56: תקלות רכב לא נספרות כאן
   var tabs = '<div class="tabs">'+
     '<button class="'+(ASSET_TAB==='carts'?'on':'')+'" onclick="b42SetTab(\'carts\')">עגלות</button>'+
     '<button class="'+(ASSET_TAB==='machines'?'on':'')+'" onclick="b42SetTab(\'machines\')">מכונות</button>'+
@@ -10311,7 +10359,7 @@ function rAssets(){
   if(ASSET_TAB==='machines')
     body = '<div class="section-title"><h2>מכונות</h2><button class="btn ghost sm" onclick="machForm()">+ מכונה</button></div>'+
       (DB.machines.length?'<div class="eqgrid">'+DB.machines.map(machCard).join('')+'</div>':'<div class="card empty">אין מכונות — לחץ "+ מכונה"</div>');
-  else if(ASSET_TAB==='faults') body = b42FaultsHtml();
+  else if(ASSET_TAB==='faults') body = b42FaultsHtml('laundry');
   else if(ASSET_TAB==='visits') body = b42VisitsHtml();
   else
     body = '<div class="section-title"><h2>עגלות</h2><button class="btn ghost sm" onclick="cartForm()">+ עגלה</button></div>'+
@@ -10485,14 +10533,32 @@ var B42_METHODS = ['העברה','אשראי','שיק','מזומן'];
 function b42Can(){ return ROLE==='מנהל' || ROLE==='משרד'; }
 function b42Meta(type){
   if(type==='עגלה') return {type:'עגלה', arr:'carts', field:'condition', states:['תקינה','דורשת טיפול','מושבתת'], onFault:'דורשת טיפול'};
+  /* B56 — רכב. שדה המצב הוא vehicles.status, והערכים זהים לאלה שבטופס הרכב
+     (vehForm) כדי שלא ייווצרו שני מילונים לאותו שדה. */
+  if(type==='רכב')  return {type:'רכב', arr:'vehicles', field:'status', states:['פעיל','בטיפול','מושבת'], onFault:'בטיפול'};
   return {type:'מכונה', arr:'machines', field:'status', states:['פעילה','בתיקון','מושבתת'], onFault:'בתיקון'};
 }
 function b42Row(type,id){ return (DB[b42Meta(type).arr]||[]).find(function(x){ return String(x.id)===String(id); }); }
 function b42Label(type,id){
   var r = b42Row(type,id);
   if(!r) return (type||'')+' '+(id||'');
-  return type==='עגלה' ? ('עגלה '+r.id) : (String(r.type||'מכונה')+' '+r.id);
+  if(type==='עגלה') return 'עגלה '+r.id;
+  if(type==='רכב')  return 'רכב '+(r.plate||r.id)+(r.model?' · '+r.model:'');
+  return String(r.type||'מכונה')+' '+r.id;
 }
+/* ============================================================
+   B56 — הפרדת תחומים (הכרעת אבי 29.07.2026)
+   ------------------------------------------------------------
+   "תקלה של רכב אמורה להיות מתועדת ב'רכב', לא במכונות כביסה."
+   טבלאות התקלות גנריות, ולכן ההפרדה נאכפת כאן: כל מסך שמציג
+   רשימת תקלות/אירועים מצהיר על התחום שלו, ורואה אך ורק אותו.
+   מכבסה → מכונות ועגלות. צי רכב → רכבים. אין דליפה בין השניים.
+   ============================================================ */
+var B42_SCOPE_LAUNDRY = ['מכונה','עגלה'];
+var B42_SCOPE_FLEET   = ['רכב'];
+function b42ScopeTypes(scope){ return scope==='fleet' ? B42_SCOPE_FLEET : B42_SCOPE_LAUNDRY; }
+function b42InScope(assetType, scope){ return b42ScopeTypes(scope).indexOf(String(assetType||''))>-1; }
+function b42ScopeOfType(type){ return type==='רכב' ? 'fleet' : 'laundry'; }
 function b42State(type,id){ var r=b42Row(type,id); return r? String(r[b42Meta(type).field]||'') : ''; }
 function b42Providers(){ return (DB.serviceProviders||[]).filter(function(x){ return x.active!=='לא'; }); }
 function b42ProvName(id){
@@ -10500,8 +10566,11 @@ function b42ProvName(id){
   if(!p) return '';
   return p.company ? (p.company + (p.name && p.name!==p.company ? ' · '+p.name : '')) : p.name;
 }
-function b42Faults(){ return (DB.assetFaults||[]).slice().sort(function(a,b){ return String(b.reported_at||'').localeCompare(String(a.reported_at||'')); }); }
-function b42OpenFaults(){ return b42Faults().filter(function(f){ return f.status==='פתוחה'; }); }
+function b42Faults(scope){
+  var all = (DB.assetFaults||[]).slice().sort(function(a,b){ return String(b.reported_at||'').localeCompare(String(a.reported_at||'')); });
+  return scope ? all.filter(function(f){ return b42InScope(f.asset_type, scope); }) : all;
+}
+function b42OpenFaults(scope){ return b42Faults(scope).filter(function(f){ return f.status==='פתוחה'; }); }
 function b42FaultOf(type,id){ return b42OpenFaults().find(function(f){ return f.asset_type===type && String(f.asset_id)===String(id); }); }
 function b42Events(filter){
   return (DB.faultEvents||[]).filter(filter||function(){return true;})
@@ -10655,7 +10724,7 @@ function b42Menu(type, id){
       (open?'':'<button class="btn pri" onclick="b42FaultForm(\''+esc(type)+'\',\''+esc(id)+'\')">דיווח תקלה</button>')+
       '<button class="btn ghost" onclick="b42ServiceForm(\''+esc(type)+'\',\''+esc(id)+'\')">רישום טיפול</button>'+
       '<button class="btn ghost" onclick="b42History(\''+esc(type)+'\',\''+esc(id)+'\')">היסטוריה</button>'+
-      '<button class="btn ghost" onclick="'+(type==='עגלה'?'openCart':'openMach')+'(\''+esc(id)+'\')">חזרה לכרטיס</button>'+
+      '<button class="btn ghost" onclick="'+(type==='עגלה'?'openCart':(type==='רכב'?'openVeh':'openMach'))+'(\''+esc(id)+'\')">חזרה לכרטיס</button>'+
     '</div>');
 }
 
@@ -10663,7 +10732,7 @@ function b42Menu(type, id){
 function b42FaultForm(type, id){
   openModal('<h2>דיווח תקלה — '+esc(b42Label(type,id))+'</h2>'+
     '<div class="muted" style="font-size:12.5px;margin-bottom:8px">עם השמירה '+
-      (type==='עגלה'?'העגלה תסומן "דורשת טיפול"':'המכונה תעבור לסטטוס "בתיקון"')+
+      (type==='עגלה'?'העגלה תסומן "דורשת טיפול"':(type==='רכב'?'הרכב יעבור לסטטוס "בטיפול"':'המכונה תעבור לסטטוס "בתיקון"'))+
       ', ותיפתח משימה על שמך עם השלב הבא.</div>'+
     '<div class="frow"><label>פירוט התקלה <b style="color:var(--danger)">*</b></label>'+
       '<textarea id="bf_desc" rows="3" placeholder="מה קרה, מתי, מה הסימפטום"></textarea></div>'+
@@ -10808,7 +10877,14 @@ function b42ServiceForm(type, id){
     (type==='מכונה'?'<div class="grid2">'+
       '<div class="frow"><label>תאריך הטיפול שבוצע</label><input id="bs_last" type="date" value="'+esc(r.last_service||ymdLocal())+'"></div>'+
       '<div class="frow"><label>מועד הטיפול הבא</label><input id="bs_next" type="date" value="'+esc(r.next_service||'')+'"></div></div>':'')+
-    '<div class="frow"><label>'+(type==='עגלה'?'מצב תקינות':'סטטוס המכונה')+'</label><select id="bs_state">'+
+    /* B56 — לרכב ארבעה שדות תחזוקה: שני תאריכים, ק"מ לטיפול הבא וק"מ נוכחי.
+       שמות השדות בסכימה שונים משל מכונה (last_service_date מול last_service). */
+    (type==='רכב'?'<div class="grid2">'+
+      '<div class="frow"><label>תאריך הטיפול שבוצע</label><input id="bs_last" type="date" value="'+esc(r.last_service_date||ymdLocal())+'"></div>'+
+      '<div class="frow"><label>מועד הטיפול הבא</label><input id="bs_next" type="date" value="'+esc(r.next_service_date||'')+'"></div>'+
+      '<div class="frow"><label>ק"מ לטיפול הבא</label><input id="bs_nkm" type="number" value="'+esc(r.next_service_km||'')+'"></div>'+
+      '<div class="frow"><label>ק"מ נוכחי במד</label><input id="bs_km" type="number" value="'+esc(r.mileage_km||'')+'"></div></div>':'')+
+    '<div class="frow"><label>'+(type==='עגלה'?'מצב תקינות':(type==='רכב'?'סטטוס הרכב':'סטטוס המכונה'))+'</label><select id="bs_state">'+
       meta.states.map(function(s){ return '<option'+(String(r[meta.field]||'')===s?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></div>'+
     '<div class="frow"><label>מה בוצע <b style="color:var(--danger)">*</b></label>'+
       '<textarea id="bs_desc" rows="3" placeholder="תיאור הטיפול שבוצע — נשמר ביומן ובחתכי העלויות"></textarea></div>'+
@@ -10824,6 +10900,8 @@ async function b42DoService(type,id){
   var pay = {asset_type:type, asset_id:id, description:desc, state:el('bs_state').value,
     notes:el('bs_notes').value, provider_id:(el('bs_prov')||{}).value||''};
   if(type==='מכונה'){ pay.last_service=el('bs_last').value; pay.next_service=el('bs_next').value; }
+  if(type==='רכב'){ pay.last_service=el('bs_last').value; pay.next_service=el('bs_next').value;
+                    pay.next_service_km=el('bs_nkm').value; pay.mileage_km=el('bs_km').value; }
   var cp = b42CostPayload('bs');
   for(var k in cp) pay[k]=cp[k];
   var r = await act('b42SaveService', pay, 'הטיפול נרשם');
@@ -10837,7 +10915,9 @@ async function b42DoService(type,id){
 function b42CloseForm(fid){
   var f=(DB.assetFaults||[]).find(function(x){ return x.id===fid; }); if(!f) return;
   var meta = b42Meta(f.asset_type);
-  var map = {'תוקנה':meta.states[0], 'הושבתה סופית':'מושבתת', 'לא הייתה תקלה':(f.prev_state||meta.states[0])};
+  /* B56 — מצב ה"מושבת" נלקח מ-meta.states[2] ולא מחרוזת קשיחה: אצל רכב
+     הערך הוא 'מושבת' ולא 'מושבתת', והרמז למשתמש היה מציג ערך שאינו קיים. */
+  var map = {'תוקנה':meta.states[0], 'הושבתה סופית':meta.states[2], 'לא הייתה תקלה':(f.prev_state||meta.states[0])};
   openModal('<h2>סגירת תקלה — '+esc(b42Label(f.asset_type,f.asset_id))+'</h2>'+
     '<div class="frow"><label>תוצאת הסגירה <b style="color:var(--danger)">*</b></label>'+
       '<select id="bc_out" onchange="b42CloseHint()">'+B42_OUTCOMES.map(function(o){ return '<option>'+o+'</option>'; }).join('')+'</select></div>'+
@@ -10887,7 +10967,7 @@ function b42History(type,id){
 function b42VisitsHtml(){
   var vs = (DB.technicianVisits||[]).slice().sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
   return '<div class="section-title"><h3>ביקורי טכנאי</h3>'+
-      (b42Can()?'<div class="row" style="gap:6px"><button class="btn ghost sm" onclick="b42Cuts(\'prov\')">חתכים</button>'+
+      (b42Can()?'<div class="row" style="gap:6px"><button class="btn ghost sm" onclick="b42Cuts(\'prov\',\'laundry\')">חתכים</button>'+
       '<button class="btn sm" onclick="b42VisitForm()">+ ביקור</button></div>':'')+'</div>'+
     (vs.length? vs.map(function(v){
       var acts = (DB.faultEvents||[]).filter(function(e){ return e.visit_id===v.id; });
@@ -10941,18 +11021,21 @@ function b42VisitCard(vid){
 }
 
 /* ---------- תקלות פתוחות ---------- */
-function b42FaultsHtml(){
-  var open = b42OpenFaults();
-  var closed = b42Faults().filter(function(f){ return f.status!=='פתוחה'; }).slice(0,15);
-  return '<div class="section-title"><h3>תקלות פתוחות</h3>'+
-      (b42Can()?'<button class="btn ghost sm" onclick="b42Cuts(\'day\')">חתכים</button>':'')+'</div>'+
+function b42FaultsHtml(scope){
+  scope = scope || 'laundry';
+  var open = b42OpenFaults(scope);
+  var closed = b42Faults(scope).filter(function(f){ return f.status!=='פתוחה'; }).slice(0,15);
+  var emptyTxt = scope==='fleet' ? 'אין תקלות רכב פתוחות — כל הצי תקין'
+                                 : 'אין תקלות פתוחות — הכל תקין';
+  return '<div class="section-title"><h3>'+(scope==='fleet'?'תקלות רכב פתוחות':'תקלות פתוחות')+'</h3>'+
+      (b42Can()?'<button class="btn ghost sm" onclick="b42Cuts(\'day\',\''+scope+'\')">חתכים</button>':'')+'</div>'+
     (open.length? open.map(function(f){
       return '<div class="card" style="cursor:pointer;border-right:4px solid var(--danger)" onclick="b42FaultCard(\''+esc(f.id)+'\')"><div class="row">'+
         '<div class="grow"><b>'+esc(b42Label(f.asset_type,f.asset_id))+'</b>'+
         '<div style="white-space:pre-wrap;font-size:13.5px">'+esc(String(f.description||'').substring(0,120))+'</div>'+
         '<div class="muted" style="font-size:12px">דווח '+esc(f.reported_at||'')+' · '+esc(f.reported_by||'')+'</div></div>'+
         '<span class="chip" style="background:var(--amber)">'+esc(f.next_step||'')+'</span></div></div>';
-    }).join('') : '<div class="card empty">אין תקלות פתוחות — הכל תקין</div>')+
+    }).join('') : '<div class="card empty">'+emptyTxt+'</div>')+
     (closed.length?'<div class="section-title" style="margin-top:14px"><h3>נסגרו לאחרונה</h3></div>'+
       closed.map(function(f){
         return '<div class="card" style="padding:8px 10px;cursor:pointer" onclick="b42FaultCard(\''+esc(f.id)+'\')"><div class="row">'+
@@ -10964,16 +11047,25 @@ function b42FaultsHtml(){
 
 /* ---------- חתכים (קריאה בלבד, מהנתונים שנוצרו) ---------- */
 var B42_CUT = 'prov';
-function b42Cuts(which){
+var B42_CUT_SCOPE = 'laundry';   // B56: החתכים נפתחים תמיד בתחום שממנו נלחצו
+function b42Cuts(which, scope){
   B42_CUT = which||B42_CUT;
-  var tabs = [['prov','לפי איש מקצוע'],['day','לפי יום'],['asset','לפי מכונה / עגלה'],['exp','לפי הוצאה']];
-  openModal('<h2>חתכי תחזוקה</h2>'+
+  if(scope) B42_CUT_SCOPE = scope;
+  var fleet = B42_CUT_SCOPE==='fleet';
+  var tabs = [['prov','לפי איש מקצוע'],['day','לפי יום'],
+              ['asset', fleet?'לפי רכב':'לפי מכונה / עגלה'],['exp','לפי הוצאה']];
+  openModal('<h2>'+(fleet?'חתכי תחזוקת רכב':'חתכי תחזוקה')+'</h2>'+
     '<div class="tabs">'+tabs.map(function(t){
       return '<button class="'+(B42_CUT===t[0]?'on':'')+'" onclick="b42Cuts(\''+t[0]+'\')">'+t[1]+'</button>'; }).join('')+'</div>'+
     b42CutBody());
 }
 function b42CutBody(){
-  var evs = (DB.faultEvents||[]).filter(function(e){ return Number(e.cost_agorot)>0 || e.event_type!=='תקלה'; });
+  /* B56 — התחום נאכף גם כאן. אירוע בלי נכס (תשתיות/אחר) שייך לתחום המכבסה
+     בלבד: לרכב אין "נושא אחר", ולולא הסינון הוא היה נספר פעמיים. */
+  var evs = (DB.faultEvents||[]).filter(function(e){ return Number(e.cost_agorot)>0 || e.event_type!=='תקלה'; })
+    .filter(function(e){
+      return e.asset_id ? b42InScope(e.asset_type, B42_CUT_SCOPE) : (B42_CUT_SCOPE!=='fleet');
+    });
   var groups = {}, order = [];
   var keyOf = function(e){
     if(B42_CUT==='prov') return b42ProvName(e.provider_id) || 'ללא איש מקצוע';
@@ -10991,7 +11083,7 @@ function b42CutBody(){
   var total = order.reduce(function(s,k){ return s+groups[k].cost; },0);
   return '<div class="sub" style="margin-bottom:8px">סה\u0022כ '+b42Agor(total)+' על פני '+evs.length+' רישומים</div>'+
     '<div style="overflow-x:auto"><table><tr><th>'+
-      (B42_CUT==='prov'?'איש מקצוע':(B42_CUT==='day'?'תאריך':(B42_CUT==='asset'?'נכס':'מצב ההוצאה')))+
+      (B42_CUT==='prov'?'איש מקצוע':(B42_CUT==='day'?'תאריך':(B42_CUT==='asset'?(B42_CUT_SCOPE==='fleet'?'רכב':'נכס'):'מצב ההוצאה')))+
       '</th><th>רישומים</th><th>עלות</th></tr>'+
     order.map(function(k){
       return '<tr><td>'+esc(k)+'</td><td>'+groups[k].n+'</td><td><b>'+b42Agor(groups[k].cost)+'</b></td></tr>';
