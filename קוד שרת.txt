@@ -87,6 +87,17 @@
 //                     מסך "עגלות ומכונות" מסונן ל-['מכונה','עגלה'] בלבד.
 //                     האכיפה היא בממשק (b42ScopeTypes) — השרת נשאר גנרי.
 //                   ⚠ אין שינוי סכימה.
+//             B57 — PERF-01: אבחון האיטיות (READ_ONLY, בלי תיקון) — canary v4.54-B57
+//                   • b57PerfProbe — פעולת אבחון חדשה שמחזירה למסך: זמן קריאה
+//                     ומשקל לכל טבלה, זמן בניית המטען, זמן סריאליזציה, עובדות
+//                     המטמון (כולל האם המטען בכלל נכנס למגבלת CacheService),
+//                     ומקצב הכתיבות מתוך audit_log = מקצב דריסת המטמון.
+//                   • getAllCached מונה מעכשיו hit / miss / כישלון-put.
+//                     המונים ב-ScriptCache בלבד, עטופים ב-try/catch, ואינם
+//                     יכולים לשנות את התנהגות getAll.
+//                   ⚠ bumpDataVersion לא נגעה (R4) — חותמות audit_log כבר
+//                     מספקות את יומן הדריסות רטרואקטיבית.
+//                   ⚠ אין תיקון ביצועים באצווה הזו. אין שינוי סכימה.
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -439,7 +450,9 @@ var MANAGER_ONLY = [
   // B46: תיקון רטרואקטיבי של מסמכי HTML ל-PDF, והעלאת תמונות עובד/רכב — מנהל בלבד
   'b46FixPdfDocs', 'b46UploadEmpPhoto', 'b46UploadVehPhoto',
   // B52: רישום/ביטול טאבלט קיוסק ומצב הרישום — מנהל בלבד
-  'b52RegisterKiosk', 'b52RevokeKiosk', 'b52KioskStatus'];
+  'b52RegisterKiosk', 'b52RevokeKiosk', 'b52KioskStatus',
+  // B57: אבחון ביצועים — מנהל בלבד
+  'b57PerfProbe'];
 
 // הרץ פעם אחת מהעורך
 // B7: עוזר חד-פעמי — מדפיס ליומן (View → Logs) את שם וה-id של כל עובד,
@@ -1377,7 +1390,9 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   'b51AuditPage', 'b51PayloadStats',
   // B52: מצב רישום הקיוסק ואבחון מספרים אישיים — קריאה בלבד.
   // b52KioskClock, b52RegisterKiosk ו-b52RevokeKiosk בכוונה **אינן** כאן — כולן כותבות.
-  'b52KioskStatus'];
+  'b52KioskStatus',
+  // B57: אבחון ביצועים — קריאה בלבד. אינה כותבת לשום גיליון; רק מוני ScriptCache.
+  'b57PerfProbe'];
 
 function route(action, p, user) {
   b54Bump();   // B54: ספר חיובים נקי לכל בקשה
@@ -1418,11 +1433,18 @@ function getAllCached(db) {
   var cacheKey = 'getAll_payload_' + dv;
   try {
     var hit = cache.get(cacheKey);
-    if (hit) return JSON.parse(hit);
+    if (hit) { b57Mark('hit'); return JSON.parse(hit); }   // B57: מדידה בלבד
   } catch (e) { /* מטמון פגום — ממשיכים לחישוב רגיל */ }
+  b57Mark('miss');                                          // B57: מדידה בלבד
   var payload = getAllPayload(db);
-  try { cache.put(cacheKey, JSON.stringify(payload), 120); }
-  catch (e) { /* המטען גדול מדי למטמון — לא קריטי, פשוט לא נשמר */ }
+  try {
+    var js = JSON.stringify(payload);
+    b57Note('bytes', js.length);                            // B57: משקל המטען בפועל
+    cache.put(cacheKey, js, 120);
+    // B57: put שאינו זורק אך גם אינו מאחסן — נספר ככישלון. מדידה בלבד.
+    if (!cache.get(cacheKey)) b57Mark('putfail');
+  }
+  catch (e) { b57Mark('putfail'); /* המטען גדול מדי למטמון — לא קריטי, פשוט לא נשמר */ }
   return payload;
 }
 
@@ -3843,6 +3865,9 @@ function handle(action, p, db, user) {
     case 'b51AuditPage': return b51AuditPage(p);
     case 'b51ScrubAudit': return b51ScrubAudit(p);
     case 'b51PayloadStats': return b51PayloadStats(db);
+
+    // ============ B57 (PERF-01): אבחון ביצועים — קריאה בלבד, מנהל בלבד ============
+    case 'b57PerfProbe': return b57PerfProbe(p);
 
     // ===================== B55: הודעות תשלום ופניות לקוח =====================
     // פעולות הפורטל מתחילות ב-'portal' ולכן עוברות ב-doPost בלי סשן — האימות
@@ -9128,5 +9153,211 @@ function b51PayloadStats(db) {
     ok: true, rows: rows, full_bytes: fullTotal, sent_bytes: sentTotal,
     saved_bytes: fullTotal - sentTotal,
     saved_pct: fullTotal ? Math.round((1 - sentTotal / fullTotal) * 1000) / 10 : 0
+  };
+}
+
+// ============================================================================
+// B57 — PERF-01: אבחון האיטיות. קריאה בלבד; אינו מתקן דבר.
+// ----------------------------------------------------------------------------
+// שלוש שאלות שהאצווה עונה עליהן במספרים מדודים, בלי ניחוש:
+//   1. לאן הולך הזמן — קריאת הגיליונות · בניית המטען · סריאליזציה.
+//   2. כמה שוקלת כל טבלה בפועל, ומי הכבדות.
+//   3. האם מטמון B12 עובד בכלל, ובאיזה קצב הוא נדרס.
+//
+// ⚠ אין כאן כתיבה לשום גיליון. המונים חיים ב-ScriptCache בלבד (נדיפים),
+//   ולכן הפעולה כשירה ל-READ_ONLY_ACTIONS (R4).
+// ⚠ מקצב דריסת המטמון נמדד **בלי שום מכשור חדש**: ב-route, כל פעולת כתיבה
+//   מוצלחת כותבת שורה ל-audit_log ומיד אחריה קוראת ל-bumpDataVersion.
+//   כלומר חותמות הזמן ב-audit_log הן בדיוק יומן הדריסות, רטרואקטיבית ובחינם.
+//   לכן bumpDataVersion לא נגעה — R4.
+// ============================================================================
+var B57_CACHE_TTL = 21600;     // 6 שעות — חלון איסוף המונים
+var B57_LIMIT_HINT = 102400;   // מגבלת ערך יחיד ב-CacheService (100KB)
+var B57_TTL_S = 120;           // ה-TTL שנקבע ב-getAllCached (B12)
+
+// מונה קל ב-ScriptCache. עטוף ב-try/catch — מדידה לעולם לא שוברת פעולה עסקית.
+// ⚠ אינו אטומי: תחת מקביליות ייתכן תת-ספירה. מספיק ליחס, לא למספר מוחלט.
+function b57Mark(kind) {
+  try {
+    var c = CacheService.getScriptCache();
+    var k = 'b57_' + kind;
+    c.put(k, String(Number(c.get(k) || 0) + 1), B57_CACHE_TTL);
+    if (!c.get('b57_since')) c.put('b57_since', String(Date.now()), B57_CACHE_TTL);
+  } catch (e) { /* לא קריטי */ }
+}
+function b57Note(kind, val) {
+  try { CacheService.getScriptCache().put('b57_' + kind, String(val), B57_CACHE_TTL); }
+  catch (e) { /* לא קריטי */ }
+}
+
+// מקצב הכתיבות = מקצב דריסת המטמון. קורא עמודה אחת מזנב audit_log בלבד.
+function b57WriteRhythm(sample, buildMs) {
+  var out = {
+    rows: 0, from: '', to: '', span_min: 0, per_hour: 0,
+    median_gap_s: 0, p25_gap_s: 0, pct_under_ttl: 0, pct_under_build: 0,
+    ttl_s: B57_TTL_S, build_s: 0, ok: false
+  };
+  var sh = b51AuditSheet();
+  if (!sh || sh.getLastRow() < 3) return out;
+  var cols = TABLES['audit_log'];
+  var tsCol = cols.indexOf('ts') + 1;
+  if (tsCol < 1) return out;
+  var last = sh.getLastRow();
+  var n = Math.min(Math.max(Number(sample || 500), 20), 5000);
+  var start = Math.max(2, last - n + 1);
+  var vals = sh.getRange(start, tsCol, last - start + 1, 1).getValues();
+  var ms = [];
+  vals.forEach(function (r) {
+    var v = r[0], t;
+    if (v instanceof Date) t = v.getTime();
+    else {
+      var s = String(v == null ? '' : v).trim();
+      if (!s) return;
+      t = new Date(s.replace(' ', 'T')).getTime();
+    }
+    if (t && !isNaN(t)) ms.push(t);
+  });
+  ms.sort(function (a, b) { return a - b; });
+  if (ms.length < 3) return out;
+  var gaps = [];
+  for (var i = 1; i < ms.length; i++) {
+    var g = (ms[i] - ms[i - 1]) / 1000;
+    if (g >= 0) gaps.push(g);
+  }
+  if (!gaps.length) return out;
+  var sorted = gaps.slice().sort(function (a, b) { return a - b; });
+  var med = sorted[Math.floor(sorted.length / 2)];
+  var p25 = sorted[Math.floor(sorted.length * 0.25)];
+  var buildS = Math.max(0.001, Number(buildMs || 0) / 1000);
+  var underTtl = 0, underBuild = 0;
+  gaps.forEach(function (g) { if (g < B57_TTL_S) underTtl++; if (g < buildS) underBuild++; });
+  var spanMin = (ms[ms.length - 1] - ms[0]) / 60000;
+  out.ok = true;
+  out.rows = ms.length;
+  out.from = Utilities.formatDate(new Date(ms[0]), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+  out.to = Utilities.formatDate(new Date(ms[ms.length - 1]), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+  out.span_min = Math.round(spanMin);
+  out.per_hour = spanMin > 0 ? Math.round((ms.length / (spanMin / 60)) * 10) / 10 : 0;
+  out.median_gap_s = Math.round(med * 10) / 10;
+  out.p25_gap_s = Math.round(p25 * 10) / 10;
+  out.pct_under_ttl = Math.round((underTtl / gaps.length) * 1000) / 10;
+  out.pct_under_build = Math.round((underBuild / gaps.length) * 1000) / 10;
+  out.build_s = Math.round(buildS * 100) / 100;
+  return out;
+}
+
+// ----------------------------------------------------------------------------
+// הפעולה עצמה. READ_ONLY · מנהל בלבד.
+// p.reset=1        — מאפס את מוני המטמון ומתחיל חלון מדידה חדש.
+// p.write_sample   — כמה שורות מזנב היומן לדגום למקצב הכתיבות (ברירת מחדל 500).
+// ----------------------------------------------------------------------------
+function b57PerfProbe(p) {
+  p = p || {};
+  var c = CacheService.getScriptCache();
+
+  if (p.reset) {
+    try {
+      ['hit', 'miss', 'putfail', 'bytes'].forEach(function (k) { c.remove('b57_' + k); });
+      c.put('b57_since', String(Date.now()), B57_CACHE_TTL);
+    } catch (e) { /* לא קריטי */ }
+    return { ok: true, reset: 1 };
+  }
+
+  var t0 = Date.now();
+
+  // ---- שלב 1: שליפה — קריאת הגיליונות, טבלה-טבלה, על db טרי ----
+  // loadDb מחזיר getters עצלים; הגישה הראשונה לכל מפתח היא הקריאה מהגיליון,
+  // ולכן ההפרש סביבה הוא בדיוק זמן הקריאה של אותה טבלה.
+  var db = loadDb();
+  var tables = [], readPayloadMs = 0, readAllMs = 0, fullBytes = 0, dropBytes = 0;
+  Object.keys(TMAP).forEach(function (t) {
+    var key = TMAP[t];
+    var pol = SLIM_POLICY[t] || {};
+    var a = Date.now();
+    var rows = db[key] || [];
+    var ms = Date.now() - a;
+    var b = 0;
+    try { b = JSON.stringify(rows).length; } catch (e) { b = 0; }
+    readAllMs += ms; fullBytes += b;
+    if (pol.drop) dropBytes += b; else readPayloadMs += ms;
+    tables.push({
+      table: t, rows: rows.length, bytes: b, read_ms: ms,
+      policy: pol.drop ? 'לא נשלח' : (pol.days ? (pol.days + ' ימים') : 'מלא'),
+      in_payload: pol.drop ? 0 : 1
+    });
+  });
+
+  // ---- שלב 2: בניית המטען. הטבלאות כבר בזיכרון — מודד עיבוד בלבד ----
+  var t1 = Date.now();
+  var payload = getAllPayload(db);
+  var buildMs = Date.now() - t1;
+
+  // ---- שלב 3: סריאליזציה ----
+  var t2 = Date.now();
+  var json = '';
+  try { json = JSON.stringify(payload); } catch (e) { json = ''; }
+  var serMs = Date.now() - t2;
+
+  // ---- שלב 4: עובדות המטמון (B12) ----
+  var dv = c.get('data_version') || 'v0';
+  var liveKey = 'getAll_payload_' + dv;
+  var liveVal = null;
+  try { liveVal = c.get(liveKey); } catch (e) { liveVal = null; }
+
+  // מבחן הכניסה למטמון: מנסים לאחסן את המטען האמיתי תחת מפתח זמני משלנו.
+  // אם CacheService זורק (או שותק ומאחסן כלום) — המטמון אינו יכול לעבוד בכלל.
+  var fits = false, putErr = '';
+  try {
+    c.put('b57_fit', json, 60);
+    fits = !!c.get('b57_fit');
+    c.remove('b57_fit');
+  } catch (e) { fits = false; putErr = String(e).substring(0, 200); }
+
+  var hits = Number(c.get('b57_hit') || 0);
+  var misses = Number(c.get('b57_miss') || 0);
+  var putfail = Number(c.get('b57_putfail') || 0);
+  var since = Number(c.get('b57_since') || 0);
+  var lastBytes = Number(c.get('b57_bytes') || 0);
+
+  // ---- שלב 5: מקצב הכתיבות = מקצב דריסת המטמון ----
+  var getallServerMs = readPayloadMs + buildMs + serMs;
+  var rhythm = b57WriteRhythm(p.write_sample, getallServerMs);
+
+  tables.sort(function (a, b) { return b.bytes - a.bytes; });
+
+  return {
+    ok: true,
+    ts: nowTs(),
+    stage: {
+      read_payload_ms: readPayloadMs,
+      read_all_ms: readAllMs,
+      build_ms: buildMs,
+      ser_ms: serMs,
+      getall_server_ms: getallServerMs,
+      probe_total_ms: Date.now() - t0
+    },
+    weight: {
+      full_bytes: fullBytes,
+      sent_bytes: json.length,
+      dropped_bytes: dropBytes,
+      tables_total: tables.length,
+      tables_read: tables.filter(function (x) { return x.in_payload; }).length
+    },
+    cache: {
+      data_version: dv,
+      key: liveKey,
+      live_present: !!liveVal,
+      live_bytes: liveVal ? liveVal.length : 0,
+      fits_limit: fits,
+      limit_hint: B57_LIMIT_HINT,
+      put_error: putErr,
+      hits: hits, misses: misses, put_failures: putfail,
+      hit_rate: (hits + misses) ? Math.round((hits / (hits + misses)) * 1000) / 10 : null,
+      since: since ? Utilities.formatDate(new Date(since), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm') : '',
+      last_payload_bytes: lastBytes,
+      ttl_s: B57_TTL_S
+    },
+    writes: rhythm,
+    tables: tables
   };
 }
