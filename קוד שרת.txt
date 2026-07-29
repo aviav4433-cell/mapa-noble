@@ -69,6 +69,24 @@
 //                     אצוות 500 שורות, אידמפוטנטי, עם תצוגה מקדימה (כלל R1).
 //                   • b51PayloadStats — אבחון משקל הנתונים על המסך, בלי ייצוא (R1).
 //                   ⚠ אין שינוי סכימה.
+//             B56 — סגירת רגל החזור של הזמנת כביסה + תקלות רכב — canary v4.53-B56
+//                   (1) nobleDeliver סוגר עכשיו גם את רגל החזור של ההזמנה
+//                       (b56CloseLaundryReturnLeg) ואת ההזמנה עצמה
+//                       (b56CloseLaundryOrder) כשאין עוד קליטה או רגל פתוחה.
+//                       עד היום נסגרה רק רשומת המשלוח הפנימית של המכבסה
+//                       (intake.delivery_id) וההזמנה נשארה פתוחה לנצח.
+//                       declared='כן' תמיד — nobleDeliver כבר חוסם מסירה בלי
+//                       חתימה או צילום (B19d/L6), ולכן הנסיעה מוכחת.
+//                   (2) **רכב = סוג נכס שלישי ב-b42Asset** (הכרעת אבי 29.07.2026).
+//                       asset_faults ו-fault_events היו גנריות מלכתחילה
+//                       (asset_type/asset_id) — לא נוספה טבלה ולא נוספה עמודה.
+//                       vehicles.status הוא שדה המצב; last_service_date /
+//                       next_service_date / next_service_km נכתבים ב-b42SaveService.
+//                   ⚠ **הפרדה מלאה בין תקלות רכב לתקלות מכבסה** — הכרעת אבי.
+//                     תקלת רכב מוצגת אך ורק במסך "צי רכב" ובכרטיס הרכב;
+//                     מסך "עגלות ומכונות" מסונן ל-['מכונה','עגלה'] בלבד.
+//                     האכיפה היא בממשק (b42ScopeTypes) — השרת נשאר גנרי.
+//                   ⚠ אין שינוי סכימה.
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -946,6 +964,55 @@ function b49fCloseLegs(db, orderId, kind, user, declared, ctx) {
 
 function b49eClosePickupsAfterReturn(db, orderId, user, declared) {
   return b49fCloseLegs(db, orderId, 'איסוף', user, declared, 'בקליטת ההחזרה');
+}
+
+/* ============================================================
+   B56 — סגירת רגל החזור של הזמנת כביסה (29.07.2026)
+   ------------------------------------------------------------
+   הבעיה שנסגרת כאן: B49d סגר את רגל ההלוך בלבד (איסוף המלוכלך).
+   רגל החזור — מסירת הכביסה הנקייה — נשארה 'מתוכנן' לנצח, כי
+   nobleDeliver סגר רק את רשומת המשלוח הפנימית של המכבסה
+   (intake.delivery_id, kind='משלוח מכבסה', בלי order_id) ולא ידע
+   על רשומת ה'אספקה' שנוצרה מההזמנה. התוצאה: הזמנת כביסה שהסתיימה
+   בפועל המשיכה להופיע כפתוחה ביומן, במשלוחים ובמסך ההזמנות.
+
+   שתי הכרעות:
+   1. declared = 'כן' תמיד. אין כאן ניחוש: nobleDeliver כבר חוסם
+      מסירה בלי חתימת לקוח או צילום (B19d/L6), ולכן ברגע שהגענו
+      לכאן המסירה הוכחה בפועל. הרגל תיסגר עם trip_confirmed_by
+      ולא תבוטל — ביטול היה מוחק נסיעה שבוצעה.
+   2. איסוף עצמי ברגל החזור (ship_back) = אין רגל לסגור, ויוצאים
+      בשקט. b49eShipMode הוא מקור האמת היחיד, לא delivery_fee (P2).
+   ============================================================ */
+function b56CloseLaundryReturnLeg(db, order, user) {
+  var empty = { done: 0, cancelled: 0, confirmed: 0, skipped: '' };
+  if (!order || String(order.type) !== 'כביסה') return empty;
+  if (b49eShipMode(order, 'חזור') !== B49E_SHIP) { empty.skipped = 'איסוף עצמי'; return empty; }
+  return b49fCloseLegs(db, order.id, b49eLegKind(order, 'חזור'), user, B49F_YES, 'במסירת הכביסה הנקייה');
+}
+
+/* הזמנת הכביסה עצמה נסגרת רק כשאין לה עוד מה לעשות:
+   כל הקליטות שלה נמסרו, ואין רגל משלוח פתוחה. הזמנה עם שתי קליטות
+   (למשל משלוח שהתפצל) לא תיסגר על הראשונה.
+   ⚠ מכוון: אין כאן נגיעה בכסף. B54_SKIP_ORDER מחריג רק
+   'בוטלה'/'טיוטה'/'הצעת מחיר', ולכן 'מאושרת' ו'הושלמה' נספרות
+   זהה בספר החיובים — המעבר בין שני הסטטוסים לא מזיז יתרה באגורה. */
+var B56_OPEN_INTAKE = ['התקבל', 'בעבודה', 'מוכן', 'במשלוח'];
+function b56CloseLaundryOrder(db, order) {
+  if (!order || String(order.type) !== 'כביסה') return false;
+  if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(String(order.status)) === -1) return false;
+  var openIntake = (db.laundryIntakes || []).some(function (ik) {
+    return String(ik.order_id || '') === String(order.id) &&
+      B56_OPEN_INTAKE.indexOf(String(ik.status)) > -1;
+  });
+  if (openIntake) return false;
+  var openLeg = (db.deliveries || []).some(function (d) {
+    return String(d.order_id || '') === String(order.id) &&
+      B5_OPEN_STATUSES.indexOf(String(d.status)) > -1;
+  });
+  if (openLeg) return false;
+  order.status = 'הושלמה';
+  return true;
 }
 
 // B38 (תיקון החזרות): תאריכי ההזמנה זזו — משלוחי האספקה והאיסוף הפתוחים זזים איתם.
@@ -3418,7 +3485,7 @@ function handle(action, p, db, user) {
       var vRF = b42RequireOffice(p);
       if (!vRF.ok) return vRF;
       var aF = b42Asset(db, p.asset_type, p.asset_id);
-      if (!aF) return { ok: false, error: 'נכס לא נמצא (מכונה או עגלה)' };
+      if (!aF) return { ok: false, error: B56_NO_ASSET };
       var descF = String(p.description || '').trim();
       var doneF = String(p.done_so_far || '').trim();
       var nextF = String(p.next_step || '').trim();
@@ -3476,7 +3543,7 @@ function handle(action, p, db, user) {
       var aidE = p.asset_id || (fltE ? fltE.asset_id : '');
       if (atE && aidE) {
         aE = b42Asset(db, atE, aidE);
-        if (!aE) return { ok: false, error: 'נכס לא נמצא (מכונה או עגלה)' };
+        if (!aE) return { ok: false, error: B56_NO_ASSET };
       }
       var visitE = null;
       if (p.visit_id) {
@@ -3531,7 +3598,7 @@ function handle(action, p, db, user) {
       var vSS = b42RequireOffice(p);
       if (!vSS.ok) return vSS;
       var aS = b42Asset(db, p.asset_type, p.asset_id);
-      if (!aS) return { ok: false, error: 'נכס לא נמצא (מכונה או עגלה)' };
+      if (!aS) return { ok: false, error: B56_NO_ASSET };
       var descS = String(p.description || '').trim();
       if (descS.length < 3) return { ok: false, error: 'פירוט מה בוצע הוא שדה חובה' };
       var costS = Math.round(Number(p.cost_agorot) || 0);
@@ -3546,6 +3613,21 @@ function handle(action, p, db, user) {
       if (aS.type === 'מכונה') {
         if (isDateStr(p.last_service)) aS.row.last_service = String(p.last_service);
         if (p.next_service !== undefined) aS.row.next_service = isDateStr(p.next_service) ? String(p.next_service) : '';
+      }
+      /* B56 — לרכב יש שלושה שדות תחזוקה שכבר קיימים בסכימה מאז B42 ולא היה
+         מי שיכתוב אליהם: last_service_date · next_service_date · next_service_km.
+         שמות השדות שונים מאלה של מכונה, ולכן ענף נפרד ולא איחוד. */
+      if (aS.type === 'רכב') {
+        if (isDateStr(p.last_service)) aS.row.last_service_date = String(p.last_service);
+        if (p.next_service !== undefined) aS.row.next_service_date = isDateStr(p.next_service) ? String(p.next_service) : '';
+        if (p.next_service_km !== undefined) {
+          var kmS = Math.round(Number(p.next_service_km) || 0);
+          aS.row.next_service_km = (isFinite(kmS) && kmS > 0) ? kmS : '';
+        }
+        if (p.mileage_km !== undefined && String(p.mileage_km).trim() !== '') {
+          var mkS = Math.round(Number(p.mileage_km) || 0);
+          if (isFinite(mkS) && mkS >= 0) aS.row.mileage_km = mkS;
+        }
       }
       if (p.state !== undefined && aS.states.indexOf(String(p.state)) > -1) aS.row[aS.field] = String(p.state);
       if (p.notes !== undefined) aS.row.notes = String(p.notes);
@@ -6141,10 +6223,29 @@ function nobleDeliver(db, p, user) {
     intake_id: intake.id, customer_id: intake.customer_id, cart_id: '',
     stage: 'נמסר', event_type: 'מסירה', worker_id: w.id, worker_name: w.name
   });
+  /* B56 — רגל החזור של הזמנת הכביסה נסגרת כאן, אחרי שהקליטה סומנה 'נמסר'.
+     הסדר חשוב: b56CloseLaundryOrder בודק שאין קליטה פתוחה, ולכן חייב לרוץ
+     אחרי שהקליטה הנוכחית כבר עודכנה. */
+  var leg56 = null, closed56 = false;
+  if (intake.order_id) {
+    var ord56 = (db.orders || []).find(function (x) { return x.id === intake.order_id; });
+    if (ord56) {
+      leg56 = b56CloseLaundryReturnLeg(db, ord56, w.name);
+      if (leg56 && (leg56.done || leg56.confirmed || leg56.cancelled)) writeTable('deliveries', db.deliveries);
+      closed56 = b56CloseLaundryOrder(db, ord56);
+      if (closed56) writeTable('orders', db.orders);
+    }
+  }
   writeTable('laundry_intakes', db.laundryIntakes);
   writeTable('intake_carts', db.intakeCarts);
   writeTable('carts', db.carts);
-  return { ok: true, intake: intake, auditNote: 'נמסר · ' + intake.id + ' · ₪' + (intake.total_charge || 0) };
+  return {
+    ok: true, intake: intake, return_leg: leg56, order_closed: closed56 ? 1 : 0,
+    auditNote: 'נמסר · ' + intake.id + ' · ₪' + (intake.total_charge || 0) +
+      (leg56 && (leg56.done || leg56.confirmed) ? ' · B56 רגל החזור של ההזמנה נסגרה' : '') +
+      (leg56 && leg56.skipped ? ' · רגל החזור: ' + leg56.skipped : '') +
+      (closed56 ? ' · ההזמנה הושלמה' : '')
+  };
 }
 
 // ============================================================
@@ -8709,8 +8810,24 @@ function b42Asset(db, type, id) {
       onFault: 'דורשת טיפול', fixed: 'תקינה', dead: 'מושבתת'
     };
   }
+  /* B56 (הכרעת אבי 29.07.2026) — רכב הוא סוג נכס שלישי.
+     תקלת רכב אינה תקלת מכבסה: היא נפתחת מכרטיס הרכב, מוצגת במסך "צי רכב"
+     בלבד, ולעולם לא מופיעה במסך "עגלות ומכונות". ההפרדה נאכפת בממשק לפי
+     asset_type; כאן רק נפתח הנכס עצמו. שדה המצב של רכב הוא vehicles.status
+     והערכים שלו נגזרים מטופס הרכב הקיים (vehForm) — 'פעיל'/'בטיפול'/'מושבת'. */
+  if (t === 'רכב') {
+    var vh = (db.vehicles || []).find(function (x) { return String(x.id) === aid; });
+    if (!vh) return null;
+    return {
+      type: 'רכב', row: vh, table: 'vehicles', rows: db.vehicles, field: 'status',
+      label: 'רכב ' + (vh.plate || vh.id), states: ['פעיל', 'בטיפול', 'מושבת'],
+      onFault: 'בטיפול', fixed: 'פעיל', dead: 'מושבת'
+    };
+  }
   return null;
 }
+// B56: נוסח אחיד לשגיאת "נכס לא נמצא" — שלושת הסוגים במקום אחד.
+var B56_NO_ASSET = 'נכס לא נמצא (מכונה, עגלה או רכב)';
 
 function b42SetState(db, a, state) {
   if (!a || a.states.indexOf(state) === -1) return false;
