@@ -75,8 +75,11 @@ header .btn,header .btn.sm{background:transparent;border:1px solid rgba(255,255,
 header .btn:hover,header .btn.sm:hover{background:rgba(255,255,255,.07);color:#fff}
 header .brandimg{max-height:28px;border-radius:4px}
 header .qnav{display:flex;gap:6px}
-header .qnav button{background:transparent;border:1px solid rgba(255,255,255,.14);border-radius:6px;width:32px;height:32px;color:#B9C4D0;display:inline-flex;align-items:center;justify-content:center;padding:0}
+/* B53/N1: הקיצורים מקבלים תווית טקסט במסך רחב, ונשארים אייקון בלבד כשצר */
+header .qnav button{background:transparent;border:1px solid rgba(255,255,255,.14);border-radius:6px;width:auto;min-width:32px;height:32px;color:#B9C4D0;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 11px;font-size:13px;font-weight:500;white-space:nowrap}
 header .qnav button:hover{background:rgba(255,255,255,.07);color:#fff;border-color:rgba(255,255,255,.28)}
+header .qnav svg{flex:none;width:16px;height:16px}
+@media(max-width:1279px){header .qnav .qtx{display:none}header .qnav button{width:32px;min-width:32px;padding:0}}
 nav{display:flex;background:var(--sb);border-bottom:1px solid rgba(255,255,255,.06);overflow-x:auto;position:sticky;top:54px;z-index:19;-webkit-overflow-scrolling:touch}
 main{padding:20px;max-width:1080px;margin:0 auto;padding-bottom:48px}
 /* ===== כרטיסים ===== */
@@ -324,6 +327,51 @@ nav .nitem.on{color:#fff}
   nav .ghead,nav .nitem.lone{padding:0 9px;font-size:12.5px;gap:5px}
   nav .ghead svg,nav .nitem.lone svg{width:15px;height:15px}
 }
+/* ===== B53: פריסת ניווט משולבת — סרגל צד ימני קבוע מ-1100px ומעלה =====
+   הכרעות אבי N1–N3: שורה עליונה = לוגו + קיצורי דרך; סרגל ימני = כל המסכים,
+   רשימה מלאה, פתוח תמיד ברוחב קבוע. מתחת ל-1100px לא משתנה דבר:
+   900–1099 = תפריט B47 עם החלוניות · מתחת ל-900 = אקורדיון B23.
+   הפריסה נעשית ב-#shell (עוטף nav+main) ולא ב-#app, כדי שה-header
+   יישאר sticky וכדי שמצב ה-display של #app (פורטל/חנות/קיוסק) לא ייגע. */
+@media(min-width:1100px){
+  body:not(.driver-mode) #shell{display:flex;align-items:flex-start}
+  body:not(.driver-mode) nav{position:sticky;top:54px;right:auto;left:auto;bottom:auto;
+      width:228px;flex:none;height:calc(100vh - 54px);min-height:0;
+      flex-direction:column;flex-wrap:nowrap;align-items:stretch;
+      overflow-y:auto;overflow-x:hidden;padding:6px 0 24px;
+      border-bottom:none;border-inline-end:1px solid rgba(0,0,0,.18)}
+  body:not(.driver-mode) main{flex:1;min-width:0;max-width:none;margin:0;
+      padding:26px 28px;padding-bottom:52px}
+  /* כותרת קטגוריה = תווית לא-לחיצה */
+  nav .ngrp.side{display:block;position:static;padding:0;margin:0 0 2px;border:none}
+  nav .gcap{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:600;
+      letter-spacing:.08em;color:var(--sb-mut);padding:13px 16px 5px;white-space:nowrap}
+  nav .gcap svg{flex:none;width:16px;height:16px}
+  nav .ngrp.side .nitem{display:block;width:100%;text-align:right;background:none;
+      font-size:14px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
+      padding:8px 30px 8px 14px;margin:0;border:none;border-right:3px solid transparent;
+      border-radius:0;box-shadow:none;min-height:0;overflow:hidden;text-overflow:ellipsis}
+  nav .ngrp.side .nitem:hover{background:var(--sb-hi);color:#fff}
+  nav .ngrp.side .nitem.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
+      color:#fff;font-weight:600;box-shadow:none}
+  /* מסך יחיד שאינו שייך לקטגוריה מרובת-מסכים — קישור ישיר בראש הסרגל */
+  nav .nitem.lone.side{display:flex;align-items:center;gap:9px;width:100%;text-align:right;
+      background:none;font-size:13.5px;font-weight:600;color:var(--sb-tx);white-space:nowrap;
+      padding:10px 16px;margin:0;border:none;border-right:3px solid transparent;
+      border-radius:0;box-shadow:none;min-height:0}
+  nav .nitem.lone.side svg{flex:none;width:16px;height:16px}
+  nav .nitem.lone.side:hover{background:var(--sb-hi);color:#fff}
+  nav .nitem.lone.side.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
+      color:#fff;box-shadow:none}
+}
+/* 1100–1279: סרגל צר יותר וריפוד מצומצם — מרוויח רוחב למסכי הטבלאות הרחבים */
+@media(min-width:1100px) and (max-width:1279px){
+  body:not(.driver-mode) nav{width:198px}
+  body:not(.driver-mode) main{padding:22px 18px;padding-bottom:52px}
+  nav .ngrp.side .nitem{padding:8px 26px 8px 12px;font-size:13.5px}
+  nav .gcap{padding:12px 13px 5px}
+  nav .nitem.lone.side{padding:9px 13px;font-size:13px}
+}
 /* הדגשת תרשומת שמנווטים אליה — רקע שדוהה לאורך ~10 שניות */
 .hl-fade{animation:hlfade 10s ease-out forwards;border-radius:6px}
 @keyframes hlfade{0%{background-color:#FDF3D6}100%{background-color:transparent}}
@@ -449,7 +497,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.51-B52 · 29.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.52-B53 · 29.07.2026</div>
   </div>
 </div>
 
@@ -464,8 +512,13 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button id="btnRefresh" class="btn sm" onclick="refresh()" title="משיכת נתונים עדכניים מהשרת"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg> רענון</button>
   </header>
   <div id="offlineBanner">אין חיבור לאינטרנט — מוצג מסלול שמור מהטעינה האחרונה</div>
-  <nav id="nav"></nav>
-  <main id="main"></main>
+  <!-- B53: עטיפת פריסה בלבד. במסך רחב (1100px+) היא הופכת לשתי עמודות —
+       סרגל ניווט ימני קבוע + תוכן. ה-header נשאר מחוץ לעטיפה כדי
+       שה-position:sticky שלו ימשיך לעבוד בדיוק כמו קודם. -->
+  <div id="shell">
+    <nav id="nav"></nav>
+    <main id="main"></main>
+  </div>
 </div>
 
 <div id="modalBg" onclick="if(event.target===this)closeModal()"><div id="modal"></div></div>
@@ -1398,6 +1451,12 @@ var NAV_OPEN = ''; // הקטגוריה הפתוחה כרגע באקורדיון 
    מותיר חלונית תלויה פתוחה בכל טעינת מסך. ברירת המחדל: סגור. */
 var NAV_DD = '';
 function navIsTop(){ try{ return window.matchMedia('(min-width:900px)').matches; }catch(e){ return false; } }
+/* B53: מצב שלישי — סרגל צד ימני קבוע. נקודת השבירה גבוהה יותר מ-navIsTop כי
+   בין 900 ל-1099 אין מקום גם לסרגל 228px וגם לטבלאות הרחבות; שם נשאר תפריט B47.
+   שלושת המצבים מוציאים את אותו #nav — אין אלמנט ניווט שני ואין דפוס רביעי. */
+function navIsSide(){ try{ return window.matchMedia('(min-width:1100px)').matches; }catch(e){ return false; } }
+function navMode(){ return navIsSide() ? 'side' : (navIsTop() ? 'top' : 'mob'); }
+var NAV_MODE = '';
 function allowedViews(){
   var base = VIEWS.filter(function(v){
     if(v[0]==='superadmin') return false; // B7: לעולם לא לפי הכללים הרגילים — נוסף בנפרד למטה
@@ -1443,6 +1502,27 @@ function renderNav(views){
   var groups = NAV_GROUPS.slice();
   var extra = views.filter(v=>!navGroupOf(v[0])).map(v=>v[0]); // ביטחון — מסך שלא שויך לקטגוריה
   if(extra.length) groups = groups.concat([['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>','עוד',extra]]);
+  NAV_MODE = navMode();
+  /* B53/N2: סרגל צד — כל המסכים המותרים גלויים תמיד, מקובצים לפי NAV_GROUPS,
+     בלי כותרת לחיצה ובלי חלונית נפתחת. אותו #nav, רינדור אחר, אותו allowedViews. */
+  if(NAV_MODE==='side'){
+    el('nav').innerHTML = navActions + groups.map(function(g){
+      var items = g[2].filter(k=>allowed[k]!==undefined);
+      if(!items.length) return '';
+      if(items.length===1 && (g[2].length===1 || items[0]==='dash')){
+        var lk = items[0];
+        return '<button class="nitem lone side'+(VIEW===lk?' on':'')+'" onclick="go(\''+lk+'\')">'+
+          g[0]+'<span class="gtxt">'+allowed[lk]+'</span>'+
+          (lk==='approvals'&&APPROVALS_COUNT>0?'<span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>';
+      }
+      return '<div class="ngrp side">'+
+        '<div class="gcap">'+g[0]+'<span class="gtxt">'+g[1]+'</span></div>'+
+        items.map(k=>'<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
+          (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>').join('')+
+        '</div>';
+    }).join('');
+    return; // אין חלונית למדוד — navFixDD לא רלוונטי
+  }
   el('nav').innerHTML = navActions + groups.map(function(g){
     var items = g[2].filter(k=>allowed[k]!==undefined);
     if(!items.length) return ''; // כל המסכים בקטגוריה מסוננים — לא מציגים אותה
@@ -1470,6 +1550,7 @@ function renderNav(views){
    מהמסך (בעיקר האחרונות ב-RTL, וגם כשהתפריט נשבר לשתי שורות), ולכן היא
    מוזזת פנימה לפי מדידה בפועל — עובד בשני הכיוונים ובכל רוחב. */
 function navFixDD(){
+  if(navIsSide()) return; // B53: בסרגל הצד אין חלונית נפתחת — אין מה למדוד
   if(!navIsTop()) return;
   var m = document.querySelector('#nav .ngrp.dd > .gmenu');
   if(!m) return;
@@ -1497,19 +1578,57 @@ document.addEventListener('click', function(e){
   closeNavDD();
 });
 document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeNavDD(); });
-/* מעבר דסקטופ<->מובייל לא ישאיר חלונית תלויה */
-window.addEventListener('resize', function(){ if(NAV_DD && !navIsTop()) closeNavDD(); });
+/* מעבר דסקטופ<->מובייל לא ישאיר חלונית תלויה.
+   B53: שלושה מצבי תצוגה — מעבר בין מצבים מחייב רינדור מחדש של אותו #nav. */
+window.addEventListener('resize', function(){
+  if(NAV_DD && !navIsTop()) closeNavDD();
+  var m = navMode();
+  if(m !== NAV_MODE && el('nav') && typeof ROLE!=='undefined' && ROLE){
+    NAV_DD = ''; closeNavPanel(); renderNav();
+  }
+});
 /* B23: תצוגת התפריט הנפרדת במסך צר — נפתחת מכפתור "תפריט" בסרגל העליון */
 function toggleNavPanel(){ document.body.classList.toggle('nav-open'); }
 function closeNavPanel(){ document.body.classList.remove('nav-open'); }
 /* B23: לחיצה על הלוגו מחזירה למסך הבית — לוח הבקרה */
 function goHome(){ if(allowedViews().some(function(v){return v[0]==='dash';})) go('dash'); }
+/* ================= B53/N1: קיצורי דרך בשורה העליונה =================
+   הקיצורים אינם מקודדים יותר — הם נגזרים מהגדרה אחת (nav_quick) שנקבעת
+   במסך ההגדרות בסימון תיבות, בעברית, בלי שאבי מקליד מפתחות. שלושת
+   האייקונים המקודדים של B47 נשמרו; לכל מסך אחר נלקח האייקון של הקטגוריה
+   שלו מ-NAV_GROUPS — אין ציור אייקון חדש לכל מסך. */
+var NAV_QUICK_DEFAULT = 'orders,customers,deliveries,laundry,calendar';
+var NAV_QUICK_MAX = 6;
+var QNAV_ICONS = {
+  orders:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>',
+  customers:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  calendar:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+  deliveries: DRIVER_TAB_ICONS.deliveries,
+  attendance: DRIVER_TAB_ICONS.attendance,
+  payroll: DRIVER_TAB_ICONS.payroll,
+  tasks: DRIVER_TAB_ICONS.tasks
+};
+function navGroupIcon(key){ var g = NAV_GROUPS.find(x=>x[2].includes(key)); return g ? g[0] : ''; }
+/* מפתחות הקיצורים לפי ההגדרה, בלי כפילויות. הגדרה ריקה = ברירת המחדל. */
+function navQuickKeys(){
+  var raw = '';
+  try{ raw = setting('nav_quick') || ''; }catch(e){ raw = ''; }
+  raw = String(raw).trim();
+  if(!raw) raw = NAV_QUICK_DEFAULT;
+  var seen = {}, out = [];
+  raw.split(',').forEach(function(s){ s = s.trim(); if(s && !seen[s]){ seen[s] = 1; out.push(s); } });
+  return out;
+}
 function renderTopbar(views){
-  var keys = views.map(v=>v[0]);
+  var labelOf = {}; views.forEach(function(v){ labelOf[v[0]] = v[1]; });
   var qn = el('qnav');
-  if(qn) qn.innerHTML = [['orders','<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>','הזמנות'],['customers','<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>','לקוחות'],['calendar','<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>','יומן']]
-    .filter(x=>keys.includes(x[0]))
-    .map(x=>'<button onclick="go(\''+x[0]+'\')" title="'+x[2]+'">'+x[1]+'</button>').join('');
+  if(qn) qn.innerHTML = navQuickKeys()
+    .filter(function(k){ return labelOf[k] !== undefined; }) // מפתח שגוי או מסך אסור לתפקיד — מסונן בשקט
+    .slice(0, NAV_QUICK_MAX)
+    .map(function(k){
+      return '<button onclick="go(\''+k+'\')" title="'+esc(labelOf[k])+'">'+
+        (QNAV_ICONS[k] || navGroupIcon(k))+'<span class="qtx">'+esc(labelOf[k])+'</span></button>';
+    }).join('');
   var bl = el('brandLbl');
   if(bl){
     var bn = setting('business_name'), lu = setting('logo_url');
@@ -8261,9 +8380,62 @@ function rSettings(){
     '<div class="frow"><label>נוסח הסכם השירות</label><textarea id="set_agreement_text" rows="8" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px">'+esc(setting('agreement_text'))+'</textarea></div>'+
     '<button class="btn" id="setSaveBtn" onclick="saveSettings()">שמור הכל</button> <button class="btn ghost" onclick="printAgreementPreview()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> תצוגה מקדימה של הסכם</button></div>'+
     '<p class="muted">ההגדרות חלות מיידית על כל המסמכים: חשבוניות, קבלות, תעודות משלוח, טפסים, הסכמים ודוחות.</p>'+
+    b53QuickNavPanelHtml()+
     b52KioskPanelHtml()+
     b46FixPanelHtml();
   b52LoadKioskStatus();
+  b53QuickState();
+}
+/* ================= B53/N1: בחירת קיצורי הדרך בשורה העליונה =================
+   ההגדרה נשמרת כמפתח settings אחד (nav_quick) — רשימת מפתחות מופרדת בפסיקים —
+   אבל אבי בוחר בסימון תיבות בעברית ואינו מקליד מפתח טכני אחד. סדר הבחירה הוא
+   סדר התצוגה. השדה המוסתר set_nav_quick הוא מה ש-saveSettings קורא. */
+var B53_QUICK = [];
+function b53QuickNavPanelHtml(){
+  var views = allowedViews(), labelOf = {};
+  views.forEach(function(v){ labelOf[v[0]] = v[1]; });
+  B53_QUICK = navQuickKeys().filter(function(k){ return labelOf[k] !== undefined; }).slice(0, NAV_QUICK_MAX);
+  var boxes = NAV_GROUPS.map(function(g){
+    var items = g[2].filter(function(k){ return labelOf[k] !== undefined; });
+    if(!items.length) return '';
+    return '<div style="margin:9px 0 2px">'+
+      '<div class="muted" style="font-size:11.5px;font-weight:700;letter-spacing:.06em;margin-bottom:4px">'+esc(g[1])+'</div>'+
+      '<div class="row" style="gap:5px 15px">'+items.map(function(k){
+        return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:400;cursor:pointer">'+
+          '<input type="checkbox" style="width:auto" data-b53k="'+esc(k)+'"'+
+          (B53_QUICK.indexOf(k)>-1?' checked':'')+' onchange="b53QuickToggle(this)"> '+esc(labelOf[k])+'</label>';
+      }).join('')+'</div></div>';
+  }).join('');
+  return '<div class="section-title"><h3>קיצורי דרך בשורה העליונה</h3></div>'+
+    '<div class="card">'+
+      '<div style="font-size:13px">עד '+NAV_QUICK_MAX+' מסכים יופיעו ככפתורים בשורה העליונה, ליד הלוגו — '+
+      'אלה שנכנסים אליהם הרבה. כל שאר המסכים נשארים בסרגל הצד ואינם נעלמים.</div>'+
+      boxes+
+      '<div id="b53QuickState" class="muted" style="font-size:12.5px;margin-top:8px"></div>'+
+      '<input type="hidden" id="set_nav_quick" value="'+esc(B53_QUICK.join(','))+'">'+
+    '</div>';
+}
+function b53QuickToggle(cb){
+  var k = cb.getAttribute('data-b53k'), i = B53_QUICK.indexOf(k);
+  if(cb.checked){
+    if(i < 0){
+      if(B53_QUICK.length >= NAV_QUICK_MAX){
+        cb.checked = false;
+        toast('אפשר עד '+NAV_QUICK_MAX+' קיצורים — הסר אחד קודם', true);
+        return;
+      }
+      B53_QUICK.push(k);
+    }
+  } else if(i > -1) B53_QUICK.splice(i, 1);
+  var h = el('set_nav_quick'); if(h) h.value = B53_QUICK.join(',');
+  b53QuickState();
+}
+function b53QuickState(){
+  var box = el('b53QuickState'); if(!box) return;
+  var labelOf = {}; VIEWS.forEach(function(v){ labelOf[v[0]] = v[1]; });
+  box.textContent = B53_QUICK.length
+    ? 'נבחרו ' + B53_QUICK.length + ': ' + B53_QUICK.map(function(k){ return labelOf[k] || k; }).join(' · ') + ' — נשמר בלחיצה על "שמור הכל"'
+    : 'לא נבחר דבר — יוצגו קיצורי ברירת המחדל (הזמנות · לקוחות · משלוחים · מכבסה · יומן).';
 }
 /* ================= B52: ניהול טאבלט הקיוסק — מנהל בלבד ================= */
 var B52_LINK = '';
@@ -8401,7 +8573,7 @@ async function saveSettings(){
   if(btn){ btn.disabled=true; btn.style.opacity='.6'; btn.textContent='שומר...'; }
   showBusy(true);
   try{
-    var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text','ui_theme']);
+    var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text','ui_theme','nav_quick']); // B53: nav_quick מגיע משדה מוסתר שמתמלא בסימון תיבות
     for(var i=0;i<keys.length;i++){
       var fld = el('set_'+keys[i]);
       if(!fld) continue; // שדה שלא קיים במסך — לא מפילים את כל השמירה
