@@ -44,6 +44,28 @@ h1,h2,h3{font-weight:600;color:var(--navy)}
 #login button:hover{background:#0F2438}
 #loginErr{color:var(--danger);font-size:13.5px;min-height:18px;margin-top:10px}
 #app{display:none}
+/* ===== B52: מסך קיוסק — הקשר ריצה רביעי (?kiosk=1). כל הכללים תחת #login
+   כדי לגבור על עיצוב תיבת הכניסה (button{width:100%} וכו'). ===== */
+#login.kioskmode{background:var(--sb);align-items:center;justify-content:center;padding:0}
+#login .kk{width:100%;max-width:620px;text-align:center;color:#fff;padding:16px}
+#login .kk .kklogo{font-size:20px;font-weight:800;letter-spacing:3px;color:#fff;margin-bottom:2px}
+#login .kk .kklogo span{color:var(--teal)}
+#login .kk .kktime{font-size:clamp(46px,12vw,96px);font-weight:800;line-height:1.05;letter-spacing:2px;margin:2px 0 0}
+#login .kk .kkdate{font-size:14.5px;color:var(--sb-tx);margin:2px 0 12px}
+#login .kk .kkhint{font-size:14px;color:var(--sb-tx);margin-bottom:6px}
+#login .kk .kkdots{min-height:40px;font-size:30px;letter-spacing:12px;color:#fff;padding-top:4px}
+#login .kk .kkpad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:min(330px,88vw);margin:4px auto 0}
+#login .kk .kkpad button{width:100%;height:68px;font-size:26px;font-weight:600;border-radius:12px;
+  background:rgba(255,255,255,.10);color:#fff;border:1px solid rgba(255,255,255,.16);padding:0}
+#login .kk .kkpad button:hover{background:rgba(255,255,255,.16)}
+#login .kk .kkpad button:active{background:rgba(255,255,255,.26)}
+#login .kk .kkpad .kkok{background:var(--teal);border-color:var(--teal);font-size:22px}
+#login .kk .kkpad .kkok:hover{background:var(--teal-d)}
+#login .kk .kkpad .kkclr{font-size:18px;background:rgba(255,255,255,.04)}
+#login .kk .kkmsg{min-height:26px;font-size:16px;font-weight:600;margin-top:12px;color:var(--sb-tx)}
+#login .kk .kkbig{font-size:clamp(24px,6vw,40px);font-weight:800;margin:14px 0 6px}
+#login .kk .kksub{font-size:19px;color:#fff;font-weight:600}
+#login .kk .kknote{font-size:13.5px;color:var(--sb-tx);margin-top:18px;line-height:1.7}
 /* ===== סרגל עליון ===== */
 header{background:var(--sb);color:#fff;height:54px;padding:0 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:20;border-bottom:1px solid rgba(255,255,255,.06)}
 header .logo{font-weight:600;font-size:16px;letter-spacing:.6px;display:flex;align-items:center;gap:8px}
@@ -427,7 +449,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.50-B51 · 29.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.51-B52 · 29.07.2026</div>
   </div>
 </div>
 
@@ -644,7 +666,8 @@ function updateOfflineBanner(){
 window.addEventListener('online', function(){ updateOfflineBanner(); if(DB && ROLE==='נהג') refresh(); });
 window.addEventListener('offline', updateOfflineBanner);
 // רישום Service Worker — מטמון קריאה בלבד ל-app shell (ראה sw.js). לא רלוונטי לפורטל/חנות הציבורית.
-if('serviceWorker' in navigator && !location.search.includes('portal=1') && !location.search.includes('shop=1')){
+// B52: הקיוסק מוחרג בכוונה — מטמון shell ישן היה מסכל את הרענון העצמי של הטאבלט.
+if('serviceWorker' in navigator && !location.search.includes('portal=1') && !location.search.includes('shop=1') && !location.search.includes('kiosk=1')){
   window.addEventListener('load', function(){ navigator.serviceWorker.register('./sw.js').catch(function(){}); });
 }
 // B10/E5: מונה מרכז אישורים — נטען רק למנהל/משרד, מרענן את התפריט בלי לגעת במסך הפתוח
@@ -671,7 +694,7 @@ async function doLogout(){
 }
 // F2: כניסה אוטומטית בטעינה — קודם טוקן סשן פעיל, ואם אין: "זכור אותי" מהמכשיר
 async function autoLogin(){
-  if(location.search.includes('portal=1') || location.search.includes('shop=1')) return;
+  if(location.search.includes('portal=1') || location.search.includes('shop=1') || location.search.includes('kiosk=1')) return;
   var t = sessionStorage.getItem('mn_token');
   if(t){
     TOKEN = t;
@@ -8238,7 +8261,72 @@ function rSettings(){
     '<div class="frow"><label>נוסח הסכם השירות</label><textarea id="set_agreement_text" rows="8" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px">'+esc(setting('agreement_text'))+'</textarea></div>'+
     '<button class="btn" id="setSaveBtn" onclick="saveSettings()">שמור הכל</button> <button class="btn ghost" onclick="printAgreementPreview()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> תצוגה מקדימה של הסכם</button></div>'+
     '<p class="muted">ההגדרות חלות מיידית על כל המסמכים: חשבוניות, קבלות, תעודות משלוח, טפסים, הסכמים ודוחות.</p>'+
+    b52KioskPanelHtml()+
     b46FixPanelHtml();
+  b52LoadKioskStatus();
+}
+/* ================= B52: ניהול טאבלט הקיוסק — מנהל בלבד ================= */
+var B52_LINK = '';
+function b52KioskPanelHtml(){
+  if(ROLE!=='מנהל') return '';
+  return '<div class="section-title"><h3>טאבלט קיוסק — שעון נוכחות</h3></div>'+
+    '<div class="card">'+
+      '<div style="font-size:13px">טאבלט משותף בכניסה למתחם: כל עובד מקיש את המספר האישי שלו ומחתים כניסה או יציאה. '+
+      'הטאבלט אינו מחזיק חשבון של אף אחד, אינו טוען שום נתון עסקי, ואינו מציג דבר מלבד השעון.</div>'+
+      '<div id="b52KState" class="muted" style="margin:10px 0;font-size:12.5px">בודק מצב...</div>'+
+      '<div class="row"><button class="btn" id="b52RegBtn" onclick="b52RegisterKiosk()">רישום טאבלט קיוסק</button> '+
+      '<button class="btn ghost" id="b52RevBtn" onclick="b52RevokeKiosk()">ביטול רישום</button></div>'+
+      '<div id="b52KLink"></div>'+
+      '<div class="muted" style="font-size:12.5px;margin-top:10px;line-height:1.7">'+
+        'הקישור מוצג <b>פעם אחת בלבד</b> — לפתוח אותו בטאבלט עצמו. רישום חדש מבטל את הקודם.<br>'+
+        'בטאבלט: להגדיר "מסך תמיד דולק" ומצב קיוסק של המכשיר (אנדרואיד: Screen pinning · iPad: Guided Access) — '+
+        'המערכת אינה יכולה למנוע כיבוי מסך בעצמה.'+
+      '</div>'+
+    '</div>';
+}
+async function b52LoadKioskStatus(){
+  var box = el('b52KState'); if(!box) return;
+  var r = null;
+  try{ r = await api('b52KioskStatus', {}); }catch(e){}
+  if(!r || !r.ok){ box.innerHTML = '<span style="color:var(--danger)">לא ניתן לקרוא את מצב הקיוסק</span>'; return; }
+  var html = r.registered
+    ? '<b style="color:var(--ok)">✓ טאבלט רשום</b> — הקיוסק פעיל.'
+    : '<b style="color:var(--amber)">אין טאבלט רשום</b> — הקיוסק לא יפעל עד לרישום.';
+  html += '<br>' + r.with_pin + ' מתוך ' + r.active + ' עובדים פעילים יכולים להחתים (יש להם מספר אישי).';
+  if(r.no_pin_total) html += '<br><span style="color:var(--amber)">בלי מספר אישי ('+r.no_pin_total+'): '+
+    esc(r.no_pin.join(', ')) + (r.no_pin_total > r.no_pin.length ? ' ...' : '') + '</span>';
+  if(r.dup_pins && r.dup_pins.length) html += '<br><span style="color:var(--danger)">⚠ מספר אישי משוכפל — '+
+    esc(r.dup_pins.join(' · ')) + '. עובדים אלה לא יוכלו להחתים עד לתיקון.</span>';
+  box.innerHTML = html;
+}
+async function b52RegisterKiosk(){
+  if(!confirm('להנפיק קישור חדש לטאבלט קיוסק? רישום קודם (אם קיים) יבוטל.')) return;
+  var r = await apiBusy('b52RegisterKiosk', {});
+  if(!r || !r.ok) return toast((r&&r.error)||'הרישום נכשל', true);
+  B52_LINK = location.origin + location.pathname + '?kiosk=1&kt=' + r.kiosk_token;
+  var box = el('b52KLink');
+  if(box) box.innerHTML = '<div class="card" style="background:#FFF7E6;border-color:var(--amber);margin-top:10px;padding:10px">'+
+    '<b>הקישור לטאבלט — מוצג פעם אחת בלבד:</b>'+
+    '<div style="word-break:break-all;direction:ltr;text-align:left;font-size:12px;margin:8px 0;background:#fff;padding:8px;border-radius:6px;border:1px solid var(--line)">'+esc(B52_LINK)+'</div>'+
+    '<button class="btn sm" onclick="b52CopyKioskLink()">העתקת הקישור</button></div>';
+  await b52LoadKioskStatus();
+  toast('טאבלט נרשם ✓');
+}
+function b52CopyKioskLink(){
+  if(!B52_LINK) return;
+  try{
+    navigator.clipboard.writeText(B52_LINK).then(function(){ toast('הקישור הועתק ✓'); },
+      function(){ toast('ההעתקה נכשלה — סמן והעתק ידנית', true); });
+  }catch(e){ toast('ההעתקה נכשלה — סמן והעתק ידנית', true); }
+}
+async function b52RevokeKiosk(){
+  if(!confirm('לבטל את רישום הטאבלט? הקיוסק יפסיק לפעול מיד.')) return;
+  var r = await apiBusy('b52RevokeKiosk', {});
+  if(!r || !r.ok) return toast((r&&r.error)||'הביטול נכשל', true);
+  B52_LINK = '';
+  var box = el('b52KLink'); if(box) box.innerHTML = '';
+  await b52LoadKioskStatus();
+  toast('רישום הטאבלט בוטל');
 }
 /* B46: פאנל תחזוקת מסמכים — מנהל בלבד */
 function b46FixPanelHtml(){
@@ -9529,6 +9617,170 @@ if(location.search.includes('portal=1')) window.addEventListener('load', functio
   if(new URLSearchParams(location.search).get('code')) portalLogin();
 });
 if(location.search.includes('shop=1')) window.addEventListener('load', showShop);
+
+/* ================= B52: מסך קיוסק — הקשר ריצה רביעי =================
+   ?kiosk=1 : אין סשן, אין DB, ואין שום נתון עסקי במכשיר. הזיהוי היחיד
+   הוא טוקן המכשיר שנשמר ב-localStorage, וההחתמה מחזירה שם, כיוון ושעה
+   בלבד. כל הקוד כאן עצמאי ואינו נוגע ב-DB / ROLE / TOKEN. */
+var KIOSK = { token:'', pin:'', busy:false, mode:'clock' };
+function kioskOn(){ return location.search.indexOf('kiosk=1') > -1; }
+
+// קריאת שרת ייעודית — לא עוברת דרך api()/apiRaw() שנשענות על TOKEN/PASS
+async function kioskApi(action, payload){
+  payload = payload || {};
+  payload.kiosk_token = KIOSK.token;
+  var res = await fetch(API_URL, { method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ user:'קיוסק', action:action, payload:payload })});
+  return res.json();
+}
+
+function kioskBoot(){
+  var kt = new URLSearchParams(location.search).get('kt');
+  if(kt){
+    try{ localStorage.setItem('mn_kiosk_token', kt); }catch(e){}
+    // ניקוי הטוקן מהכתובת — שלא יישאר בהיסטוריה ובסרגל הכתובות
+    try{ history.replaceState(null, '', location.pathname + '?kiosk=1'); }catch(e){}
+  }
+  try{ KIOSK.token = localStorage.getItem('mn_kiosk_token') || ''; }catch(e){ KIOSK.token = ''; }
+  var lg = el('login');
+  if(lg) lg.className = 'kioskmode';
+  if(el('app')) el('app').style.display = 'none';
+  if(!KIOSK.token){ kioskUnregistered(); return; }
+  kioskClockScreen();
+  setInterval(kioskTick, 1000);
+  setInterval(kioskAutoRefresh, 3600000);
+  document.addEventListener('keydown', kioskKeydown);
+}
+
+function kioskUnregistered(){
+  KIOSK.mode = 'none';
+  el('login').innerHTML = '<div class="kk">'+
+    '<div class="kklogo">MAPA<span>·</span>NOBLE</div>'+
+    '<div class="kkbig">הטאבלט אינו רשום</div>'+
+    '<div class="kksub">פנה למנהל</div>'+
+    '<div class="kknote">מנהל: מיתוג והגדרות ← טאבלט קיוסק ← רישום טאבלט קיוסק,<br>ולפתוח כאן את הקישור שמתקבל.</div>'+
+    '</div>';
+}
+
+/* שעון חי + תאריך. פורמט השעה זהה לזה שהשרת רושם בנוכחות (HH:MM). */
+function kioskNowParts(){
+  var d = new Date();
+  var two = function(n){ return ('0'+n).slice(-2); };
+  var time = two(d.getHours())+':'+two(d.getMinutes())+':'+two(d.getSeconds());
+  var greg = '';
+  try{ greg = d.toLocaleDateString('he-IL', {weekday:'long', day:'numeric', month:'long', year:'numeric'}); }
+  catch(e){ greg = ymdLocal(d); }
+  var heb = '';
+  try{ heb = d.toLocaleDateString('he-IL-u-ca-hebrew', {day:'numeric', month:'long', year:'numeric'}); }catch(e){}
+  return { time:time, date: greg + (heb ? ' · ' + heb : '') };
+}
+function kioskTick(){
+  var t = el('kkTime'); if(!t) return;   // מסך משוב/לא-רשום — אין מה לעדכן
+  var np = kioskNowParts();
+  t.textContent = np.time;
+  var d = el('kkDate'); if(d) d.textContent = np.date;
+}
+
+function kioskClockScreen(){
+  KIOSK.mode = 'clock'; KIOSK.pin = ''; KIOSK.busy = false;
+  var np = kioskNowParts();
+  var keys = ['1','2','3','4','5','6','7','8','9'];
+  el('login').innerHTML = '<div class="kk">'+
+    '<div class="kklogo">MAPA<span>·</span>NOBLE</div>'+
+    '<div class="kktime" id="kkTime">'+esc(np.time)+'</div>'+
+    '<div class="kkdate" id="kkDate">'+esc(np.date)+'</div>'+
+    '<div class="kkhint">הקש את המספר האישי שלך</div>'+
+    '<div class="kkdots" id="kkDots"></div>'+
+    '<div class="kkpad" id="kkPad">'+
+      keys.map(function(k){ return '<button type="button" onclick="kioskKey(\''+k+'\')">'+k+'</button>'; }).join('')+
+      '<button type="button" class="kkclr" onclick="kioskClear()">ניקוי</button>'+
+      '<button type="button" onclick="kioskKey(\'0\')">0</button>'+
+      '<button type="button" class="kkok" onclick="kioskSubmit()">אישור</button>'+
+    '</div>'+
+    '<div class="kkmsg" id="kkMsg"></div>'+
+    '</div>';
+}
+
+function kioskDots(){
+  var e = el('kkDots'); if(!e) return;
+  e.textContent = KIOSK.pin.replace(/./g, '●');
+}
+function kioskKey(d){
+  if(KIOSK.busy || KIOSK.mode !== 'clock') return;
+  if(KIOSK.pin.length >= 12) return;
+  KIOSK.pin += d; kioskDots();
+}
+function kioskClear(){
+  if(KIOSK.busy || KIOSK.mode !== 'clock') return;
+  KIOSK.pin = ''; kioskDots();
+  var m = el('kkMsg'); if(m) m.textContent = '';
+}
+/* מקלדת ספרות פיזית מחוברת לטאבלט — אותה זרימה בדיוק */
+function kioskKeydown(e){
+  if(KIOSK.mode !== 'clock' || KIOSK.busy) return;
+  if(e.key >= '0' && e.key <= '9' && e.key.length === 1) return kioskKey(e.key);
+  if(e.key === 'Enter') return kioskSubmit();
+  if(e.key === 'Backspace'){ KIOSK.pin = KIOSK.pin.slice(0,-1); kioskDots(); }
+  if(e.key === 'Escape') return kioskClear();
+}
+
+function kioskSay(txt, color){
+  var m = el('kkMsg'); if(!m) return;
+  m.textContent = txt; m.style.color = color || 'var(--sb-tx)';
+}
+/* שחרור המסך אחרי הודעת שגיאה — משאיר את המשתמש במסך השעון */
+function kioskRelease(){
+  KIOSK.busy = false; KIOSK.pin = ''; kioskDots();
+  setTimeout(function(){ if(KIOSK.mode==='clock' && !KIOSK.busy) kioskSay(''); }, 2500);
+}
+
+async function kioskSubmit(){
+  if(KIOSK.busy || KIOSK.mode !== 'clock') return;
+  if(!KIOSK.pin) return;                 // אין מה לשלוח — לא מציקים בהודעה
+  KIOSK.busy = true;
+  kioskSay('רגע...');
+  var pin = KIOSK.pin;
+  KIOSK.pin = ''; kioskDots();
+  var r = null;
+  try{ r = await kioskApi('b52KioskClock', { pin: pin }); }catch(e){ r = null; }
+  if(!r){ kioskSay('אין תקשורת — נסה שוב', 'var(--danger)'); kioskRelease(); return; }
+  if(r.kiosk_unregistered){
+    try{ localStorage.removeItem('mn_kiosk_token'); }catch(e){}
+    KIOSK.token = ''; KIOSK.busy = false; kioskUnregistered(); return;
+  }
+  if(!r.ok){ kioskSay(r.error || 'מספר אישי שגוי', 'var(--danger)'); kioskRelease(); return; }
+  kioskFeedback(r);
+}
+
+/* מסך משוב — 5 שניות וחזרה למסך השעון. גם מנעול ה-UI מפני הקשה כפולה. */
+function kioskFeedback(r){
+  KIOSK.mode = 'msg'; KIOSK.busy = true;
+  var isIn = r.direction === 'in';
+  var col = isIn ? 'var(--ok)' : '#4EA8DE';
+  el('login').innerHTML = '<div class="kk">'+
+    '<div class="kklogo">MAPA<span>·</span>NOBLE</div>'+
+    '<div class="kkbig" style="color:'+col+'">שלום '+esc(r.name)+' ✓</div>'+
+    '<div class="kksub">'+(isIn?'נרשמה כניסה':'נרשמה יציאה')+' '+esc(r.time||'')+'</div>'+
+    '<div class="kknote">חוזר למסך השעון...</div>'+
+    '</div>';
+  setTimeout(function(){ if(KIOSK.mode==='msg') kioskClockScreen(); }, 5000);
+}
+
+/* רענון עצמי לטאבלט שדולק שבועות: פעם בשעה, רק כשהמסך במנוחה.
+   checkVersion משמשת כאן כבדיקת קישוריות — רענון בלי רשת היה משאיר
+   את הטאבלט על שגיאת דפדפן עד שמישהו יגלה. */
+async function kioskAutoRefresh(){
+  if(KIOSK.busy || KIOSK.pin || KIOSK.mode !== 'clock') return;
+  if(!KIOSK.token || (navigator.onLine === false)) return;
+  try{
+    var r = await kioskApi('checkVersion', {});
+    if(!r || !r.ok) return;
+  }catch(e){ return; }
+  location.reload();
+}
+
+if(kioskOn()) window.addEventListener('load', kioskBoot);
 
 /* ================= מחסנים ================= */
 function rWarehouses(){
