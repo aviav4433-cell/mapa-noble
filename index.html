@@ -497,7 +497,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <button onclick="doLogin()">כניסה</button>
     <button style="background:none;color:var(--teal);margin-top:10px;font-size:14px;text-decoration:underline" onclick="showPortalLogin()">כניסת לקוחות (פורטל הזמנות)</button>
     <div id="loginErr"></div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.53-B56 · 29.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.54-B57 · 29.07.2026</div>
   </div>
 </div>
 
@@ -6452,6 +6452,7 @@ function auditShell(){
     '</div>'+
     b4NotificationsWidget()+
     b51ToolsCard()+
+    b57Card()+
     '<div id="au_box">'+auditTableHtml()+'</div>';
 }
 function auditTableHtml(){
@@ -6538,6 +6539,216 @@ function b51StatsHtml(){
         '<td>'+b51Kb(x.full_bytes)+'</td><td>'+b51Kb(x.sent_bytes)+'</td></tr>';
     }).join('')+'</table>'+
     '<div class="muted" style="font-size:11.5px;margin-top:6px">15 הטבלאות הכבדות. "לא נשלח" = הגיליון כלל אינו נקרא ברענון.</div></div>';
+}
+
+/* ============================================================================
+   B57 (PERF-01) — אבחון האיטיות. מדידה בלבד; האצווה הזו אינה מתקנת דבר.
+   ----------------------------------------------------------------------------
+   הכל נמדד בפועל ומוצג על המסך (כלל R1) — אין ייצוא, ואין שאלה לאבי על נתונים.
+   שלושת השלבים שנמדדים בנפרד:
+     שליפה  — כמה זמן השרת קורא את הגיליונות ובונה את המטען (b57PerfProbe).
+     העברה  — זמן הלוך-ושוב מהדפדפן פחות זמן השרת, מול "רצפת רשת" של checkVersion.
+     רינדור — כמה זמן לוקח לצייר את המסך מהנתונים שכבר בזיכרון.
+   ============================================================================ */
+var B57 = null;
+
+function b57Card(){
+  if(ROLE!=='מנהל') return '';
+  return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">'+
+    '<h3 class="grow">אבחון ביצועים (B57 · PERF-01)</h3></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">מדידה בלבד — האצווה הזו אינה מתקנת דבר. '+
+    'האבחון קורא את כל הגיליונות ומושך את הנתונים פעמיים; הוא עשוי לקחת עשרות שניות. '+
+    'מומלץ להריץ בשעת עבודה רגילה, כדי שמוני המטמון ישקפו שימוש אמיתי.</div>'+
+    '<div class="row" style="gap:6px;flex-wrap:wrap">'+
+    '<button class="btn ghost sm" onclick="b57Run()">⏱ הרץ אבחון מלא</button>'+
+    '<button class="btn ghost sm" onclick="b57Sweep()">🖼 מדוד רינדור לכל מסך</button>'+
+    '<button class="btn ghost sm" onclick="b57ResetCounters()">↺ אפס מוני מטמון</button>'+
+    '</div>'+
+    '<div id="b57Out">'+b57OutHtml()+'</div></div>';
+}
+function b57Paint(){ var b = el('b57Out'); if(b) b.innerHTML = b57OutHtml(); }
+function b57Ms(n){ n = Number(n)||0; return n>=1000 ? (Math.round(n/100)/10)+' שנ׳' : Math.round(n)+' מ״ש'; }
+function b57Pct(a,b){ var t=Number(a)+Number(b); return t? Math.round(Number(a)/t*1000)/10 : 0; }
+
+/* fetch גולמי ומתוזמן — נדרש כדי למדוד בייטים בפועל ולהפריד parse מ-round trip.
+   מחקה בדיוק את apiRaw (אותו גוף בקשה, אותו טוקן) ואינו נוגע בזרימה הרגילה. */
+async function b57RawTimed(action, payload){
+  var body = { user: USER, action: action, payload: payload || {} };
+  if(TOKEN) body.payload.token = TOKEN; else body.password = PASS;
+  var t0 = performance.now();
+  var res = await fetch(API_URL, { method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(body) });
+  var txt = await res.text();
+  var t1 = performance.now();
+  var obj = null;
+  var t2 = performance.now();
+  try{ obj = JSON.parse(txt); }catch(e){ obj = null; }
+  var t3 = performance.now();
+  return { ok: !!(obj && obj.ok), obj: obj, bytes: txt.length,
+           round_ms: Math.round(t1-t0), parse_ms: Math.round((t3-t2)*10)/10 };
+}
+
+async function b57Run(){
+  B57 = { phase:'running', step:'מודד רצפת רשת (checkVersion ×3)...' , sweep:(B57&&B57.sweep)||null };
+  b57Paint();
+  try{
+    var floor = [];
+    for(var i=0;i<3;i++){ var f = await b57RawTimed('checkVersion', {}); floor.push(f.round_ms); }
+    floor.sort(function(a,b){ return a-b; });
+
+    B57.step = 'מושך getAll — קריאה ראשונה...'; b57Paint();
+    var g1 = await b57RawTimed('getAll', {});
+    B57.step = 'מושך getAll — קריאה שנייה (מבחן המטמון החי)...'; b57Paint();
+    var g2 = await b57RawTimed('getAll', {});
+
+    if(!g1.ok || !g2.ok){
+      B57 = { phase:'error', error:'משיכת getAll נכשלה במהלך המדידה — ייתכן שהסשן פג. התחבר מחדש ונסה שוב.' };
+      b57Paint(); return;
+    }
+
+    B57.step = 'מודד רינדור...'; b57Paint();
+    var renderMs = null;
+    if(g2.obj && g2.obj.db){
+      DB = g2.obj.db;                       // אותם נתונים בדיוק — אין שינוי מצב
+      var rt = performance.now();
+      render();                             // מסך היומן נבנה מחדש מהמצב, כולל הכרטיס הזה
+      renderMs = Math.round(performance.now()-rt);
+    }
+
+    B57.step = 'מריץ אבחון שרת...'; b57Paint();
+    var pr = await b57RawTimed('b57PerfProbe', {});
+
+    B57 = {
+      phase:'done',
+      client: { floor_ms: floor[0], floor_all: floor,
+                g1: { ms:g1.round_ms, bytes:g1.bytes, parse_ms:g1.parse_ms },
+                g2: { ms:g2.round_ms, bytes:g2.bytes, parse_ms:g2.parse_ms },
+                render_ms: renderMs, render_view: VIEW },
+      server: pr.ok ? pr.obj : null,
+      probe_ms: pr.round_ms,
+      error: pr.ok ? '' : ((pr.obj && pr.obj.error) || 'אבחון השרת נכשל'),
+      sweep: (B57 && B57.sweep) || null
+    };
+    b57Paint();
+  }catch(e){
+    B57 = { phase:'error', error:'שגיאת תקשורת במהלך המדידה' };
+    b57Paint();
+  }
+}
+
+/* רינדור לכל מסך מותר — מודד את הזמן הסינכרוני של render() בלבד.
+   מסכים שטוענים נתונים מהשרת (יומן, אישורים) יציגו את זמן הציור בלבד. */
+async function b57Sweep(){
+  if(!DB){ toast('אין נתונים בזיכרון — הרץ קודם אבחון מלא', true); return; }
+  var keep = VIEW, out = [], views = allowedViews();
+  for(var i=0;i<views.length;i++){
+    var v = views[i][0], t = performance.now(), err = '';
+    try{ VIEW = v; render(); }
+    catch(e){ err = String(e && e.message ? e.message : e).substring(0,90); }
+    out.push({ view:v, label:views[i][1], ms:Math.round(performance.now()-t), err:err });
+  }
+  out.sort(function(a,b){ return b.ms - a.ms; });
+  B57 = B57 || { phase:'done' };
+  B57.sweep = out;
+  VIEW = keep;
+  try{ render(); }catch(e){}
+  b57Paint();
+}
+
+async function b57ResetCounters(){
+  var r = await api('b57PerfProbe', { reset:1 });
+  if(r && r.ok){ toast('מוני המטמון אופסו — חלון מדידה חדש התחיל'); }
+  else toast((r && r.error) || 'האיפוס נכשל', true);
+}
+
+function b57OutHtml(){
+  var s = B57;
+  if(!s) return '';
+  if(s.phase==='running') return '<div class="card empty" style="margin-top:8px">'+esc(s.step||'מודד...')+'</div>';
+  if(s.phase==='error') return '<div class="card empty" style="margin-top:8px;color:var(--danger)">'+esc(s.error)+'</div>';
+
+  var h = '';
+  var c = s.client || {}, sv = s.server;
+
+  /* ---- א. לאן הולך הזמן ---- */
+  if(c.g1){
+    var srvMs = sv && sv.stage ? sv.stage.getall_server_ms : null;
+    var net1 = (srvMs!=null) ? Math.max(0, c.g1.ms - srvMs) : null;
+    h += '<div class="card" style="margin-top:8px"><b>לאן הולך הזמן — getAll אחד</b>'+
+      '<table style="margin-top:6px"><tr><th>שלב</th><th>זמן</th><th>הערה</th></tr>'+
+      (sv&&sv.stage? (
+        '<tr><td>שליפה — קריאת הגיליונות</td><td><b>'+b57Ms(sv.stage.read_payload_ms)+'</b></td><td class="muted">'+sv.weight.tables_read+' טבלאות נקראות מתוך '+sv.weight.tables_total+'</td></tr>'+
+        '<tr><td>שליפה — בניית המטען</td><td>'+b57Ms(sv.stage.build_ms)+'</td><td class="muted">קיצוץ SLIM_POLICY + טקסטים ארוכים</td></tr>'+
+        '<tr><td>שליפה — סריאליזציה</td><td>'+b57Ms(sv.stage.ser_ms)+'</td><td class="muted">JSON.stringify</td></tr>'
+      ) : '')+
+      '<tr><td>העברה — רשת</td><td>'+(net1!=null? b57Ms(net1) : '—')+'</td><td class="muted">הלוך-ושוב '+b57Ms(c.g1.ms)+' פחות זמן השרת · רצפת רשת מדודה '+b57Ms(c.floor_ms)+'</td></tr>'+
+      '<tr><td>העברה — פענוח בדפדפן</td><td>'+b57Ms(c.g1.parse_ms)+'</td><td class="muted">JSON.parse על '+b51Kb(c.g1.bytes)+'</td></tr>'+
+      '<tr><td>רינדור</td><td>'+(c.render_ms!=null? b57Ms(c.render_ms):'—')+'</td><td class="muted">מסך «'+esc(c.render_view||'')+'» — לפירוט לכל מסך: הכפתור «מדוד רינדור לכל מסך»</td></tr>'+
+      '</table>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:6px">'+
+      'קריאה ראשונה: '+b57Ms(c.g1.ms)+' · '+b51Kb(c.g1.bytes)+' · '+
+      'קריאה שנייה מיד אחריה: <b>'+b57Ms(c.g2.ms)+'</b> · '+b51Kb(c.g2.bytes)+'. '+
+      'שתי הקריאות נעשו באותו data_version — אם השנייה אינה מהירה משמעותית, המטמון לא שירת אותה.'+
+      '</div></div>';
+  }
+
+  if(s.error) h += '<div class="card empty" style="margin-top:8px;color:var(--danger)">אבחון השרת: '+esc(s.error)+'</div>';
+  if(!sv) return h || '<div class="card empty" style="margin-top:8px">אין נתוני מדידה</div>';
+
+  /* ---- ב. עובדות המטמון ---- */
+  var k = sv.cache, w = sv.writes;
+  var fitLine = k.fits_limit
+    ? '<span style="color:var(--teal);font-weight:600">המטען נכנס למטמון</span> — cache.put הצליח ואוחזר בהצלחה.'
+    : '<span style="color:var(--danger);font-weight:700">המטען אינו נכנס למטמון כלל</span> — cache.put על '+b51Kb(sv.weight.sent_bytes)+' נכשל מול מגבלת CacheService (‎'+b51Kb(k.limit_hint)+' לערך יחיד). כלומר מטמון B12 לא מאחסן דבר, וכל getAll מחושב מאפס.'+
+      (k.put_error? '<div class="muted" style="font-size:11px;margin-top:3px">'+esc(k.put_error)+'</div>' : '');
+
+  h += '<div class="card" style="margin-top:8px"><b>מטמון B12 — מה קורה בפועל</b>'+
+    '<div style="font-size:12.5px;margin:6px 0">'+fitLine+'</div>'+
+    '<table><tr><th>מדד</th><th>ערך</th></tr>'+
+    '<tr><td>שיעור פגיעות מדוד (hit rate)</td><td><b>'+(k.hit_rate==null? 'טרם נאסף' : k.hit_rate+'%')+'</b> · '+k.hits+' פגיעות · '+k.misses+' החטאות'+(k.since? ' · מאז '+esc(k.since):'')+'</td></tr>'+
+    '<tr><td>כישלונות אחסון (put)</td><td>'+k.put_failures+'</td></tr>'+
+    '<tr><td>מפתח המטמון הנוכחי</td><td class="muted" style="font-size:11.5px">'+esc(k.key)+' · '+(k.live_present? 'קיים ('+b51Kb(k.live_bytes)+')' : 'לא קיים')+'</td></tr>'+
+    '<tr><td>TTL שנקבע ב-B12</td><td>'+k.ttl_s+' שניות</td></tr>'+
+    '</table>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:6px">המונים נאספים ב-ScriptCache ואינם אטומיים — תחת מקביליות ייתכן תת-ספירה קלה. היחס אמין, המספר המוחלט הוא רצפה.</div>'+
+    '</div>';
+
+  /* ---- ג. מקצב דריסת המטמון ---- */
+  if(w && w.ok){
+    h += '<div class="card" style="margin-top:8px"><b>מקצב דריסת המטמון</b>'+
+      '<div class="muted" style="font-size:12px;margin:2px 0 6px">כל פעולת כתיבה מוצלחת קוראת ל-bumpDataVersion ובאותה נשימה כותבת שורה ל-audit_log. לכן הפערים בין שורות היומן הם בדיוק אורך החיים של המטמון. נדגמו '+w.rows.toLocaleString('he-IL')+' כתיבות · '+esc(w.from)+' – '+esc(w.to)+'.</div>'+
+      '<table><tr><th>מדד</th><th>ערך</th></tr>'+
+      '<tr><td>כתיבות לשעה (ממוצע על החלון)</td><td>'+w.per_hour+'</td></tr>'+
+      '<tr><td>חציון הפער בין כתיבות</td><td><b>'+w.median_gap_s+' שנ׳</b></td></tr>'+
+      '<tr><td>רבעון תחתון (25%)</td><td>'+w.p25_gap_s+' שנ׳</td></tr>'+
+      '<tr><td>פערים קצרים מ-TTL ('+w.ttl_s+' שנ׳)</td><td><b>'+w.pct_under_ttl+'%</b> — כלומר כך הרבה חלונות מטמון נדרסים לפני שפג תוקפם</td></tr>'+
+      '<tr><td>פערים קצרים מזמן בניית המטען ('+w.build_s+' שנ׳)</td><td><b>'+w.pct_under_build+'%</b> — כתיבה שהגיעה מהר יותר משהמטמון הספיק להיבנות</td></tr>'+
+      '</table></div>';
+  }
+
+  /* ---- ד. משקל וזמן לכל טבלה ---- */
+  var top = (sv.tables||[]).filter(function(x){ return x.bytes>0 || x.read_ms>0; }).slice(0,20);
+  h += '<div class="card" style="margin-top:8px"><b>משקל וזמן קריאה לכל טבלה</b>'+
+    '<div class="muted" style="font-size:12px;margin:2px 0 6px">מטען נשלח: <b>'+b51Kb(sv.weight.sent_bytes)+'</b> · כל הגיליונות: '+b51Kb(sv.weight.full_bytes)+' · לא נשלח (drop): '+b51Kb(sv.weight.dropped_bytes)+'. קריאת כל הגיליונות באבחון: '+b57Ms(sv.stage.read_all_ms)+'.</div>'+
+    '<table><tr><th>טבלה</th><th>מדיניות</th><th>שורות</th><th>משקל</th><th>זמן קריאה</th></tr>'+
+    top.map(function(x){
+      return '<tr><td>'+esc(x.table)+'</td>'+
+        '<td'+(x.in_payload? '' : ' style="color:var(--teal);font-weight:600"')+'>'+esc(x.policy)+'</td>'+
+        '<td>'+x.rows.toLocaleString('he-IL')+'</td><td>'+b51Kb(x.bytes)+'</td><td>'+b57Ms(x.read_ms)+'</td></tr>';
+    }).join('')+'</table>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:6px">20 הכבדות. «לא נשלח» = הגיליון אינו נקרא ברענון רגיל (נקרא כאן רק לצורך המדידה).</div></div>';
+
+  /* ---- ה. רינדור לכל מסך ---- */
+  if(s.sweep && s.sweep.length){
+    h += '<div class="card" style="margin-top:8px"><b>זמן רינדור לכל מסך</b>'+
+      '<table style="margin-top:6px"><tr><th>מסך</th><th>זמן</th><th></th></tr>'+
+      s.sweep.map(function(x){
+        return '<tr><td>'+esc(x.label)+'</td><td>'+b57Ms(x.ms)+'</td><td class="muted" style="font-size:11px">'+esc(x.err||'')+'</td></tr>';
+      }).join('')+'</table>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:6px">זמן הציור הסינכרוני בלבד, על הנתונים שכבר בזיכרון. מסכים שמושכים נתונים משלימים מהשרת אינם כוללים כאן את זמן המשיכה.</div></div>';
+  }
+
+  return h;
 }
 
 /* ניקוי: תמיד תצוגה מקדימה קודם (כלל R1), ורק אז ביצוע. אידמפוטנטי. */
