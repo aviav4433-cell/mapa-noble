@@ -505,7 +505,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.55-B58 · 29.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.56-B58a · 30.07.2026</div>
   </div>
 </div>
 
@@ -6655,13 +6655,22 @@ function b58OutHtml(){
     rows.push(['שיפור', 'פי '+(Math.round(d.readtable_ms/Math.max(d.batch_ms,1)*10)/10)]);
   }
   var bad = (d.mismatched||[]).map(function(x){
-    return '<tr><td>'+esc(x.table)+'</td><td>'+x.fast_rows+'</td><td>'+x.slow_rows+'</td></tr>';
+    var head = '<tr><td><b>'+esc(x.table)+'</b></td><td>'+x.fast_rows+'</td><td>'+x.slow_rows+'</td></tr>';
+    /* B58a: התא המדויק שנבדל — עמודה, שני הערכים ושני הטיפוסים.
+       בלי זה "לא זהה" הוא דיווח בלי אבחנה, ואי אפשר לתקן לפיו. */
+    var cells = (x.cells||[]).map(function(c){
+      return '<tr><td colspan="3" style="font-size:11.5px;color:var(--muted);padding-right:18px">'+
+        'שורה '+c.row+' · עמודה <b>'+esc(c.col)+'</b> — מהיר: <code>'+esc(c.fast)+'</code> ('+esc(c.fast_type)+')'+
+        ' · רגיל: <code>'+esc(c.slow)+'</code> ('+esc(c.slow_type)+')</td></tr>';
+    }).join('');
+    return head + cells;
   }).join('');
   return '<div class="card" style="margin-top:8px">'+
     '<div style="font-weight:600;color:'+(okAll?'var(--teal)':'var(--danger)')+';margin-bottom:6px">'+esc(d.note||'')+'</div>'+
     '<table>'+rows.map(function(r){ return '<tr><td>'+esc(r[0])+'</td><td><b>'+esc(r[1])+'</b></td></tr>'; }).join('')+'</table>'+
     (bad ? '<div style="margin-top:8px;font-weight:600;color:var(--danger)">טבלאות שאינן זהות</div>'+
-      '<table><tr><th>טבלה</th><th>מהיר</th><th>רגיל</th></tr>'+bad+'</table>' : '')+
+      '<table><tr><th>טבלה</th><th>שורות מהיר</th><th>שורות רגיל</th></tr>'+bad+'</table>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:6px">המסלול המהיר כבוי. המערכת עובדת במסלול הרגיל — אין סיכון לנתונים.</div>' : '')+
     (d.last_error ? '<div class="muted" style="font-size:11.5px;margin-top:6px">שגיאה אחרונה: '+esc(d.last_error)+'</div>' : '')+
     '</div>';
 }
