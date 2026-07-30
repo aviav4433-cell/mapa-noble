@@ -1276,8 +1276,10 @@ SPECS.push({
    · מ-1100px ומעלה מתווספת **רצועת צד** (#rail) עם 2–3 קטגוריות שאבי
      בוחר בהגדרות (`nav_rail`). היא **מסלול מהיר בלבד** — אין לה בלעדיות
      על שום מסך ואי אפשר להסתיר מסך דרכה.
-   · ברצועה נשמר דפוס B62 כלשונו: פתוחה אם נעוצה או אם המסך הנוכחי בתוכה.
-     ברירת המחדל של הנעיצה = הקטגוריות שברצועה, כלומר כולן פתוחות.
+   · ⚠ B63a — ברצועה **אין קיפול ואין נעיצה**. כותרת הקטגוריה היא תווית
+     ולא כפתור, וכל המסכים גלויים תמיד. מנגנון הנעיצה של B62 הוסר מהקוד
+     בהוראת אבי: הוא נבנה כדי להכניס 29 מסכים ל-596px, וברצועה של 2–3
+     קטגוריות אין לו תפקיד.
    · מתחת ל-900px — אקורדיון B23, לא נגוע. נבדק ב-t02.
 
    ⚠ מה שאי אפשר לבדוק כאן: שהתפריט העליון והרצועה **באמת נכנסים** למסך.
@@ -1292,7 +1294,6 @@ SPECS.push({
              'navToggle', 'NAV_DD', 'b63RailGroups', 'b63RailPanelHtml', 'b63RailToggle',
              'NAV_RAIL_DEFAULT', 'NAV_RAIL_MAX',
              'allowedViews', 'NAV_GROUPS', 'NAV_QUICK_MAX', 'NAV_QUICK_LABEL_MAX',
-             'b62NavPins', 'b62NavPinsSave', 'b62NavPinned', 'b62NavPin', 'B62_PINS_KEY',
              'b62QuickOrderHtml', 'b62QMove', 'b62QDown', 'b62QCommit',
              'b53QuickToggle', 'b53QuickNavPanelHtml',
              'moreMenu', 'toggleMore', 'closeMore', 'b62OrderActions',
@@ -1409,114 +1410,76 @@ SPECS.push({
       t.has(w.document.getElementById('nav').innerHTML, 'dtab', 'הנהג איבד את סרגל הטאבים');
     },
 
-    'ברירת המחדל: כל קטגוריות הרצועה פתוחות': (t, { w, srv, H }) => {
+    '⛔ כל קטגוריות הרצועה פתוחות תמיד': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
       H.login(w, 'מנהל', srv);
-      w.localStorage.removeItem(w.B62_PINS_KEY);
-      w.B62_PINS = null;
       w.go('dash');
-      const grps = w.document.getElementById('rail').querySelectorAll('.ngrp.side');
+      const rail = w.document.getElementById('rail');
+      const grps = rail.querySelectorAll('.ngrp.side');
       t.ok(grps.length >= 2, 'הרצועה ריקה');
-      grps.forEach(g => t.ok(g.classList.contains('open'),
-        'קטגוריה ברצועה נפתחה מכווצת — מסלול מהיר לא יכול לדרוש לחיצה נוספת'));
+      grps.forEach(g => {
+        const items = g.querySelectorAll('.nitem');
+        t.ok(items.length >= 2, 'קטגוריה ברצועה בלי מסכים — הפריטים לא רונדרו');
+      });
+      /* כל מסך של כל קטגוריה נבחרת חייב להיות גלוי, בלי לחיצה נוספת */
+      ['orders','customers','deliveries','returns','fleet','floor','laundry','assets',
+       'items','warehouses','shelves','scan','barcodes'].forEach(k => {
+        t.has(rail.innerHTML, "go('" + k + "')",
+          'המסך ' + k + ' אינו גלוי ברצועה — היא חייבת להיות פתוחה במלואה');
+      });
     },
 
-    'הקטגוריה של המסך הנוכחי פתוחה אוטומטית': (t, { w, srv, H }) => {
+    '⛔ אין קיפול, אין נעיצה ואין אחסון מקומי (B63a)': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
       H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave([]);
-      w.go('laundry');                 // ייצור ומכבסה — ברצועה כברירת מחדל
-      const g = w.document.querySelector('#rail .ngrp.side[data-g="ייצור ומכבסה"]');
-      t.ok(!!g, 'הקטגוריה לא נמצאה ברצועה');
-      t.ok(g.classList.contains('open'), 'הקטגוריה של המסך הנוכחי אינה פתוחה');
-      t.ok(g.classList.contains('cur'), 'הקטגוריה הנוכחית אינה מסומנת');
+      w.go('dash');
+      const rail = w.document.getElementById('rail');
+      t.hasNot(rail.innerHTML, 'gpin', 'אייקון הסיכה חזר לרצועה');
+      t.hasNot(rail.innerHTML, 'gbody', 'הגוף המתקפל חזר לרצועה');
+      t.hasNot(rail.innerHTML, 'gcnt', 'מונה המסכים חזר — הוא נדרש רק כשקטגוריה מכווצת');
+      t.hasNot(rail.innerHTML, 'onclick="b62NavPin', 'מנגנון הנעיצה חזר');
+      const cap = rail.querySelector('.gcap');
+      t.ok(!!cap, 'כותרת הקטגוריה נעלמה');
+      t.eq(cap.tagName, 'DIV', 'כותרת הקטגוריה היא כפתור — היא חייבת להיות תווית לא-לחיצה');
     },
 
-    'קטגוריה שקופלה נשארת מכווצת': (t, { w, srv, H }) => {
+    '⛔ מנגנון הנעיצה הוסר מקוד המקור': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      ['b62NavPin', 'b62NavPins', 'b62NavPinned', 'B62_PINS_KEY', 'B62_PIN_SVG', 'mn_nav_pins']
+        .forEach(n => t.hasNot(src, n, 'מנגנון הנעיצה חזר לקוד: ' + n));
+      t.hasNot(H.indexSrc(), 'grid-template-rows',
+        'ההנפשה של הקיפול חזרה — אין לה תפקיד ברצועה פתוחה');
+    },
+
+    'הקטגוריה של המסך הנוכחי מסומנת': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
       H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave([]);
       w.go('laundry');
-      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
-      t.no(g.classList.contains('open'), 'קטגוריה שלא נעוצה ואינה נוכחית נשארה פתוחה');
-    },
-
-    'לחיצה על שורת הכותרת פותחת (R7 — אירוע DOM אמיתי)': (t, { w, srv, H }) => {
-      H.setWidth(w, 1422);
-      H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave([]);
-      w.go('dash');
-      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
-      t.no(g.classList.contains('open'), 'כבר פתוחה — הבדיקה לא בודקת כלום');
-      H.click(w, g.querySelector('.gcap'));
-      t.ok(g.classList.contains('open'), 'לחיצה על הכותרת לא פתחה');
-      t.ok(w.b62NavPinned('מלאי ומחסן'), 'המצב לא נשמר');
-    },
-
-    'לחיצה שנייה מקפלת': (t, { w, srv, H }) => {
-      H.setWidth(w, 1422);
-      H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave(['מלאי ומחסן']);
-      w.go('dash');
-      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
-      H.click(w, g.querySelector('.gcap'));
-      t.no(g.classList.contains('open'), 'הקטגוריה נשארה פתוחה');
-      t.no(w.b62NavPinned('מלאי ומחסן'), 'הקיפול לא נשמר');
-    },
-
-    '⛔ הקטגוריה הנוכחית נשארת פתוחה גם אחרי קיפול': (t, { w, srv, H }) => {
-      H.setWidth(w, 1422);
-      H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave(['ייצור ומכבסה']);
-      w.go('laundry');
-      const g = w.document.querySelector('#rail .ngrp.side[data-g="ייצור ומכבסה"]');
-      H.click(w, g.querySelector('.gcap'));
-      t.ok(g.classList.contains('open'), 'המסך שאתה נמצא בו נעלם מהרצועה — אסור');
-    },
-
-    'המצב נשמר ב-localStorage ושורד רינדור': (t, { w, srv, H }) => {
-      H.setWidth(w, 1422);
-      H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave(['מלאי ומחסן']);
-      w.B62_PINS = null;
-      t.ok(!!w.localStorage.getItem(w.B62_PINS_KEY), 'שום דבר לא נכתב — לא ישרוד רענון');
-      t.eq(w.b62NavPins().join(','), 'מלאי ומחסן', 'המצב לא נקרא חזרה');
-      w.go('dash');
-      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
-      t.ok(g.classList.contains('open'), 'המצב לא הוחל אחרי ניווט');
-      t.no(w.document.querySelector('#rail .ngrp.side[data-g="ארגון"]'), 'קטגוריה זרה נכנסה לרצועה');
-    },
-
-    'localStorage פגום אינו מפיל את הניווט': (t, { w, srv, H }) => {
-      H.setWidth(w, 1422);
-      H.login(w, 'מנהל', srv);
-      w.localStorage.setItem(w.B62_PINS_KEY, '{{לא JSON');
-      w.B62_PINS = null;
-      t.eq(w.b62NavPins().join(','), w.NAV_RAIL_DEFAULT, 'ערך פגום לא נפל לברירת המחדל');
-      w.render();
-      t.has(w.document.getElementById('nav').innerHTML, 'ghead', 'התפריט העליון לא נבנה');
-      w.localStorage.removeItem(w.B62_PINS_KEY);
-      w.B62_PINS = null;
+      const on = w.document.querySelector('#rail .nitem.on');
+      t.ok(!!on, 'המסך הנוכחי אינו מסומן ברצועה');
+      t.eq(on.textContent.trim(), 'כביסה', 'סומן המסך הלא נכון');
     },
 
     'לחיצה על מסך ברצועה מנווטת (R7)': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
       H.login(w, 'מנהל', srv);
       w.go('dash');
-      const btns = w.document.querySelectorAll('#rail .ngrp.side[data-g="מכירות ומשלוחים"] .gbody .nitem');
+      const btns = w.document.querySelectorAll('#rail .ngrp.side[data-g="מכירות ומשלוחים"] .nitem');
       t.ok(btns.length >= 3, 'פריטי הקטגוריה חסרים מהרצועה');
       H.click(w, btns[0]);
       t.eq(w.VIEW, 'orders', 'לחיצה ברצועה לא ניווטה');
     },
 
-    'מונה המסכים מוצג — שום מידע לא נעלם': (t, { w, srv, H }) => {
+    'כל מסכי הקטגוריה גלויים — שום מידע לא נעלם': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
       H.login(w, 'מנהל', srv);
       w.go('dash');
-      const cnt = w.document.querySelector('#rail .ngrp.side[data-g="מכירות ומשלוחים"] .gcnt');
-      t.ok(!!cnt, 'מונה המסכים חסר');
-      t.eq(cnt.textContent, '5', 'המונה אינו תואם למספר המסכים');
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="מכירות ומשלוחים"]');
+      t.eq(g.querySelectorAll('.nitem').length, 5,
+        'לא כל חמשת המסכים של הקטגוריה גלויים ברצועה');
+      t.has(g.querySelector('.gcap').textContent, 'מכירות ומשלוחים', 'שם הקטגוריה חסר');
     },
+
 
     'תפקיד מצומצם — התפריט והרצועה מסוננים יחד': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
@@ -1769,12 +1732,12 @@ SPECS.push({
 
     /* ===== canary ===== */
 
-    'canary עודכן ל-B63 בשני המקומות': (t, { H }) => {
+    'canary עודכן ל-B63a בשני המקומות': (t, { H }) => {
       const s = H.indexSrc();
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.62-B63', 'ה-canary לא עודכן ל-B63');
+      t.eq(inJs, 'v4.63-B63a', 'ה-canary לא עודכן ל-B63a');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -1782,7 +1745,6 @@ SPECS.push({
       const names = w.b61Tests().map(x => x.n).join(' | ');
       ['שורת התפריט העליונה אינה גולשת (B63)',
        'רצועת הצד נכנסת לגובה החלון בלי גלילה',
-       'קיפול קטגוריות ברצועה נשמר ונקרא חזרה',
        'גרירת הקיצורים תעבוד במכשיר הזה (BLD-04)',
        'שורת הקיצורים העליונה אינה גולשת',
        'המסך הנוכחי אינו גולש לרוחב (ACT-05 · BLD-05)'
@@ -1799,15 +1761,17 @@ SPECS.push({
       t.eq(w.__fetches.length, 0, 'הבדיקה העצמית שולחת בקשות — היא חייבת להיות קריאה בלבד');
     },
 
-    'הבדיקה העצמית אינה משאירה זבל ב-localStorage': (t, { w, srv, H }) => {
+    'הבדיקה העצמית אינה שולחת בקשות ואינה נוגעת ברצועה': (t, { w, srv, H }) => {
       H.setWidth(w, 1422);
       H.login(w, 'מנהל', srv);
-      w.b62NavPinsSave(['ארגון']);
+      w.go('audit');
+      const before = w.document.getElementById('rail').innerHTML;
+      w.__fetches.length = 0;
       w.b61Run();
-      w.B62_PINS = null;
-      t.eq(w.b62NavPins().join(','), 'ארגון',
-        'הבדיקה העצמית דרסה את מצב הקיפול של המשתמש במקום להחזיר אותו');
+      t.eq(w.__fetches.length, 0, 'הבדיקה העצמית שולחת בקשות לשרת');
+      t.eq(w.document.getElementById('rail').innerHTML, before, 'הבדיקה העצמית שינתה את הרצועה');
     }
+
 
   }
 });
