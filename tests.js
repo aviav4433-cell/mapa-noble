@@ -1,0 +1,1970 @@
+#!/usr/bin/env node
+/* ============================================================================
+   MAPA-NOBLE — כל בדיקות הרגרסיה, בקובץ אחד
+   נוצר ב-B61 כתיקייה · אוחד לקובץ יחיד ב-B63 (31.07.2026) בהוראת אבי
+   ============================================================================
+
+   הרצה, משורש הריפו:
+       npm i jsdom          (בסשן בלבד — נזרק איתו)
+       node tests.js        כל הבדיקות
+       node tests.js t02    חלק אחד
+
+   ⛔ node_modules ו-package.json לעולם לא נכנסים לריפו.
+   ⛔ אבי אינו מריץ את זה. אף פעם. הריצה היא של הצ'אט, לפני כל מסירה.
+
+   ---------------------------------------------------------------------------
+   למה הקובץ הזה קיים
+   ---------------------------------------------------------------------------
+   עד B61 כל אצווה כתבה את הרגרסיה שלה מאפס בתוך הצ'אט ואיבדה אותה בסופו:
+   B56 כתב 74 · B58a כתב 97 · B59 כתב 85 · B60+B60a כתבו 74. 330 בדיקות אבדו,
+   וכל אצווה בדקה רק את עצמה. הקובץ הזה הוא הזיכרון. כל אצווה מוסיפה אליו.
+
+   ---------------------------------------------------------------------------
+   ⚠ הדבר החשוב ביותר כאן
+   ---------------------------------------------------------------------------
+   **בדיקה שעברה כאן אינה הוכחה שהמערכת עובדת אצל אבי.**
+   B60 עבר 60 בדיקות ב-jsdom ונכשל בייצור בלחיצה השנייה. הסביבה כאן היא
+   דפדפן מדומה: אין בה מחסנית היסטוריה אמיתית, אין מצלמה, אין הדפסה, אין
+   מגע, ואין את אזור הזמן של המכשיר.
+
+   לכן קיימות שתי שכבות, ורק שתיהן יחד הן אימות (R11):
+     שכבה 1 — הקובץ הזה:  לוגיקה · הרשאות · חישוב · מבנה · שומרי קוד מקור
+     שכבה 2 — כרטיס "בדיקה עצמית" בתוך המערכת (יומן פעולות ← הרץ):
+              היסטוריה · אחסון · מצלמה · הדפסה · מגע · אזור זמן · פריסה
+   שכבה 2 נבדקת כאן ב-t05.
+
+   ---------------------------------------------------------------------------
+   מה יש בפנים, לפי הסדר
+   ---------------------------------------------------------------------------
+     חלק 1  רתמה      טעינת הקוד החי · דפדפן מדומה · Apps Script מדומה · עוזרי DOM
+     חלק 2  מריץ      בדיקת תחביר · מניעת ריקבון · כלי טענה · סיכום
+     חלק 3  t01       שומרי קוד מקור — R4 · איסור history.back · API_URL · canary
+            t02       ניווט, איפוס מצב מסך והיסטוריה — T3 · T4 · B60a
+            t03       הרשאות חמשת התפקידים · עוזרי ליבה · מע"מ · תאריכים
+            t04       שרת: סכימה · ניתוב · READ_ONLY_ACTIONS · כסף · R6
+            t05       כרטיס הבדיקה העצמית עצמו
+            t06       ניווט: תפריט עליון · רצועת צד · קיצורים · סרגלי פעולות
+
+   ---------------------------------------------------------------------------
+   איך אצווה מוסיפה בדיקות
+   ---------------------------------------------------------------------------
+   מוסיפים לחלק הקיים המתאים, או SPECS.push({...}) חדש בסוף חלק 3.
+
+     SPECS.push({
+       file: 't07',
+       title: 'שם שמופיע בפלט',
+       needs: 'ui',                       // 'ui' (jsdom) · 'server' (vm) · 'src'
+       requires: ['go', 'allowedViews'],  // ⚠ ראה "מניעת ריקבון" למטה
+       tests: {
+         'תיאור הבדיקה בעברית': (t, { w, srv, H }) => {
+           H.login(w, 'מנהל', srv);
+           w.go('orders');
+           t.eq(w.VIEW, 'orders', 'הודעה שמסבירה מה נשבר');
+         }
+       }
+     });
+
+   כלי טענה: t.ok · t.no · t.eq · t.ne · t.has · t.hasNot · t.throws · t.fail
+   כל אחד מקבל הודעה אחרונה — **כתוב בה מה נשבר, לא מה ציפית.**
+   ב-env מקבלים: w (חלון מדומה) · srv (הקשר השרת) · H (הרתמה).
+
+   ---------------------------------------------------------------------------
+   מניעת ריקבון — requires
+   ---------------------------------------------------------------------------
+   בדיקה שמתייחסת לפונקציה שנמחקה מהקוד יכולה לעבור בשקט ולתת ביטחון שווא.
+   לכן כל חלק מצהיר ב-requires על הסמלים בקוד החי שהוא נשען עליהם. סמל
+   שנעלם ⇦ **החלק כולו נכשל ברעש**, עם שם הסמל.
+   זה כבר עבד: requires תפס ש-batchGet ו-buildPayroll אינם פונקציות גלובליות
+   בשרת (השמות האמיתיים: b58Prefetch, buildPayrollForMonth).
+
+   ---------------------------------------------------------------------------
+   ⚠ שלוש מלכודות מקובעות ברתמה
+   ---------------------------------------------------------------------------
+   1. חובה לנטרל setInterval/setTimeout לפני eval. בלי זה הריצה נתקעת לנצח —
+      ה-polling של B58 מתזמן את עצמו מחדש.
+   2. סריקת קוד מקור חייבת להסיר הערות קודם (H.stripComments). בקוד יש ארבעה
+      אזכורים של history.back/history.go — כולם בתוך הערות שמסבירות את האיסור.
+      סורק תמים נכשל שקרית.
+   3. jsdom אינו מממש matchMedia. בלי H.setWidth(w, px) הפונקציות navIsTop/
+      navIsSide נופלות ל-catch, navMode() הוא 'mob' לנצח, ואת התפריט העליון
+      ואת רצועת הצד אי אפשר לבדוק כלל.
+
+   ---------------------------------------------------------------------------
+   R7 — אירועי DOM אמיתיים
+   ---------------------------------------------------------------------------
+   ב-jsdom במצב outside-only מטפלי on* בתגית אינם מקומפלים. לכן:
+       H.click(w, elem)             מחבר את ה-onclick כמאזין ומדספאטץ' אירוע אמיתי
+       H.change(w, elem, 'ערך')     אותו דבר ל-change
+       H.popstate(w, { mn:1, v:'orders' })
+   ⛔ קריאה ישירה ל-handler אינה בדיקה קבילה.
+
+   ---------------------------------------------------------------------------
+   מה הקובץ הזה עדיין אינו מכסה — נאמר במפורש
+   ---------------------------------------------------------------------------
+   · נתונים אמיתיים. הבדיקות רצות על DB ריק שנגזר מ-TMAP. הן מוכיחות שהקוד
+     לא קורס ושהלוגיקה נכונה — לא שהנתונים בגיליון תקינים.
+   · גיליון אמיתי. אין Google Sheets; בדיקות השרת הן על הצהרות ולוגיקה טהורה.
+   · התנהגות דפדפן ופריסה בפועל. ← שכבה 2.
+   · מהירות בייצור. תקורת Apps Script נמדדה ב-PERF-02 ואינה נבדקת כאן.
+   ============================================================================ */
+
+
+/* ==================== חלק 1 — הרתמה ==================== */
+
+/* ============================================================
+   MAPA-NOBLE — רתמת הבדיקות המשותפת   (B61 · BLD-08)
+   ============================================================
+   הקובץ הזה הוא התשתית. הוא לא מכיל בדיקות — רק את מה שכל קובץ
+   בדיקות צריך: טעינת הקוד החי, דפדפן מדומה, Apps Script מדומה,
+   ועוזרים לאירועי DOM אמיתיים (R7).
+
+   ⚠ שני דברים שנשרפו בעבר ומקובעים כאן:
+   1. **חובה לנטרל setInterval/setTimeout לפני eval.** בלי זה הריצה
+      נתקעת לנצח — ה-polling של B58 ממשיך לתזמן את עצמו.
+   2. **סריקת קוד מקור חייבת להסיר הערות קודם.** בקוד יש שתי אזכורים
+      של history.back ושתיים של history.go — כולן בתוך הערות שמסבירות
+      את האיסור. סורק תמים היה נכשל שקרית.
+   ============================================================ */
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const ROOT = __dirname;   /* B63: הקובץ יושב בשורש הריפו, לא בתיקיית משנה */
+const INDEX = path.join(ROOT, 'index.html');
+const SERVER = path.join(ROOT, 'קוד שרת.txt');
+
+/* ---------- קריאת הקוד החי ---------- */
+function indexSrc() {
+  if (!fs.existsSync(INDEX)) throw new Error('index.html לא נמצא בשורש הריפו: ' + INDEX);
+  return fs.readFileSync(INDEX, 'utf8');
+}
+function serverSrc() {
+  if (!fs.existsSync(SERVER)) throw new Error('"קוד שרת.txt" לא נמצא בשורש הריפו: ' + SERVER);
+  return fs.readFileSync(SERVER, 'utf8');
+}
+
+/* בלוק ה-<script> הראשי — היחיד בקובץ שאינו מחרוזת הדפסה */
+function uiScript() {
+  const s = indexSrc();
+  const i = s.indexOf('<script>');
+  const j = s.lastIndexOf('</script>');
+  if (i < 0 || j < 0) throw new Error('לא נמצא בלוק <script> ב-index.html');
+  return s.slice(i + '<script>'.length, j);
+}
+
+/* הסרת הערות — חובה לפני כל סריקת קוד מקור.
+   מסירה /* ... *​/ ו-// ... , ומשאירה מחרוזות במקומן. */
+function stripComments(code) {
+  let out = '';
+  let i = 0;
+  const n = code.length;
+  let mode = 'code';   // code | line | block | sq | dq | tpl
+  while (i < n) {
+    const c = code[i], d = code[i + 1];
+    if (mode === 'code') {
+      if (c === '/' && d === '*') { mode = 'block'; i += 2; continue; }
+      if (c === '/' && d === '/') { mode = 'line'; i += 2; continue; }
+      if (c === "'") mode = 'sq';
+      else if (c === '"') mode = 'dq';
+      else if (c === '`') mode = 'tpl';
+      out += c; i++; continue;
+    }
+    if (mode === 'block') { if (c === '*' && d === '/') { mode = 'code'; i += 2; } else i++; continue; }
+    if (mode === 'line') { if (c === '\n') { mode = 'code'; out += '\n'; } i++; continue; }
+    // בתוך מחרוזת
+    if (c === '\\') { out += c + (d || ''); i += 2; continue; }
+    if ((mode === 'sq' && c === "'") || (mode === 'dq' && c === '"') || (mode === 'tpl' && c === '`')) mode = 'code';
+    out += c; i++;
+  }
+  return out;
+}
+
+/* ---------- Apps Script מדומה ---------- */
+function appsScriptStubs() {
+  const props = {};
+  const cache = {};
+  const mk = (name) => new Proxy(function () {}, {
+    get: (t, k) => (k === Symbol.toPrimitive || k === 'toString') ? () => name : mk(name + '.' + String(k)),
+    apply: () => mk(name + '()')
+  });
+  return {
+    SpreadsheetApp: mk('SpreadsheetApp'),
+    DriveApp: mk('DriveApp'),
+    Session: mk('Session'),
+    ScriptApp: mk('ScriptApp'),
+    UrlFetchApp: mk('UrlFetchApp'),
+    MailApp: mk('MailApp'),
+    HtmlService: mk('HtmlService'),
+    ContentService: mk('ContentService'),
+    Logger: { log: () => {} },
+    LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    CacheService: {
+      getScriptCache: () => ({
+        get: (k) => (k in cache ? cache[k] : null),
+        put: (k, v) => { cache[k] = v; },
+        remove: (k) => { delete cache[k]; },
+        removeAll: (a) => { (a || []).forEach(k => delete cache[k]); }
+      })
+    },
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (k) => (k in props ? props[k] : null),
+        setProperty: (k, v) => { props[k] = String(v); },
+        deleteProperty: (k) => { delete props[k]; },
+        getProperties: () => Object.assign({}, props)
+      })
+    },
+    Utilities: {
+      getUuid: () => 'uuid-' + Math.random().toString(36).slice(2),
+      formatDate: (d) => new Date(d).toISOString().slice(0, 10),
+      computeDigest: (alg, s) => Array.from(String(s)).map(c => c.charCodeAt(0) & 0xff),
+      base64Encode: (s) => Buffer.from(String(s)).toString('base64'),
+      base64Decode: (s) => Array.from(Buffer.from(String(s), 'base64')),
+      sleep: () => {},
+      DigestAlgorithm: { SHA_256: 'SHA_256' },
+      Charset: { UTF_8: 'UTF_8' }
+    }
+  };
+}
+
+/* טעינת קוד השרת לתוך הקשר מבודד */
+function loadServer() {
+  const ctx = Object.assign({ console, JSON, Math, Date, RegExp, Number, String, Boolean, Array, Object, isNaN, parseInt, parseFloat, encodeURIComponent, decodeURIComponent }, appsScriptStubs());
+  vm.createContext(ctx);
+  vm.runInContext(serverSrc(), ctx, { filename: 'קוד שרת.js' });
+  return ctx;
+}
+
+/* ---------- דפדפן מדומה ---------- */
+let JSDOM = null;
+function needJsdom() {
+  if (JSDOM) return JSDOM;
+  try { JSDOM = require('jsdom').JSDOM; }
+  catch (e) {
+    throw new Error('חסרה החבילה jsdom. התקן בסשן:  npm i jsdom   (node_modules לעולם לא נכנס לריפו)');
+  }
+  return JSDOM;
+}
+
+/* מסד נתונים ריק — נגזר מ-TMAP של השרת ולכן מתעדכן מעצמו כשמוסיפים טבלה.
+   אין כאן רשימה ידנית שאפשר לשכוח לעדכן. */
+function emptyDb(serverCtx) {
+  const db = {};
+  const tmap = serverCtx && serverCtx.TMAP;
+  if (!tmap) throw new Error('TMAP לא נמצא בקוד השרת — לא ניתן לבנות DB ריק');
+  Object.keys(tmap).forEach(t => { db[tmap[t]] = []; });
+  return db;
+}
+
+function loadUi(opts) {
+  opts = opts || {};
+  const JD = needJsdom();
+  const html = indexSrc();
+  /* jsdom רועש על יכולות שאינן ממומשות בו (canvas, print). זה בדיוק סוג
+     הפער שהכרטיס של B61 נועד לכסות בדפדפן האמיתי — כאן הוא מושתק כדי
+     שרעש לא יסתיר כשלון אמיתי. */
+  const { VirtualConsole } = require('jsdom');
+  const vc = new VirtualConsole();
+  vc.on('jsdomError', () => {});
+  const dom = new JD(html, {
+    runScripts: 'outside-only',
+    url: opts.url || 'https://aviav4433-cell.github.io/mapa-noble/',
+    pretendToBeVisual: false,
+    virtualConsole: vc
+  });
+  const w = dom.window;
+
+  /* אין רשת בבדיקות. כל קריאה לא צפויה נרשמת ונחשפת לבדיקה. */
+  w.__fetches = [];
+  w.fetch = async (url, o) => {
+    w.__fetches.push({ url, body: o && o.body });
+    return { ok: true, json: async () => ({ ok: true }), text: async () => '{"ok":true}' };
+  };
+  /* ⚠ חובה — בלי זה ה-polling של B58 תוקע את הריצה לנצח. */
+  w.__timers = 0;
+  w.setInterval = function () { w.__timers++; return 0; };
+  w.setTimeout = function () { w.__timers++; return 0; };
+  w.clearInterval = function () {};
+  w.clearTimeout = function () {};
+  w.scrollTo = function () {};
+  w.print = function () { w.__printed = (w.__printed || 0) + 1; };
+  w.open = function () { w.__opened = (w.__opened || 0) + 1; return { close: () => {}, document: { write: () => {}, close: () => {} } }; };
+  w.alert = function () {};
+  w.confirm = function () { return true; };
+
+  w.eval(uiScript());
+  return { dom, window: w };
+}
+
+/* כניסה מדומה — מעמידה את המערכת במצב "משתמש מחובר" בלי שום קריאת שרת.
+   מחקה בדיוק את מה ש-applyLogin + enterApp עושים לגבי המצב הגלובלי. */
+function login(w, role, serverCtx, over) {
+  over = over || {};
+  w.TOKEN = over.token || 'test-token';
+  w.USER = over.user || ('בודק ' + role);
+  w.ROLE = role;
+  w.CAN_EDIT = over.can_edit !== false;
+  w.USER_VIEWS = over.views || '';
+  w.IS_SUPER_ADMIN = over.is_super_admin === true;
+  w.DB = over.db || emptyDb(serverCtx);
+  w.VIEW = (role === 'נהג') ? 'deliveries' : 'dash';
+  const app = w.document.getElementById('app');
+  const lg = w.document.getElementById('login');
+  if (app) app.style.display = 'block';
+  if (lg) lg.style.display = 'none';
+  w.render();
+  return w;
+}
+
+/* ---------- B62: העמדת רוחב חלון ----------
+   jsdom אינו מממש window.matchMedia. בלי הסטאב הזה navIsTop/navIsSide
+   נופלים ל-catch ומחזירים false תמיד, כלומר navMode() הוא 'mob' לנצח
+   ואת סרגל הצד אי אפשר לבדוק בכלל. setWidth מעמיד רוחב אמיתי ומאפשר
+   לבדוק את שלושת מצבי הניווט.
+   ⚠ זה עדיין לא פריסה — אין ל-jsdom מנוע פריסה, ולכן גבהים ורוחבי
+   אלמנטים הם אפס. מדידת הגובה בפועל היא בשכבה 2 (b61Tests). */
+function setWidth(w, px) {
+  Object.defineProperty(w, 'innerWidth', { value: px, configurable: true, writable: true });
+  w.matchMedia = function (q) {
+    const mn = /min-width:\s*(\d+)px/.exec(q || '');
+    const mx = /max-width:\s*(\d+)px/.exec(q || '');
+    let matches = true;
+    if (mn) matches = matches && px >= Number(mn[1]);
+    if (mx) matches = matches && px <= Number(mx[1]);
+    if (!mn && !mx) matches = false;
+    return {
+      matches, media: q, onchange: null,
+      addListener() {}, removeListener() {},
+      addEventListener() {}, removeEventListener() {},
+      dispatchEvent() { return false; }
+    };
+  };
+  return w;
+}
+
+/* ---------- R7: אירועי DOM אמיתיים ----------
+   ב-jsdom במצב outside-only מטפלי on* בתגית אינם מקומפלים. wire() קורא את
+   מחרוזת ה-on* ומחבר אותה כמאזין אמיתי, ואז אפשר לדספאטץ' אירוע אמיתי.
+   ⚠ קריאה ישירה ל-handler אינה קבילה כבדיקה. */
+function wire(w, elem, evName) {
+  evName = evName || 'click';
+  const attr = elem.getAttribute('on' + evName);
+  if (!attr) return elem;
+  if (elem.__wired && elem.__wired[evName]) return elem;
+  elem.__wired = elem.__wired || {};
+  elem.__wired[evName] = true;
+  const fn = new w.Function('event', attr);
+  elem.addEventListener(evName, function (ev) { fn.call(this, ev); });
+  return elem;
+}
+function click(w, elem) {
+  wire(w, elem, 'click');
+  elem.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
+  return elem;
+}
+function change(w, elem, value) {
+  if (value !== undefined) elem.value = value;
+  wire(w, elem, 'change');
+  elem.dispatchEvent(new w.Event('change', { bubbles: true }));
+  return elem;
+}
+function popstate(w, state) {
+  w.dispatchEvent(new w.PopStateEvent('popstate', { state: state || null }));
+}
+
+const H = { ROOT, INDEX, SERVER, indexSrc, serverSrc, uiScript, stripComments,
+  loadServer, loadUi, emptyDb, login, setWidth, wire, click, change, popstate };
+
+const SPECS = [];
+
+/* ==================== חלק 3 — הבדיקות ==================== */
+
+/* t01 — שומרים על קוד המקור.
+   בדיקות שאינן מריצות כלום: הן קוראות את הקוד החי ומוודאות שכללי הברזל
+   לא הופרו. זו השכבה שתופסת "מישהו הוסיף שורה שאסור להוסיף". */
+
+
+SPECS.push({
+  file: 't01-guards',
+  title: 'שומרי קוד מקור — R4 · B60a · canary',
+  needs: 'src',
+  requires: [],
+
+  tests: {
+
+    'index.html שלם ומסתיים ב-</html>': (t) => {
+      const s = H.indexSrc().trim();
+      t.ok(s.startsWith('<!DOCTYPE') || s.startsWith('<!doctype'), 'הקובץ אינו מתחיל ב-DOCTYPE');
+      t.ok(s.endsWith('</html>'), 'הקובץ נקטע — אינו מסתיים ב-</html>');
+    },
+
+    'קוד שרת.txt הוא קוד שרת ולא HTML': (t) => {
+      const s = H.serverSrc().trimStart();
+      t.ok(s.startsWith('// ===='), 'הקובץ אינו מתחיל ב-"// ====" — ייתכן ש-index.html הועלה עליו');
+      t.hasNot(s.slice(0, 200), '<!DOCTYPE', 'קוד השרת הוחלף ב-HTML');
+    },
+
+    '⛔ B60a — אין בקוד שום קריאה ל-history.back או history.go': (t) => {
+      /* ⚠ הסרת הערות היא חלק מהבדיקה, לא קיצור דרך: בקוד יש ארבעה אזכורים
+         של האיסור בתוך הערות. סורק תמים היה נכשל שקרית ומאבד אמון. */
+      const code = H.stripComments(H.uiScript());
+      t.hasNot(code, 'history.back', 'נוספה קריאה ל-history.back — אסור. B60a נכשל בייצור בדיוק בגלל זה');
+      t.hasNot(code, 'history.go(', 'נוספה קריאה ל-history.go — אסור');
+      /* ואימות נגדי: האיסור אכן מתועד בהערות, כלומר הסורק באמת מסיר אותן */
+      t.has(H.uiScript(), 'history.back', 'ההערה שמסבירה את האיסור נעלמה — הסורק כבר לא מוכיח דבר');
+    },
+
+    'API_URL לא שונה': (t) => {
+      const code = H.stripComments(H.uiScript());
+      const m = code.match(/var\s+API_URL\s*=\s*'([^']+)'/);
+      t.ok(!!m, 'לא נמצאה הגדרת API_URL');
+      if (m) {
+        t.has(m[1], 'https://script.google.com/macros/s/', 'API_URL אינו כתובת Apps Script');
+        t.has(m[1], '/exec', 'API_URL אינו מצביע על /exec');
+      }
+      t.eq((code.match(/API_URL\s*=/g) || []).length, 1, 'API_URL מוצב יותר מפעם אחת');
+    },
+
+    'canary על מסך הכניסה זהה ל-B61_CANARY בקוד': (t) => {
+      const s = H.indexSrc();
+      const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\w+)/) || [])[1];
+      const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
+      t.ok(!!inHtml, 'לא נמצא canary על מסך הכניסה');
+      t.ok(!!inJs, 'לא נמצא B61_CANARY בקוד');
+      t.eq(inHtml, inJs, 'שני ה-canary לא תואמים — אחד מהם נשכח בעדכון');
+      t.ok(/^v\d+\.\d+-B\d+[a-z]?$/.test(inHtml || ''), 'פורמט ה-canary אינו vX.XX-B##');
+    },
+
+    'בלוק <script> ראשי אחד בלבד': (t) => {
+      const s = H.indexSrc();
+      /* שאר האזכורים הם מחרוזות הדפסה עם <\/script> ממולט — לא בלוקים אמיתיים */
+      const real = (s.match(/\n<script>/g) || []).length;
+      t.eq(real, 1, 'יש יותר מבלוק סקריפט אמיתי אחד — הרתמה מחלצת רק את הראשון');
+    },
+
+    'אין סיסמאות או טוקנים ב-localStorage בטקסט גלוי': (t) => {
+      const code = H.stripComments(H.uiScript());
+      t.hasNot(code, "localStorage.setItem('mn_pass", 'סיסמה נשמרת ב-localStorage');
+      t.hasNot(code, "localStorage.setItem('mn_token", 'טוקן הסשן נשמר ב-localStorage במקום sessionStorage');
+      /* טוקן המכשיר ("זכור אותי") הוא היחיד המותר — הוא ניתן לביטול בשרת */
+      t.has(code, "localStorage.setItem('mn_devtoken'", 'טוקן "זכור אותי" נעלם');
+    },
+
+    'B60_VIEW_RESET הוא טבלת האיפוס היחידה': (t) => {
+      const code = H.stripComments(H.uiScript());
+      t.eq((code.match(/var\s+B60_VIEW_RESET\s*=/g) || []).length, 1, 'הטבלה מוגדרת יותר מפעם אחת');
+      t.eq((code.match(/function\s+b60ResetView/g) || []).length, 1, 'b60ResetView מוגדרת יותר מפעם אחת');
+      t.has(code, 'B60_VIEW_RESET[v]', 'b60ResetView כבר לא קורא מהטבלה');
+    },
+
+    'R4 — המנגנונים החסינים עדיין קיימים בממשק': (t) => {
+      /* ⚠ שמות אמיתיים מהקוד החי. TASK_QUEUE נקב בשמות שאינם קיימים
+         (navFilter · b58Prefetch) — תוקן ב-B61. */
+      const code = H.stripComments(H.uiScript());
+      ['allowedViews', 'navGroupOf', 'navQuickKeys', 'navIsSide', 'navIsTop', 'navMode',
+       'DRIVER_TAB_ORDER', 'b54Ledger', 'custBalance', 'moreMenu', 'toggleMore', 'exportCsv',
+       'REPORTS_CATALOG', 'IDLE_LIMIT_MS', 'b58Loading', 'b58Tables', 'kioskOn'
+      ].forEach(n => t.has(code, n, 'מנגנון חסין נעלם מהממשק: ' + n));
+    },
+
+    'R4 — המנגנונים החסינים עדיין קיימים בשרת': (t) => {
+      const code = H.stripComments(H.serverSrc());
+      ['READ_ONLY_ACTIONS', 'B52_KIOSK_ACTIONS', 'b48BalancesAg', 'b2CreditUsedAg',
+       'b54Ledger', 'clockCore', 'buildPayrollForMonth', 'sha256WithSalt', 'setupDatabase', 'b58Prefetch'
+      ].forEach(n => t.has(code, n, 'מנגנון חסין נעלם מהשרת: ' + n));
+    },
+
+    'מנגנון B60 לעולם אינו משנה את הכתובת': (t) => {
+      /* ⚠ הטענה חלה על b60HistPush/b60HistInit בלבד. הקיוסק (B52) כן משנה
+         כתובת בכוונה — הוא מנקה את הטוקן מה-URL, וזה מנגנון מוגן ב-R4. */
+      const code = H.stripComments(H.uiScript());
+      const seg = code.slice(code.indexOf('function b60HistPush'), code.indexOf('function go(v, o)'));
+      t.ok(seg.length > 100, 'לא נמצא קטע המנגנון של B60');
+      const calls = seg.match(/history\.(pushState|replaceState)\s*\([^;]*?\)/g) || [];
+      t.ok(calls.length >= 2, 'המנגנון כבר לא קורא ל-pushState/replaceState');
+      calls.forEach(c => t.has(c, 'location.href', 'קריאה במנגנון B60 שמשנה כתובת: ' + c.slice(0, 80)));
+    },
+
+    'B52 — ניקוי הטוקן מכתובת הקיוסק עדיין קיים': (t) => {
+      const code = H.stripComments(H.uiScript());
+      t.has(code, "location.pathname + '?kiosk=1'", 'הקיוסק כבר לא מנקה את הטוקן מהכתובת — מנגנון מוגן ב-R4');
+    },
+
+    'setupDatabase הוא מסלול יצירת הטבלאות היחיד': (t) => {
+      const code = H.stripComments(H.serverSrc());
+      t.eq((code.match(/function\s+setupDatabase/g) || []).length, 1, 'setupDatabase מוגדרת יותר מפעם אחת');
+    }
+
+  }
+});
+
+/* t02 — ניווט, איפוס מצב מסך והיסטוריית דפדפן.   T3 · T4 · B60a · B62
+   ============================================================
+   ⚠ הקובץ הזה נכתב מחדש ב-B62. הגרסה של B61 לא הגיעה לריפו (הועלו שבעה
+   קבצים בשמות מוחלפים ו-t02 נעדר לחלוטין), והתגלה בפתיחת הסשן: הספרייה
+   החזירה 66 בדיקות במקום 87. הוא נכתב כאן מול הקוד החי, לא משוחזר מזיכרון.
+
+   ⚠ מה הקובץ הזה **אינו** מוכיח: ש"הקודם" עובד בדפדפן של אבי. ל-jsdom אין
+   מחסנית היסטוריה אמיתית — pushState כאן הוא רישום בזיכרון. זה בדיוק הכשל
+   של B60 (60 בדיקות ירוקות, כשלון בייצור בלחיצה השנייה). האימות האמיתי
+   הוא בכרטיס "בדיקה עצמית", שכן רץ בדפדפן. כאן נבדקת ההחלטה, לא הדפדפן. */
+
+
+SPECS.push({
+  file: 't02-nav-history',
+  title: 'ניווט, איפוס מצב מסך והיסטוריה — T3 · T4 · B60a',
+  needs: 'ui',
+  requires: ['go', 'VIEW', 'allowedViews', 'B60_VIEW_RESET', 'b60ResetView',
+             'b60HistCtx', 'b60HistPush', 'b60HistInit', 'b60ModalOpen',
+             'b60Log', 'b60LogRows', 'b60LogClear', 'navGroupOf', 'navMode',
+             'openModal', 'closeModal', 'goHome'],
+
+  tests: {
+
+    /* ===== T3 — איפוס מצב מסך ===== */
+
+    'B60_VIEW_RESET הוא הטבלה היחידה — אין רשימת איפוס שנייה': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const n = (src.match(/B60_VIEW_RESET\s*=/g) || []).length;
+      t.eq(n, 1, 'B60_VIEW_RESET מוגדר יותר מפעם אחת — נוצרה רשימה מקבילה');
+      t.ok(/function\s+b60ResetView/.test(src), 'b60ResetView נמחק — האיפוס לא יופעל מ-go()');
+    },
+
+    'go() מאפס את מצב המסך של דוחות (T3)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.REPORT_ID = 'hours';
+      w.REPORT_PARAMS = { m: '2026-07' };
+      w.go('reports');
+      t.eq(w.REPORT_ID, '', 'REPORT_ID לא אופס — לחיצה על "דוחות" תחזיר לאותו דוח (הבאג המקורי)');
+      t.eq(Object.keys(w.REPORT_PARAMS).length, 0, 'REPORT_PARAMS נשאר מלא');
+    },
+
+    'go() מאפס גם את רצפת הייצור ואת ההחזרות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.FLOOR_INTAKE_ORDER = 'ord-1';
+      w.FLOOR_INTAKE_CARTS = ['c1'];
+      w.go('floor');
+      t.eq(w.FLOOR_INTAKE_ORDER, '', 'הקליטה נשארה קשורה להזמנה ישנה');
+      t.eq(w.FLOOR_INTAKE_CARTS.length, 0, 'עגלות מקליטה קודמת נשארו בזיכרון');
+      w.RET = { id: 'r1' };
+      w.go('returns');
+      t.eq(w.RET, null, 'תעודת החזרה פתוחה נשארה בהקשר');
+    },
+
+    'go(v,{keep:1}) — דריל-דאון אינו מאפס מצב': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.REPORT_ID = 'hours';
+      w.go('reports', { keep: 1 });
+      t.eq(w.REPORT_ID, 'hours', 'keep לא נשמר — דריל-דאון לדוח מסוים יישבר');
+    },
+
+    'העדפת תצוגה (טאב) נשמרת במכוון ואינה מתאפסת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.FIN_TAB = 'invoices';
+      w.ORD_TAB = 'closed';
+      w.go('finance');
+      t.eq(w.FIN_TAB, 'invoices', 'FIN_TAB אופס — טאב גלוי הוא מחלקה ב\' ואסור לאפס אותו');
+      w.go('orders');
+      t.eq(w.ORD_TAB, 'closed', 'ORD_TAB אופס');
+    },
+
+    'UNDO_PENDING לעולם אינו מאופס על ידי go()': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.UNDO_PENDING = { pending: 1 };
+      w.go('orders');
+      t.ok(w.UNDO_PENDING, 'UNDO_PENDING אופס — פעולה שהמשתמש כבר אישר לא תישלח לשרת');
+    },
+
+    /* ===== T4 / B60a — היסטוריה ===== */
+
+    '⛔ אין בקוד history.back או history.go': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      t.hasNot(src, 'history.back', 'הוחזרה קריאה שמזיזה את ההיסטוריה אחורה — זה הוציא את אבי מהאתר ב-B60');
+      t.hasNot(src, 'history.go', 'הוחזרה history.go — אסור. המנגנון מגיב ל"הקודם" ולעולם לא יוזם אותו');
+    },
+
+    'b60HistInit משתמש ב-replaceState בלבד, בלי pushState': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const i = src.indexOf('function b60HistInit');
+      t.ok(i > -1, 'b60HistInit נמחק');
+      const body = src.slice(i, src.indexOf('\n}', i));
+      t.has(body, 'replaceState', 'b60HistInit אינו מעגן — אין replaceState');
+      t.hasNot(body, 'pushState', 'b60HistInit דוחף רשומה בטעינת דף, בלי מחוות משתמש — זה היה הבאג של B60');
+    },
+
+    'הכתובת לעולם אינה משתנה — כל דחיפה מקבלת location.href': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const calls = src.match(/history\.(push|replace)State\s*\([^;]*?\)/g) || [];
+      t.ok(calls.length > 0, 'לא נמצאה אף קריאת pushState/replaceState');
+      calls.forEach(c => {
+        if (/kiosk/i.test(c)) return;   // B52 מנקה את הטוקן מהכתובת — מנגנון נפרד ומותר
+        t.has(c, 'location.href', 'קריאה שמשנה את הכתובת: ' + c.slice(0, 80) +
+          ' — זה שובר ?portal=1 / ?shop=1 / ?kiosk=1');
+      });
+    },
+
+    'b60HistCtx מכובה בפורטל, בחנות ובמסך הכניסה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.ok(w.b60HistCtx(), 'המנגנון כבוי בהקשר צוות רגיל — "הקודם" לא יעבוד כלל');
+      const app = w.document.getElementById('app');
+      app.style.display = 'none';
+      t.no(w.b60HistCtx(), 'המנגנון פעיל כשהמערכת מוסתרת (מסך כניסה / נעילת B7)');
+      app.style.display = 'block';
+      const tok = w.TOKEN;
+      w.TOKEN = '';
+      t.no(w.b60HistCtx(), 'המנגנון פעיל בלי טוקן');
+      w.TOKEN = tok;
+    },
+
+    'דחיפה חוזרת לאותו מסך מחליפה ואינה מנפחת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.VIEW = 'orders';
+      const before = w.history.length;
+      w.b60HistPush('orders');
+      t.eq(w.history.length, before, 'נדחפה רשומה מיותרת — "הקודם" יצטרך שתי לחיצות לאותו מסך');
+    },
+
+    'force=true דוחף רשומה גם כשהמסך זהה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.VIEW = 'orders';
+      w.b60HistPush('orders');
+      const before = w.history.length;
+      w.b60HistPush('orders', true);
+      t.ok(w.history.length > before, 'force לא דוחף — סגירת מודל ודריל-דאון לא ייכנסו להיסטוריה');
+    },
+
+    'popstate מנווט למסך שב-state (R7 — אירוע אמיתי)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      H.popstate(w, { mn: 1, v: 'customers' });
+      t.eq(w.VIEW, 'customers', '"הקודם" לא החזיר למסך שברשומה');
+    },
+
+    'popstate למסך אסור לתפקיד — נשארים במקום': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv);
+      const before = w.VIEW;
+      H.popstate(w, { mn: 1, v: 'audit' });   // יומן פעולות — מנהל בלבד
+      t.eq(w.VIEW, before, 'הנהג נזרק למסך שאינו מותר לו דרך "הקודם" — דליפת הרשאה');
+    },
+
+    'popstate בלי state שלנו — נשארים ומעגנים מחדש': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('items');
+      H.popstate(w, null);
+      t.eq(w.VIEW, 'items', 'רשומה זרה בהיסטוריה הזיזה את המשתמש');
+    },
+
+    'מודל פתוח + "הקודם" = סגירת המודל בלבד': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      w.openModal('<h2>בדיקה</h2>');
+      t.ok(w.b60ModalOpen(), 'המודל לא נפתח — הבדיקה לא בודקת כלום');
+      H.popstate(w, { mn: 1, v: 'customers' });
+      t.no(w.b60ModalOpen(), 'המודל נשאר פתוח אחרי "הקודם"');
+      t.eq(w.VIEW, 'orders', 'המסך התחלף במקום רק לסגור את המודל');
+    },
+
+    'go() מ-popstate אינו דוחף רשומה חדשה (אין לולאה)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      const before = w.history.length;
+      w.go('customers', { fromHistory: 1 });
+      t.eq(w.history.length, before, 'fromHistory דחף רשומה — "הקודם" ייצור לולאה אינסופית');
+    },
+
+    'go() רגיל כן דוחף רשומה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      const before = w.history.length;
+      w.go('customers');
+      t.ok(w.history.length > before, 'ניווט רגיל לא נכנס להיסטוריה — "הקודם" יצא מהאתר');
+    },
+
+    'go() שומר את המסך ב-sessionStorage — רענון חוזר לאותו מסך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('items');
+      t.eq(w.sessionStorage.getItem('mn_view'), 'items', 'המסך לא נשמר — רענון יחזיר ללוח הבקרה');
+    },
+
+    'goHome מחזיר ללוח הבקרה כשהוא מותר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      w.goHome();
+      t.eq(w.VIEW, 'dash', 'לחיצה על הלוגו לא מחזירה לעמוד הבית');
+    },
+
+    'goHome אינו זורק לתפקיד שאין לו לוח בקרה': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv);
+      const before = w.VIEW;
+      w.goHome();
+      t.eq(w.VIEW, before, 'הנהג הועבר ללוח בקרה שאינו מותר לו');
+    },
+
+    /* ===== B60a — יומן האבחון ===== */
+
+    'יומן ההיסטוריה נרשם ב-sessionStorage ואינו נוגע בשרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.b60LogClear();
+      w.__fetches.length = 0;
+      w.go('orders');
+      w.go('customers');
+      const rows = w.b60LogRows();
+      t.ok(rows.length >= 2, 'היומן לא נרשם — אין דרך לאבחן כשלון היסטוריה אצל אבי');
+      t.eq(w.__fetches.length, 0, 'יומן האבחון שלח בקשה לשרת — הוא חייב להיות מקומי בלבד');
+    },
+
+    'היומן אינו גדל בלי גבול': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.b60LogClear();
+      for (let i = 0; i < w.B60_LOG_MAX + 15; i++) w.b60Log('בדיקה', 'v' + i);
+      t.ok(w.b60LogRows().length <= w.B60_LOG_MAX,
+        'היומן עבר את B60_LOG_MAX — sessionStorage יתמלא');
+    },
+
+    'b60LogClear מנקה בפועל': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.b60Log('בדיקה', 'x');
+      w.b60LogClear();
+      t.eq(w.b60LogRows().length, 0, 'הניקוי לא עבד');
+    },
+
+    /* ===== R4 — מה שאסור להישבר בניווט ===== */
+
+    'שלושת מצבי הניווט קיימים ונבחרים לפי הרוחב': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 1422); t.eq(w.navMode(), 'side', 'ב-1422px מצב הניווט אינו סרגל צד');
+      H.setWidth(w, 1000); t.eq(w.navMode(), 'top', 'ב-1000px נשבר תפריט B47 (900–1099)');
+      H.setWidth(w, 700);  t.eq(w.navMode(), 'mob', 'ב-700px נשבר אקורדיון המובייל');
+    },
+
+    'האקורדיון של המובייל לא נגוע (R4)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 700);
+      t.eq(typeof w.toggleNavPanel, 'function', 'toggleNavPanel נמחק — אין תפריט במובייל');
+      w.NAV_OPEN = '';
+      w.navToggle('כוח אדם');
+      t.eq(w.NAV_OPEN, 'כוח אדם', 'האקורדיון של המובייל לא נפתח');
+      w.navToggle('כוח אדם');
+      t.eq(w.NAV_OPEN, '__closed__', 'האקורדיון של המובייל לא נסגר');
+    },
+
+    'החלונית הנפתחת של 900–1099 לא נגועה (R4)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 1000);
+      w.render();
+      w.NAV_DD = '';
+      w.navToggle('כוח אדם');
+      t.eq(w.NAV_DD, 'כוח אדם', 'החלונית של תפריט B47 לא נפתחת');
+      t.has(w.document.getElementById('nav').innerHTML, 'gmenu',
+        '.gmenu נעלם מהתפריט העליון — 900–1099px נשבר');
+    },
+
+    'סרגל הטאבים של הנהג נשאר בסדר הקבוע (R4)': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv);
+      t.eq(w.DRIVER_TAB_ORDER.join(','), 'deliveries,attendance,payroll,tasks',
+        'סדר הטאבים של הנהג שונה');
+      t.has(w.document.getElementById('nav').innerHTML, 'dtab',
+        'הנהג קיבל סרגל צד במקום טאבים תחתונים');
+    }
+
+  }
+});
+
+/* t03 — הרשאות, תפקידים ועוזרי ליבה.
+   חמישה תפקידים × ארבעה הקשרי ריצה הם שאלה 6 ב-R2. הקובץ הזה הוא
+   התשובה האוטומטית עליה, כדי שאף אצווה לא תצטרך לבדוק אותה ידנית שוב. */
+
+SPECS.push({
+  file: 't03-roles-core',
+  title: 'הרשאות, תפקידים ועוזרי ליבה',
+  needs: 'ui',
+  requires: ['allowedViews', 'VIEWS', 'NAV_GROUPS', 'navGroupOf', 'DRIVER_TAB_ORDER',
+             'navIsTop', 'navIsSide', 'navMode', 'esc', 'ymdLocal', 'ils', 'ilsVat',
+             'VAT_RATE', 'el', 'kioskOn', 'custBalance'],
+
+  tests: {
+
+    'כל מסך ב-VIEWS משויך לקטגוריה בתפריט': (t, { w }) => {
+      w.VIEWS.forEach(v => {
+        t.ok(w.NAV_GROUPS.some(g => g[2].indexOf(v[0]) > -1), 'מסך בלי קטגוריה: ' + v[0]);
+      });
+    },
+
+    'אין מסך בקטגוריה שאינו קיים ב-VIEWS': (t, { w }) => {
+      const keys = w.VIEWS.map(v => v[0]);
+      w.NAV_GROUPS.forEach(g => g[2].forEach(k => {
+        t.ok(keys.indexOf(k) > -1, 'קטגוריה מפנה למסך שלא קיים: ' + k);
+      }));
+    },
+
+    'מנהל רואה הכל חוץ ממסך מנהל ראשי': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const keys = w.allowedViews().map(v => v[0]);
+      t.ok(keys.indexOf('audit') > -1, 'למנהל אין יומן פעולות');
+      t.ok(keys.indexOf('payroll') > -1, 'למנהל אין שכר');
+      t.eq(keys.indexOf('superadmin'), -1, 'מסך מנהל ראשי נחשף בלי IS_SUPER_ADMIN');
+    },
+
+    'מסך מנהל ראשי נפתח רק לפי דגל השרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { is_super_admin: true });
+      t.ok(w.allowedViews().map(v => v[0]).indexOf('superadmin') > -1, 'מנהל ראשי לא רואה את המסך שלו');
+    },
+
+    'B4 — יומן פעולות למנהל בלבד': (t, { w, srv, H }) => {
+      ['משרד', 'מכבסה', 'נהג', 'עובד רצפה'].forEach(role => {
+        H.login(w, role, srv);
+        t.eq(w.allowedViews().map(v => v[0]).indexOf('audit'), -1, 'יומן פעולות דלף לתפקיד ' + role);
+      });
+    },
+
+    'משרד — בלי שכר ובלי הגדרות': (t, { w, srv, H }) => {
+      H.login(w, 'משרד', srv);
+      const keys = w.allowedViews().map(v => v[0]);
+      t.eq(keys.indexOf('payroll'), -1, 'משרד רואה שכר');
+      t.eq(keys.indexOf('settings'), -1, 'משרד רואה הגדרות');
+      t.ok(keys.indexOf('orders') > -1, 'משרד לא רואה הזמנות');
+    },
+
+    'B17 — נהג רואה בדיוק ארבעה מסכים': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv);
+      const keys = w.allowedViews().map(v => v[0]).sort();
+      t.eq(keys.join(','), 'attendance,deliveries,payroll,tasks', 'הרכב המסכים של הנהג השתנה');
+      t.eq(w.VIEW, 'deliveries', 'ברירת המחדל של הנהג אינה "המסלול שלי"');
+    },
+
+    'סרגל הטאבים של הנהג תואם למסכים שלו': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv);
+      const allowed = w.allowedViews().map(v => v[0]);
+      w.DRIVER_TAB_ORDER.forEach(k => t.ok(allowed.indexOf(k) > -1, 'טאב נהג למסך שאינו מותר לו: ' + k));
+      t.eq(w.DRIVER_TAB_ORDER.length, 4, 'מספר הטאבים של הנהג השתנה');
+    },
+
+    'עובד רצפה ומכבסה — היקף מצומצם ותקין': (t, { w, srv, H }) => {
+      H.login(w, 'עובד רצפה', srv);
+      t.eq(w.allowedViews().map(v => v[0]).sort().join(','), 'attendance,floor,tasks', 'היקף עובד רצפה השתנה');
+      H.login(w, 'מכבסה', srv);
+      const l = w.allowedViews().map(v => v[0]);
+      t.ok(l.indexOf('laundry') > -1, 'מכבסה לא רואה את מסך הכביסה');
+      t.eq(l.indexOf('finance'), -1, 'מכבסה רואה כספים');
+    },
+
+    'USER_VIEWS מהגיליון גובר על תפקיד': (t, { w, srv, H }) => {
+      H.login(w, 'עובד רצפה', srv, { views: 'dash, orders' });
+      t.eq(w.allowedViews().map(v => v[0]).sort().join(','), 'dash,orders', 'רשימת מסכים מותאמת לא נאכפה');
+    },
+
+    'esc מנטרל HTML': (t, { w }) => {
+      t.has(w.esc('<script>x</script>'), '&lt;');
+      t.hasNot(w.esc('<b>'), '<b>', 'תגית עברה בלי ניטרול');
+      t.eq(w.esc(null), '', 'null אינו מוחזר כמחרוזת ריקה');
+    },
+
+    'ymdLocal מחזיר תאריך מקומי ולא UTC': (t, { w }) => {
+      const d = new Date();
+      const local = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      t.eq(w.ymdLocal(), local, 'ymdLocal חזר ל-toISOString — זו מחלקת הבאג של B38');
+      t.eq(w.ymdLocal(new Date(2026, 0, 1, 1, 30)), '2026-01-01', 'שעה מוקדמת גלשה ליום הקודם');
+      t.eq(w.ymdLocal(new Date(2026, 11, 31, 23, 30)), '2026-12-31', 'שעה מאוחרת גלשה ליום הבא');
+    },
+
+    'B45 — מע"מ 18% ותצוגת נטו מול כולל': (t, { w }) => {
+      t.eq(w.VAT_RATE, 0.18, 'שיעור המע"מ השתנה — בדוק שזה מכוון');
+      t.has(w.ils(100), '100');
+      t.has(w.ils(100), '₪');
+      t.has(w.ilsVat(100), '118', 'ilsVat אינו מוסיף מע"מ');
+    },
+
+    'custBalance על DB ריק מחזיר 0 ואינו זורק': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.custBalance('אין-כזה-לקוח'), 0, 'יתרה של לקוח לא קיים אינה 0');
+    },
+
+    'kioskOn שקר בהקשר צוות רגיל': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.no(w.kioskOn(), 'המערכת חושבת שהיא בקיוסק');
+    },
+
+    'שלושת מצבי הניווט עקביים עם נקודות השבירה': (t, { w }) => {
+      t.eq(typeof w.navMode(), 'string');
+      t.ok(['side', 'top', 'mob'].indexOf(w.navMode()) > -1, 'navMode החזיר מצב לא מוכר: ' + w.navMode());
+      t.no(w.navIsSide() && !w.navIsTop(), 'סרגל צד פעיל בלי שהתפריט העליון פעיל — נקודות השבירה התהפכו');
+    },
+
+    'render בכל מסך מותר אינו זורק (DB ריק)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { is_super_admin: true });
+      w.allowedViews().forEach(v => {
+        try { w.go(v[0]); }
+        catch (e) { t.fail('המסך "' + v[0] + '" קורס על DB ריק: ' + (e && e.message)); }
+      });
+    },
+
+    'render לכל תפקיד אינו זורק (DB ריק)': (t, { w, srv, H }) => {
+      ['מנהל', 'משרד', 'מכבסה', 'נהג', 'עובד רצפה'].forEach(role => {
+        try { H.login(w, role, srv); }
+        catch (e) { t.fail('כניסה בתפקיד ' + role + ' קורסת: ' + (e && e.message)); }
+      });
+    },
+
+    'טעינת הממשק אינה שולחת שום בקשה לשרת מעצמה': (t, { w, srv, H }) => {
+      w.__fetches.length = 0;
+      H.login(w, 'מנהל', srv);
+      w.go('orders'); w.go('customers'); w.go('dash');
+      t.eq(w.__fetches.length, 0, 'ניווט רגיל שלח ' + w.__fetches.length + ' בקשות לשרת (R10)');
+    }
+
+  }
+});
+
+/* t04 — קוד השרת: סכימה, ניתוב, הרשאות וכסף.
+   רץ ב-vm.createContext עם Apps Script מדומה. אין גיליון אמיתי ואין רשת —
+   הבדיקות כאן הן על הצהרות ועל לוגיקה טהורה, לא על נתונים. */
+
+SPECS.push({
+  file: 't04-server',
+  title: 'קוד שרת — סכימה, ניתוב, הרשאות וכסף',
+  needs: 'server',
+  requires: ['TABLES', 'TMAP', 'route', 'READ_ONLY_ACTIONS', 'MANAGER_ONLY',
+             'setupDatabase', 'sha256WithSalt', 'b48BalancesAg', 'b2CreditUsedAg',
+             'b54Ledger', 'B52_KIOSK_ACTIONS', 'b58Prefetch', 'clockCore', 'buildPayrollForMonth'],
+
+  tests: {
+
+    'כל טבלה ב-TMAP קיימת ב-TABLES': (t, { srv }) => {
+      Object.keys(srv.TMAP).forEach(sheet => {
+        t.ok(!!srv.TABLES[sheet], 'TMAP מפנה לטבלה שאינה מוגדרת ב-TABLES: ' + sheet);
+      });
+    },
+
+    'כל טבלה ב-TABLES מוגדרת כמערך עמודות עם id': (t, { srv }) => {
+      /* שני חריגים מתועדים: settings ו-counters הן טבלאות מפתח-ערך
+         ([key,value]) ואין להן id. כל טבלה אחרת חייבת id. */
+      const KV = ['settings', 'counters'];
+      Object.keys(srv.TABLES).forEach(name => {
+        const cols = srv.TABLES[name];
+        t.ok(Array.isArray(cols), 'טבלה שאינה מערך עמודות: ' + name);
+        if (!Array.isArray(cols)) return;
+        t.ok(cols.length > 0, 'טבלה בלי עמודות: ' + name);
+        if (KV.indexOf(name) > -1) t.eq(cols.join(','), 'key,value', 'טבלת מפתח-ערך שינתה מבנה: ' + name);
+        else t.ok(cols.indexOf('id') > -1, 'טבלה בלי עמודת id: ' + name);
+      });
+    },
+
+    'אין שם עמודה כפול באותה טבלה': (t, { srv }) => {
+      Object.keys(srv.TABLES).forEach(name => {
+        const cols = srv.TABLES[name] || [];
+        const seen = {};
+        cols.forEach(c => {
+          if (seen[c]) t.fail('עמודה כפולה ' + c + ' בטבלה ' + name);
+          seen[c] = 1;
+        });
+      });
+    },
+
+    'שמות המפתחות ב-DB ייחודיים (אין שתי טבלאות לאותו מפתח)': (t, { srv }) => {
+      const seen = {};
+      Object.keys(srv.TMAP).forEach(sheet => {
+        const k = srv.TMAP[sheet];
+        if (seen[k]) t.fail('שני גיליונות ממופים לאותו מפתח DB: ' + seen[k] + ' ו-' + sheet + ' → ' + k);
+        seen[k] = sheet;
+      });
+    },
+
+    '⛔ R4 — אין פעולת כתיבה ב-READ_ONLY_ACTIONS': (t, { srv }) => {
+      /* פעולה שכותבת לגיליון ונכנסת לרשימה הזו מאבדת גם נעילה וגם audit.
+         זו הבדיקה שתופסת את זה ביום שמישהו יוסיף בטעות. */
+      const ro = srv.READ_ONLY_ACTIONS;
+      t.ok(Array.isArray(ro), 'READ_ONLY_ACTIONS אינו מערך');
+      const writeish = /^(save|add|create|update|delete|remove|set|mark|approve|reject|cancel|close|pay|collect|issue|assign|clock|import|reset|bulk|move|transfer|generate)/i;
+      (ro || []).forEach(a => {
+        if (writeish.test(a) && a !== 'rememberLogin' && a !== 'setupDatabase') {
+          t.fail('פעולה שנראית ככתיבה נמצאת ב-READ_ONLY_ACTIONS: ' + a);
+        }
+      });
+    },
+
+    'READ_ONLY_ACTIONS מכיל את פעולות הקריאה המרכזיות': (t, { srv }) => {
+      ['getAll', 'login', 'reports', 'portalGetData'].forEach(a => {
+        t.ok(srv.READ_ONLY_ACTIONS.indexOf(a) > -1, 'פעולת קריאה מרכזית חסרה ברשימה: ' + a);
+      });
+    },
+
+    'אין כפילות ברשימות הפעולות': (t, { srv }) => {
+      [['READ_ONLY_ACTIONS', srv.READ_ONLY_ACTIONS], ['MANAGER_ONLY', srv.MANAGER_ONLY]].forEach(([n, arr]) => {
+        const seen = {};
+        (arr || []).forEach(a => { if (seen[a]) t.fail('ערך כפול ב-' + n + ': ' + a); seen[a] = 1; });
+      });
+    },
+
+    'B52 — רשימת פעולות הקיוסק סגורה וקטנה': (t, { srv }) => {
+      const k = srv.B52_KIOSK_ACTIONS;
+      t.ok(Array.isArray(k), 'B52_KIOSK_ACTIONS אינו מערך');
+      t.ok(k.length > 0 && k.length <= 12, 'רשימת פעולות הקיוסק גדלה ל-' + k.length + ' — היא אמורה להיות סגורה');
+    },
+
+    'route קיים ומקבל שלושה פרמטרים': (t, { srv }) => {
+      t.eq(typeof srv.route, 'function');
+      t.eq(srv.route.length, 3, 'חתימת route השתנתה');
+    },
+
+    'R6 — שלושת מקורות הכסף קיימים כפונקציות': (t, { srv }) => {
+      /* השוויון המספרי ביניהם נבדק באצווה שנוגעת בכסף, מול נתונים.
+         כאן נבדק רק שאף אחד מהם לא נמחק או שונה שם. */
+      ['b48BalancesAg', 'b2CreditUsedAg', 'b54Ledger'].forEach(n => {
+        t.ok(srv[n] !== undefined, 'מקור כסף נעלם: ' + n);
+      });
+    },
+
+    'כספים באגורות — שמות הפונקציות מסתיימים ב-Ag': (t, { srv, H }) => {
+      const code = H.stripComments(H.serverSrc());
+      t.has(code, 'function b48BalancesAg', 'b48BalancesAg שונתה');
+      t.hasNot(code, 'function b48Balances(', 'הופיעה גרסת שקלים של b48Balances — כספים חייבים להישאר באגורות');
+    },
+
+    'סיסמאות נשמרות כ-hash בלבד': (t, { srv, H }) => {
+      const code = H.stripComments(H.serverSrc());
+      t.eq(typeof srv.sha256WithSalt, 'function', 'פונקציית ה-hash נעלמה');
+      t.hasNot(code, "password_plain", 'נמצא שדה סיסמה גלויה');
+      t.has(code, 'sha256WithSalt', 'ה-hash כבר לא בשימוש');
+    },
+
+    'setupDatabase מכיר את כל הטבלאות': (t, { srv, H }) => {
+      const code = H.stripComments(H.serverSrc());
+      const i = code.indexOf('function setupDatabase');
+      t.ok(i > -1, 'setupDatabase לא נמצאה');
+      const seg = code.slice(i, i + 4000);
+      t.ok(/TABLES/.test(seg), 'setupDatabase כבר לא נגזרת מ-TABLES — טבלה חדשה לא תיווצר');
+    },
+
+    'הטוקן נקרא מרמה עליונה של גוף הבקשה': (t, { srv, H }) => {
+      const code = H.stripComments(H.serverSrc());
+      t.ok(/payload\s*\.\s*token|p\s*\.\s*token|body\s*\.\s*token/.test(code), 'לא נמצאה קריאת טוקן מהבקשה');
+    },
+
+    'B58 — b58Prefetch קיים ומצמצם נסיעות לגיליון (R10)': (t, { srv, H }) => {
+      /* ⚠ תוקן ב-B61: TASK_QUEUE טען ש-b58Prefetch אינו קיים. הוא קיים —
+         בשרת, לא בממשק. batchGet אינו פונקציה גלובלית אלא שירות מתקדם
+         (Sheets.Spreadsheets.Values.batchGet) ולכן לא ניתן לבדוק אותו כסמל. */
+      t.eq(typeof srv.b58Prefetch, 'function', 'b58Prefetch נעלם — R10 מסתמך עליו');
+      t.eq(typeof srv.b58PrefetchForPayload, 'function', 'b58PrefetchForPayload נעלם');
+      t.has(H.stripComments(H.serverSrc()), 'Sheets.Spreadsheets.Values.batchGet',
+        'הקריאה המרוכזת לגיליון נעלמה — חוזרים ל-55 נסיעות לבקשה');
+    },
+
+    'חישוב נוכחות ושכר לא נמחק (R4)': (t, { srv }) => {
+      ['clockCore', 'buildPayrollForMonth', 'rebuildPayrollFromAttendance'].forEach(n => {
+        t.eq(typeof srv[n], 'function', 'פונקציית ליבה של שכר/נוכחות נעלמה: ' + n);
+      });
+    },
+
+    'מספר הטבלאות סביר — שינוי סכימה לא עבר בשקט': (t, { srv }) => {
+      /* ⚠ אם המספר השתנה, ההודעה הזו היא התזכורת שצריך setupDatabase.
+         עדכן את המספר באצווה שמשנה סכימה — בכוונה, לא אוטומטית. */
+      t.eq(Object.keys(srv.TABLES).length, 59,
+        'מספר הטבלאות השתנה. אם זה מכוון — יש להריץ setupDatabase ולעדכן את הבדיקה');
+    }
+
+  }
+});
+
+/* t05 — הכלי שמאמת חייב להיות מאומת בעצמו.
+   כרטיס "בדיקה עצמית" (B61) הוא התשובה ל-R11: הוא רץ בדפדפן האמיתי של
+   אבי ובודק את מה ש-jsdom לא יכול. אבל אם הוא עצמו שבור — אבי יראה מסך
+   ירוק שלא אומר כלום, וזה גרוע מלא לבנות אותו. לכן הקובץ הזה.
+
+   ⚠ מה שאי אפשר לבדוק כאן: האם התוצאות שהכרטיס מציג נכונות בדפדפן אמיתי.
+   זו בדיוק המגבלה שהכרטיס נועד לעקוף, ולכן היא נשארת פתוחה בכוונה. */
+
+SPECS.push({
+  file: 't05-selftest',
+  title: 'כרטיס בדיקה עצמית — B61',
+  needs: 'ui',
+  requires: ['B61_CANARY', 'b61Card', 'b61Tests', 'b61Run', 'b61Text', 'b61Copy',
+             'b61OutHtml', 'b61Paint', 'b61Env', 'b61Browser', 'b61Os', 'b61Touch',
+             'auditShell', 'b60Card'],
+
+  tests: {
+
+    'הכרטיס מוצג למנהל בלבד': (t, { w, srv, H }) => {
+      ['משרד', 'מכבסה', 'נהג', 'עובד רצפה'].forEach(role => {
+        H.login(w, role, srv);
+        t.eq(w.b61Card(), '', 'הכרטיס נחשף לתפקיד ' + role);
+      });
+      H.login(w, 'מנהל', srv);
+      t.ok(w.b61Card().length > 200, 'הכרטיס לא מוצג למנהל');
+    },
+
+    'הכרטיס משובץ במסך יומן פעולות ליד כרטיסי האבחון': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const shell = w.auditShell();
+      t.has(shell, 'בדיקה עצמית בדפדפן', 'הכרטיס לא נכנס למסך יומן פעולות');
+      t.has(shell, 'אבחון היסטוריית דפדפן', 'כרטיס האבחון של B60a נעלם');
+      t.ok(shell.indexOf('אבחון היסטוריית דפדפן') < shell.indexOf('בדיקה עצמית בדפדפן'),
+        'סדר הכרטיסים התהפך');
+    },
+
+    'רשימת הבדיקות תקינה מבנית': (t, { w }) => {
+      const list = w.b61Tests();
+      t.ok(Array.isArray(list), 'b61Tests אינו מחזיר מערך');
+      t.ok(list.length >= 15, 'פחות מ-15 בדיקות עצמיות — נמסרו ' + list.length);
+      const names = {};
+      list.forEach((x, i) => {
+        t.ok(!!x.g, 'בדיקה ' + i + ' בלי קבוצה');
+        t.ok(!!x.n, 'בדיקה ' + i + ' בלי שם');
+        t.eq(typeof x.f, 'function', 'בדיקה "' + x.n + '" בלי פונקציה');
+        if (names[x.n]) t.fail('שם בדיקה כפול: ' + x.n);
+        names[x.n] = 1;
+      });
+    },
+
+    'כל הקבוצות שהובטחו קיימות': (t, { w }) => {
+      const groups = {};
+      w.b61Tests().forEach(x => { groups[x.g] = 1; });
+      ['היסטוריית דפדפן', 'אחסון בדפדפן', 'יכולות המכשיר', 'תאריך ושעה', 'פריסה ותצוגה']
+        .forEach(g => t.ok(!!groups[g], 'קבוצת בדיקות חסרה: ' + g));
+    },
+
+    '⛔ הרצה מלאה אינה שולחת אף בקשה לשרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      w.__fetches.length = 0;
+      w.b61Run();
+      t.eq(w.__fetches.length, 0, 'הבדיקה העצמית שלחה ' + w.__fetches.length + ' בקשות — היא אמורה להיות קריאה בלבד מקומית');
+    },
+
+    'הרצה מלאה אינה זורקת ומסכמת נכון': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      w.b61Run();
+      const r = w.B61_RES;
+      t.ok(!!r, 'לא נוצרה תוצאה');
+      t.eq(r.rows.length, w.b61Tests().length, 'מספר השורות אינו תואם למספר הבדיקות');
+      t.eq(r.pass + r.fail, r.rows.length, 'עברו + נכשלו אינו שווה לסך הבדיקות');
+      r.rows.forEach(x => t.eq(typeof x.ok, 'boolean', 'בדיקה "' + x.n + '" לא החזירה תוצאה בוליאנית'));
+    },
+
+    'בדיקה שזורקת נספרת ככשלון ואינה מפילה את ההרצה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const orig = w.b61Tests;
+      w.b61Tests = function () {
+        return orig().concat([{ g: 'בדיקה', n: 'זורקת בכוונה', f: function () { throw new Error('בום'); } }]);
+      };
+      try {
+        w.b61Run();
+        const bad = w.B61_RES.rows.filter(x => x.n === 'זורקת בכוונה')[0];
+        t.ok(!!bad, 'הבדיקה הזורקת נעלמה מהתוצאה');
+        t.no(bad.ok, 'בדיקה שזרקה נספרה כהצלחה');
+        t.has(bad.note, 'בום', 'הודעת השגיאה לא נשמרה');
+      } finally { w.b61Tests = orig; }
+    },
+
+    'הרצה משחזרת את ה-state של ההיסטוריה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      const before = JSON.stringify(w.history.state);
+      w.b61Run();
+      t.eq(JSON.stringify(w.history.state), before, 'ההרצה השאירה את ההיסטוריה במצב אחר');
+    },
+
+    'הרצה משאירה את המשתמש באותו מסך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      w.b61Run();
+      t.eq(w.VIEW, 'audit', 'הבדיקה העצמית השאירה את אבי במסך אחר');
+      t.no(w.b60ModalOpen(), 'הבדיקה העצמית השאירה מודל פתוח');
+    },
+
+    'טקסט ההעתקה מכיל את מה שאני צריך ורק אותו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      w.b61Run();
+      const txt = w.b61Text();
+      t.has(txt, w.B61_CANARY, 'הטקסט לא כולל את גרסת הקוד');
+      t.has(txt, 'עברו', 'הטקסט לא כולל שורת סיכום');
+      t.has(txt, '=== סוף ===', 'הטקסט לא נסגר');
+      /* שורות שעברו לא נכנסות — הבלוק נועד להיות קצר */
+      const passed = w.B61_RES.rows.filter(x => x.ok)[0];
+      if (passed) t.hasNot(txt, 'X [' + passed.g + '] ' + passed.n, 'בדיקה שעברה נכנסה לטקסט ההעתקה');
+      t.ok(txt.split('\n').length <= 6 + w.B61_RES.fail * 1 + 2, 'הטקסט ארוך מדי להדבקה');
+    },
+
+    'טקסט ההעתקה מפרט כל כשלון': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const orig = w.b61Tests;
+      w.b61Tests = function () {
+        return [{ g: 'בדיקה', n: 'נכשלת בכוונה', f: function () { return { ok: false, note: 'סיבה מדויקת' }; } }];
+      };
+      try {
+        w.b61Run();
+        const txt = w.b61Text();
+        t.has(txt, 'נכשלת בכוונה', 'שם הכשלון חסר');
+        t.has(txt, 'סיבה מדויקת', 'סיבת הכשלון חסרה');
+        t.has(txt, 'עברו 0 · נכשלו 1', 'שורת הסיכום שגויה');
+      } finally { w.b61Tests = orig; }
+    },
+
+    'התצוגה מציגה ירוק בלי כפתור העתקה, ואדום עם כפתור': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const orig = w.b61Tests;
+      try {
+        w.b61Tests = () => [{ g: 'g', n: 'עוברת', f: () => ({ ok: true, note: 'ok' }) }];
+        w.b61Run();
+        let h = w.b61OutHtml();
+        t.has(h, 'הכל תקין', 'מסך ירוק לא מוצג');
+        t.hasNot(h, 'b61Copy()', 'כפתור העתקה מוצג כשאין מה לדווח');
+        w.b61Tests = () => [{ g: 'g', n: 'נכשלת', f: () => ({ ok: false, note: 'x' }) }];
+        w.b61Run();
+        h = w.b61OutHtml();
+        t.has(h, 'b61Copy()', 'כפתור העתקה חסר כשיש כשלון');
+        t.has(h, 'נכשלו', 'מסך אדום לא מציג את מספר הכשלונות');
+      } finally { w.b61Tests = orig; }
+    },
+
+    'התצוגה מנטרלת HTML בתוכן הבדיקות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const orig = w.b61Tests;
+      try {
+        w.b61Tests = () => [{ g: '<b>g</b>', n: '<img src=x>', f: () => ({ ok: false, note: '<script>bad</script>' }) }];
+        w.b61Run();
+        const h = w.b61OutHtml();
+        t.hasNot(h, '<img src=x>', 'שם בדיקה לא עבר ניטרול');
+        t.hasNot(h, '<script>bad', 'הערה לא עברה ניטרול');
+      } finally { w.b61Tests = orig; }
+    },
+
+    'זיהוי סביבה מחזיר את כל השדות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const e = w.b61Env();
+      ['browser', 'os', 'vw', 'vh', 'dpr', 'touch', 'mode', 'secure', 'tz', 'role', 'canary']
+        .forEach(k => t.ok(e[k] !== undefined, 'שדה סביבה חסר: ' + k));
+      t.eq(e.canary, w.B61_CANARY, 'ה-canary בסביבה אינו תואם');
+      t.eq(e.role, 'מנהל');
+    },
+
+    'זיהוי דפדפן ומערכת הפעלה אינו זורק ומחזיר מחרוזת': (t, { w }) => {
+      t.eq(typeof w.b61Browser(), 'string');
+      t.eq(typeof w.b61Os(), 'string');
+      t.eq(typeof w.b61Touch(), 'boolean');
+    },
+
+    'הרצה כפולה אינה מכפילה שורות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      w.b61Run();
+      const n1 = w.B61_RES.rows.length;
+      w.b61Run();
+      t.eq(w.B61_RES.rows.length, n1, 'הרצה שנייה הכפילה את התוצאות');
+    },
+
+    'לפני הרצה — הודעה ברורה ולא טבלה ריקה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.B61_RES = null;
+      const h = w.b61OutHtml();
+      t.has(h, 'טרם הורצה', 'אין הודעת מצב התחלתי');
+      t.has(h, 'לא נשלחת שום בקשה', 'לא נאמר שאין קריאות שרת');
+    }
+
+  }
+});
+
+/* t06 — ניווט: תפריט עליון, רצועת צד, קיצורים וסרגלי פעולות.
+   B63 · B62 · T2 · BLD-04
+   ============================================================
+   **הארכיטקטורה אחרי B63 (הכרעת אבי, 31.07.2026):**
+   · מ-900px ומעלה — התפריט הראשי הוא **השורה העליונה** (#nav). כל 29
+     המסכים נגישים ממנו. זה דפוס B47 שהיה קיים ובדוק ורק היה חסום מעל 1100px.
+   · מ-1100px ומעלה מתווספת **רצועת צד** (#rail) עם 2–3 קטגוריות שאבי
+     בוחר בהגדרות (`nav_rail`). היא **מסלול מהיר בלבד** — אין לה בלעדיות
+     על שום מסך ואי אפשר להסתיר מסך דרכה.
+   · ברצועה נשמר דפוס B62 כלשונו: פתוחה אם נעוצה או אם המסך הנוכחי בתוכה.
+     ברירת המחדל של הנעיצה = הקטגוריות שברצועה, כלומר כולן פתוחות.
+   · מתחת ל-900px — אקורדיון B23, לא נגוע. נבדק ב-t02.
+
+   ⚠ מה שאי אפשר לבדוק כאן: שהתפריט העליון והרצועה **באמת נכנסים** למסך.
+   ל-jsdom אין מנוע פריסה. המדידה האמיתית בשכבה 2. */
+
+
+SPECS.push({
+  file: 't06-nav-sidebar',
+  title: 'ניווט — תפריט עליון, רצועת צד, קיצורים ופעולות — B63',
+  needs: 'ui',
+  requires: ['renderNav', 'renderRail', 'navMode', 'navIsSide', 'navGroupOf', 'navQuickKeys',
+             'navToggle', 'NAV_DD', 'b63RailGroups', 'b63RailPanelHtml', 'b63RailToggle',
+             'NAV_RAIL_DEFAULT', 'NAV_RAIL_MAX',
+             'allowedViews', 'NAV_GROUPS', 'NAV_QUICK_MAX', 'NAV_QUICK_LABEL_MAX',
+             'b62NavPins', 'b62NavPinsSave', 'b62NavPinned', 'b62NavPin', 'B62_PINS_KEY',
+             'b62QuickOrderHtml', 'b62QMove', 'b62QDown', 'b62QCommit',
+             'b53QuickToggle', 'b53QuickNavPanelHtml',
+             'moreMenu', 'toggleMore', 'closeMore', 'b62OrderActions',
+             'renderTopbar', 'go'],
+
+  tests: {
+
+    /* ===== B63: התפריט העליון הוא הראשי ===== */
+
+    'ב-1422px התפריט הראשי הוא השורה העליונה': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv, { is_super_admin: true });
+      t.eq(w.navMode(), 'side', 'מצב הניווט השתנה ברוחב של אבי');
+      const nav = w.document.getElementById('nav').innerHTML;
+      t.has(nav, 'ghead', 'אין כותרות קטגוריה בשורה העליונה — התפריט לא עלה למעלה');
+      t.has(nav, 'gmenu', 'אין חלונית נפתחת בתפריט העליון');
+      t.hasNot(nav, 'gbody', 'רצועת הצד דלפה לתוך שורת התפריט');
+    },
+
+    '⛔ כל המסכים המותרים נגישים מהתפריט העליון': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv, { is_super_admin: true });
+      const nav = w.document.getElementById('nav').innerHTML;
+      const views = w.allowedViews();
+      views.forEach(v => {
+        t.has(nav, "go('" + v[0] + "')",
+          'המסך "' + v[1] + '" אינו נגיש מהתפריט העליון — אחרי B63 הוא המסלול היחיד לכל המסכים');
+      });
+      t.ok(views.length >= 28, 'מספר המסכים למנהל ראשי ירד — allowedViews השתנתה');
+    },
+
+    'קטגוריה בתפריט העליון נפתחת ונסגרת (R7)': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.NAV_DD = '';
+      w.render();
+      const head = w.document.querySelector('#nav .ngrp .ghead');
+      t.ok(!!head, 'לא נמצאה כותרת קטגוריה בתפריט העליון');
+      H.click(w, head);
+      t.ne(w.NAV_DD, '', 'לחיצה על קטגוריה לא פתחה את החלונית');
+      const open = w.NAV_DD;
+      H.click(w, w.document.querySelector('#nav .ngrp .ghead'));
+      t.ne(w.NAV_DD, open, 'לחיצה שנייה לא סגרה את החלונית');
+    },
+
+    'מעבר מסך סוגר את החלונית העליונה': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.NAV_DD = 'כוח אדם';
+      w.go('orders');
+      t.eq(w.NAV_DD, '', 'החלונית נשארה תלויה פתוחה אחרי מעבר מסך');
+    },
+
+    /* ===== B63: רצועת הצד ===== */
+
+    'ברירת המחדל של הרצועה: שלוש הקטגוריות התפעוליות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.b63RailGroups().join(','), w.NAV_RAIL_DEFAULT, 'ברירת המחדל של הרצועה השתנתה');
+      t.ok(w.b63RailGroups().length <= w.NAV_RAIL_MAX, 'ברירת המחדל חורגת מהתקרה');
+    },
+
+    'הרצועה מציגה רק את הקטגוריות שנבחרו': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.DB.settings = [{ key: 'nav_rail', value: 'כוח אדם,ארגון' }];
+      w.render();
+      const rail = w.document.getElementById('rail');
+      t.ok(!!rail.querySelector('[data-g="כוח אדם"]'), 'קטגוריה שנבחרה אינה ברצועה');
+      t.ok(!!rail.querySelector('[data-g="ארגון"]'), 'קטגוריה שנבחרה אינה ברצועה');
+      t.no(!!rail.querySelector('[data-g="מלאי ומחסן"]'), 'קטגוריה שלא נבחרה מופיעה ברצועה');
+    },
+
+    '⛔ מסך שאינו ברצועה נשאר נגיש מהתפריט העליון': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.DB.settings = [{ key: 'nav_rail', value: 'ארגון' }];
+      w.render();
+      t.hasNot(w.document.getElementById('rail').innerHTML, "go('finance')", 'הבדיקה לא בודקת כלום');
+      t.has(w.document.getElementById('nav').innerHTML, "go('finance')",
+        '⛔ בחירת הרצועה הסתירה מסך — היא קיצור דרך, לא הרשאה');
+    },
+
+    'רצועה ריקה אינה שוברת כלום': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.DB.settings = [{ key: 'nav_rail', value: '   ' }];
+      w.render();
+      t.eq(w.b63RailGroups().join(','), w.NAV_RAIL_DEFAULT, 'ערך ריק לא נפל לברירת המחדל');
+      w.DB.settings = [{ key: 'nav_rail', value: 'קטגוריה שלא קיימת' }];
+      w.render();
+      t.eq(w.document.getElementById('rail').innerHTML, '', 'שם קטגוריה זר לא סונן');
+      t.has(w.document.getElementById('nav').innerHTML, "go('orders')", 'התפריט העליון נפגע');
+    },
+
+    'הרצועה לעולם לא יותר מ-NAV_RAIL_MAX': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.DB.settings = [{ key: 'nav_rail', value: w.NAV_GROUPS.map(g => g[1]).join(',') }];
+      w.render();
+      t.eq(w.b63RailGroups().length, w.NAV_RAIL_MAX, 'התקרה של הרצועה נפרצה');
+      t.eq(w.document.getElementById('rail').querySelectorAll('.ngrp.side').length, w.NAV_RAIL_MAX,
+        'ברצועה מוצגות יותר קטגוריות מהתקרה');
+    },
+
+    'הרצועה מוסתרת מתחת ל-1100px ובמצב נהג': (t, { w, srv, H }) => {
+      H.setWidth(w, 1000);
+      H.login(w, 'מנהל', srv);
+      w.render();
+      t.eq(w.document.getElementById('rail').innerHTML, '', 'הרצועה נבנתה ב-1000px');
+      t.has(w.document.getElementById('nav').innerHTML, 'ghead', 'התפריט העליון נעלם ב-1000px');
+      H.setWidth(w, 1422);
+      H.login(w, 'נהג', srv);
+      t.eq(w.document.getElementById('rail').innerHTML, '', 'הנהג קיבל רצועת צד');
+      t.has(w.document.getElementById('nav').innerHTML, 'dtab', 'הנהג איבד את סרגל הטאבים');
+    },
+
+    'ברירת המחדל: כל קטגוריות הרצועה פתוחות': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.localStorage.removeItem(w.B62_PINS_KEY);
+      w.B62_PINS = null;
+      w.go('dash');
+      const grps = w.document.getElementById('rail').querySelectorAll('.ngrp.side');
+      t.ok(grps.length >= 2, 'הרצועה ריקה');
+      grps.forEach(g => t.ok(g.classList.contains('open'),
+        'קטגוריה ברצועה נפתחה מכווצת — מסלול מהיר לא יכול לדרוש לחיצה נוספת'));
+    },
+
+    'הקטגוריה של המסך הנוכחי פתוחה אוטומטית': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave([]);
+      w.go('laundry');                 // ייצור ומכבסה — ברצועה כברירת מחדל
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="ייצור ומכבסה"]');
+      t.ok(!!g, 'הקטגוריה לא נמצאה ברצועה');
+      t.ok(g.classList.contains('open'), 'הקטגוריה של המסך הנוכחי אינה פתוחה');
+      t.ok(g.classList.contains('cur'), 'הקטגוריה הנוכחית אינה מסומנת');
+    },
+
+    'קטגוריה שקופלה נשארת מכווצת': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave([]);
+      w.go('laundry');
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
+      t.no(g.classList.contains('open'), 'קטגוריה שלא נעוצה ואינה נוכחית נשארה פתוחה');
+    },
+
+    'לחיצה על שורת הכותרת פותחת (R7 — אירוע DOM אמיתי)': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave([]);
+      w.go('dash');
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
+      t.no(g.classList.contains('open'), 'כבר פתוחה — הבדיקה לא בודקת כלום');
+      H.click(w, g.querySelector('.gcap'));
+      t.ok(g.classList.contains('open'), 'לחיצה על הכותרת לא פתחה');
+      t.ok(w.b62NavPinned('מלאי ומחסן'), 'המצב לא נשמר');
+    },
+
+    'לחיצה שנייה מקפלת': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave(['מלאי ומחסן']);
+      w.go('dash');
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
+      H.click(w, g.querySelector('.gcap'));
+      t.no(g.classList.contains('open'), 'הקטגוריה נשארה פתוחה');
+      t.no(w.b62NavPinned('מלאי ומחסן'), 'הקיפול לא נשמר');
+    },
+
+    '⛔ הקטגוריה הנוכחית נשארת פתוחה גם אחרי קיפול': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave(['ייצור ומכבסה']);
+      w.go('laundry');
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="ייצור ומכבסה"]');
+      H.click(w, g.querySelector('.gcap'));
+      t.ok(g.classList.contains('open'), 'המסך שאתה נמצא בו נעלם מהרצועה — אסור');
+    },
+
+    'המצב נשמר ב-localStorage ושורד רינדור': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave(['מלאי ומחסן']);
+      w.B62_PINS = null;
+      t.ok(!!w.localStorage.getItem(w.B62_PINS_KEY), 'שום דבר לא נכתב — לא ישרוד רענון');
+      t.eq(w.b62NavPins().join(','), 'מלאי ומחסן', 'המצב לא נקרא חזרה');
+      w.go('dash');
+      const g = w.document.querySelector('#rail .ngrp.side[data-g="מלאי ומחסן"]');
+      t.ok(g.classList.contains('open'), 'המצב לא הוחל אחרי ניווט');
+      t.no(w.document.querySelector('#rail .ngrp.side[data-g="ארגון"]'), 'קטגוריה זרה נכנסה לרצועה');
+    },
+
+    'localStorage פגום אינו מפיל את הניווט': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.localStorage.setItem(w.B62_PINS_KEY, '{{לא JSON');
+      w.B62_PINS = null;
+      t.eq(w.b62NavPins().join(','), w.NAV_RAIL_DEFAULT, 'ערך פגום לא נפל לברירת המחדל');
+      w.render();
+      t.has(w.document.getElementById('nav').innerHTML, 'ghead', 'התפריט העליון לא נבנה');
+      w.localStorage.removeItem(w.B62_PINS_KEY);
+      w.B62_PINS = null;
+    },
+
+    'לחיצה על מסך ברצועה מנווטת (R7)': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('dash');
+      const btns = w.document.querySelectorAll('#rail .ngrp.side[data-g="מכירות ומשלוחים"] .gbody .nitem');
+      t.ok(btns.length >= 3, 'פריטי הקטגוריה חסרים מהרצועה');
+      H.click(w, btns[0]);
+      t.eq(w.VIEW, 'orders', 'לחיצה ברצועה לא ניווטה');
+    },
+
+    'מונה המסכים מוצג — שום מידע לא נעלם': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('dash');
+      const cnt = w.document.querySelector('#rail .ngrp.side[data-g="מכירות ומשלוחים"] .gcnt');
+      t.ok(!!cnt, 'מונה המסכים חסר');
+      t.eq(cnt.textContent, '5', 'המונה אינו תואם למספר המסכים');
+    },
+
+    'תפקיד מצומצם — התפריט והרצועה מסוננים יחד': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מכבסה', srv);
+      const nav = w.document.getElementById('nav').innerHTML;
+      const rail = w.document.getElementById('rail').innerHTML;
+      t.hasNot(nav, "go('payroll')", 'מסך שכר דלף לתפקיד מכבסה בתפריט העליון');
+      t.hasNot(nav, "go('audit')", 'יומן פעולות דלף לתפקיד שאינו מנהל');
+      t.hasNot(rail, "go('payroll')", 'מסך שכר דלף לרצועה');
+      t.hasNot(rail, "go('customers')", 'מסך לקוחות דלף לרצועה של תפקיד מכבסה');
+      t.has(rail, "go('laundry')", 'מסך כביסה נעלם מהרצועה של המכבסה');
+    },
+
+    'רצועה ריקה נעלמת ואינה משאירה פס': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.DB.settings = [{ key: 'nav_rail', value: 'קטגוריה שאינה קיימת' }];
+      w.render();
+      t.eq(w.document.getElementById('rail').style.display, 'none',
+        'הרצועה נשארה גלויה וריקה — פס כהה של 206px בלי תוכן');
+      w.DB.settings = [];
+      w.render();
+      t.ne(w.document.getElementById('rail').style.display, 'none', 'הרצועה לא חזרה');
+    },
+
+    '⛔ מבנה: #nav מחוץ ל-#shell, #rail בתוכו': (t, { H }) => {
+      const src = H.indexSrc();
+      const i = src.indexOf('<div id="shell">');
+      const j = src.indexOf('</div>', src.indexOf('<main id="main">'));
+      t.ok(i > -1, '#shell נעלם מה-HTML');
+      const inShell = src.slice(i, j);
+      t.hasNot(inShell, '<nav id="nav">',
+        '#nav חזר לתוך #shell — הוא לא יוכל להשתרע לרוחב מלא כשורת תפריט');
+      t.has(inShell, '<aside id="rail">', '#rail אינו בתוך #shell — הפריסה לשתי עמודות תישבר');
+      t.ok(src.indexOf('<nav id="nav">') < i, '#nav חייב לבוא לפני #shell כדי לשבת מתחת ל-header');
+    },
+
+    /* ===== B63: פאנל ההגדרות של הרצועה ===== */
+
+    'פאנל ההגדרות מציג את הקטגוריות ומסמן את הנבחרות': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('settings');
+      const boxes = w.document.querySelectorAll('input[data-b63g]');
+      t.ok(boxes.length >= 6, 'תיבות הסימון של הרצועה חסרות');
+      t.ok(!!w.document.getElementById('set_nav_rail'), 'השדה המוסתר set_nav_rail נעלם — ההגדרה לא תישמר');
+      const on = w.document.querySelector('input[data-b63g="מכירות ומשלוחים"]');
+      t.ok(on.checked, 'קטגוריית ברירת המחדל אינה מסומנת');
+    },
+
+    'הסרת סימון מעדכנת את השדה שנשמר (R7)': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('settings');
+      const box = w.document.querySelector('input[data-b63g="מלאי ומחסן"]');
+      box.checked = false;
+      H.change(w, box);
+      t.no(w.B63_RAIL.indexOf('מלאי ומחסן') > -1, 'ההסרה לא נקלטה');
+      t.hasNot(w.document.getElementById('set_nav_rail').value, 'מלאי ומחסן', 'השדה שנשמר לא עודכן');
+    },
+
+    'תקרת הרצועה נאכפת בפאנל ההגדרות': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('settings');
+      const box = w.document.querySelector('input[data-b63g="כוח אדם"]');
+      box.checked = true;
+      H.change(w, box);
+      t.ok(w.B63_RAIL.length <= w.NAV_RAIL_MAX, 'התקרה נפרצה מפאנל ההגדרות');
+      t.no(box.checked, 'התיבה נשארה מסומנת אף שהתקרה מנעה את ההוספה');
+    },
+
+    'nav_rail נכנס לרשימת המפתחות שנשמרים לשרת': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const i = src.indexOf("concat(['agreement_text'");
+      t.ok(i > -1, 'רשימת מפתחות השמירה לא נמצאה');
+      t.has(src.slice(i, i + 160), "'nav_rail'", 'nav_rail לא נשמר — הבחירה תיעלם ברענון');
+      t.has(src.slice(i, i + 160), "'nav_quick'", 'nav_quick הוסר מרשימת השמירה');
+    },
+
+    /* ===== BLD-04 — קיצורי דרך ===== */
+
+    'תקרת הקיצורים היא 10, ותוויות עד 6': (t, { w }) => {
+      t.eq(w.NAV_QUICK_MAX, 10, 'תקרת הקיצורים לא עודכנה');
+      t.eq(w.NAV_QUICK_LABEL_MAX, 6, 'סף התוויות השתנה');
+      t.ok(w.NAV_QUICK_LABEL_MAX <= w.NAV_QUICK_MAX, 'סף התוויות גדול מהתקרה');
+    },
+
+    'עד 6 קיצורים — תוויות. מעל — אייקון בלבד ובלי גלישה': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      const q = w.document.getElementById('qnav');
+      t.no(/qmini/.test(q.className), 'ברירת המחדל (5 קיצורים) כבר במצב אייקון');
+      w.DB.settings = [{ key: 'nav_quick', value: 'orders,customers,deliveries,laundry,calendar,items,finance,staff' }];
+      w.render();
+      t.ok(/qmini/.test(q.className), '8 קיצורים לא עברו למצב אייקון — השורה העליונה תגלוש');
+      t.eq(q.children.length, 8, 'מספר הקיצורים המוצג אינו תואם להגדרה');
+    },
+
+    'לעולם לא יותר מ-NAV_QUICK_MAX קיצורים בשורה': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.DB.settings = [{ key: 'nav_quick', value: w.VIEWS.map(v => v[0]).join(',') }];
+      w.render();
+      t.ok(w.document.getElementById('qnav').children.length <= w.NAV_QUICK_MAX,
+        'השורה העליונה חרגה מהתקרה');
+    },
+
+    'רצועת הסידור מציגה את הקיצורים לפי הסדר וממוספרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.B53_QUICK = ['orders', 'customers', 'deliveries'];
+      const html = w.b62QuickOrderHtml();
+      t.has(html, 'data-k="orders"', 'שבב הזמנות חסר');
+      t.has(html, 'qchip', 'רצועת הסידור לא נבנתה');
+      t.has(html, 'onpointerdown', 'אין מאזין גרירה — BLD-04 לא ממומש');
+      t.hasNot(html, 'ondragstart', 'נעשה שימוש ב-HTML5 drag — אינו נורה במסך מגע');
+      t.ok(html.indexOf('data-k="orders"') < html.indexOf('data-k="deliveries"'),
+        'הסדר ברצועה אינו סדר B53_QUICK');
+    },
+
+    'touch-action:none מוגדר לשבב — בלעדיו הגרירה לא תעבוד במגע': (t, { H }) => {
+      const src = H.indexSrc();
+      const i = src.indexOf('.qchip{');
+      t.ok(i > -1, 'לא נמצא כלל CSS ל-.qchip');
+      t.has(src.slice(i, i + 400), 'touch-action:none',
+        '⛔ בלי touch-action:none הדפדפן במגע יגלול במקום לגרור — זה כשל B60 בתחפושת');
+    },
+
+    'החצים מזיזים מקום אחד ואינם גולשים מהקצה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.B53_QUICK = ['orders', 'customers', 'deliveries'];
+      w.b62QMove('customers', -1);
+      t.eq(w.B53_QUICK.join(','), 'customers,orders,deliveries', 'הזזה ימינה לא עבדה');
+      w.b62QMove('customers', -1);
+      t.eq(w.B53_QUICK.join(','), 'customers,orders,deliveries', 'הזזה מעבר לקצה שינתה את הסדר');
+      w.b62QMove('deliveries', 1);
+      t.eq(w.B53_QUICK.join(','), 'customers,orders,deliveries', 'הזזה מעבר לקצה השני שינתה את הסדר');
+      w.b62QMove('orders', 1);
+      t.eq(w.B53_QUICK.join(','), 'customers,deliveries,orders', 'הזזה שמאלה לא עבדה');
+    },
+
+    'הזזה של מפתח שאינו ברשימה אינה עושה כלום': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.B53_QUICK = ['orders', 'customers'];
+      w.b62QMove('items', -1);
+      t.eq(w.B53_QUICK.join(','), 'orders,customers', 'מפתח זר שינה את הסדר');
+    },
+
+    'הסדר מסונכרן לשדה המוסתר שנשמר לשרת': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('settings');
+      const hidden = w.document.getElementById('set_nav_quick');
+      t.ok(!!hidden, 'השדה המוסתר set_nav_quick נעלם — ההגדרה לא תישמר');
+      w.B53_QUICK = ['items', 'orders'];
+      w.b62QSync();
+      t.eq(hidden.value, 'items,orders', 'הסדר לא הועבר לשדה שנשמר');
+    },
+
+    'סימון תיבה מצייר מחדש את רצועת הסידור': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('settings');
+      const box = w.document.querySelector('input[data-b53k="items"]');
+      t.ok(!!box, 'תיבת הסימון של פריטים לא נמצאה');
+      box.checked = true;
+      H.change(w, box);
+      t.ok(w.B53_QUICK.indexOf('items') > -1, 'הסימון לא נכנס לרשימה');
+      t.has(w.document.getElementById('b62QOrderWrap').innerHTML, 'data-k="items"',
+        'רצועת הסידור לא צוירה מחדש אחרי סימון');
+    },
+
+    'תקרת הקיצורים נאכפת גם בפאנל ההגדרות': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('settings');
+      w.B53_QUICK = w.VIEWS.slice(0, w.NAV_QUICK_MAX).map(v => v[0]);
+      const box = w.document.querySelector('input[data-b53k="settings"]');
+      box.checked = true;
+      H.change(w, box);
+      t.ok(w.B53_QUICK.length <= w.NAV_QUICK_MAX, 'התקרה נפרצה מפאנל ההגדרות');
+      t.no(box.checked, 'התיבה נשארה מסומנת אף שהתקרה מנעה את ההוספה');
+    },
+
+    /* ===== T2 — סרגלי פעולות ===== */
+
+    'שורת הפעולות של ההזמנה: פעולה ראשית אחת + ⋯': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const o = { id: 'o1', status: 'סופקה', customer_id: 'c1', type: 'השכרה' };
+      const html = w.b62OrderActions(o, 'o1', '<button class="btn pri">קבל החזרה</button>', '', []);
+      t.has(html, 'actrow', 'לא נעשה שימוש בדפוס .actrow הקיים');
+      t.has(html, 'more-wrap', 'לא נעשה שימוש בדפוס ⋯ הקיים — R8 אוסר דפוס שני');
+      t.eq((html.match(/class="btn pri/g) || []).length, 1, 'יותר מפעולה ראשית אחת גלויה');
+    },
+
+    '⛔ אף פעולה לא נעלמה — הדפסה, תרשומות ותיוג נשארות נגישות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const o = { id: 'o1', status: 'סופקה', customer_id: 'c1', type: 'השכרה' };
+      const html = w.b62OrderActions(o, 'o1', '<button class="btn pri">x</button>', '', []);
+      t.has(html, 'printOrderForm', 'ההדפסה נעלמה מכרטיס ההזמנה');
+      t.has(html, 'notesModal', 'התרשומות נעלמו מכרטיס ההזמנה');
+      t.has(html, 'tagDialog', 'התיוג נעלם מכרטיס ההזמנה');
+    },
+
+    'הפעולות המשניות שהועברו ל-⋯ נשמרו כלשונן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const o = { id: 'o1', status: 'מאושרת', customer_id: 'c1', type: 'השכרה' };
+      const more = ['<button class="btn">הפק חשבונית</button>', '<button class="btn dng">בטל הזמנה</button>'];
+      const html = w.b62OrderActions(o, 'o1', '<button class="btn pri">סמן כסופקה</button>', '', more);
+      t.has(html, 'הפק חשבונית', 'הפקת חשבונית נעלמה');
+      t.has(html, 'בטל הזמנה', 'ביטול ההזמנה נעלם');
+    },
+
+    'moreMenu ריק אינו מייצר כפתור ⋯ מיותר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.moreMenu([]), '', 'תפריט ריק מייצר ⋯ ללא תוכן');
+      t.eq(w.moreMenu(['', '  ']), '', 'פריטים ריקים אינם מסוננים');
+    },
+
+    'השורה העליונה: רענון גלוי, שינוי סיסמה ויציאה ב-⋯': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      const hdr = w.document.querySelector('header');
+      t.ok(!!hdr.querySelector('#btnRefresh'), 'כפתור הרענון נעלם מהשורה העליונה');
+      const more = hdr.querySelector('#hdrMore');
+      t.ok(!!more, 'תפריט ⋯ לא נוסף לשורה העליונה');
+      t.has(more.innerHTML, 'changeMyPassword', 'שינוי סיסמה נעלם לגמרי במקום לעבור ל-⋯');
+      t.has(more.innerHTML, 'doLogout', 'היציאה נעלמה לגמרי');
+    },
+
+    '⛔ לנהג נשארת יציאה נגישה': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv);
+      const more = w.document.querySelector('#hdrMore');
+      t.ok(!!more, 'תפריט ⋯ נעלם במצב נהג — הנהג נשאר בלי כפתור יציאה');
+      t.has(more.innerHTML, 'doLogout', 'הנהג איבד את היכולת לצאת מהמערכת');
+    },
+
+    'תפריט ⋯ נפתח ונסגר (R7 — אירוע DOM אמיתי)': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      const wrap = w.document.querySelector('#hdrMore');
+      const btn = wrap.querySelector('button');
+      const pop = wrap.querySelector('.more-pop');
+      t.no(pop.classList.contains('on'), 'התפריט פתוח כבר בטעינה');
+      H.click(w, btn);
+      t.ok(pop.classList.contains('on'), 'לחיצה על ⋯ לא פתחה את התפריט');
+      H.click(w, btn);
+      t.no(pop.classList.contains('on'), 'לחיצה שנייה לא סגרה');
+    },
+
+    /* ===== canary ===== */
+
+    'canary עודכן ל-B63 בשני המקומות': (t, { H }) => {
+      const s = H.indexSrc();
+      const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
+      const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
+      t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
+      t.eq(inJs, 'v4.62-B63', 'ה-canary לא עודכן ל-B63');
+    },
+
+    'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      ['שורת התפריט העליונה אינה גולשת (B63)',
+       'רצועת הצד נכנסת לגובה החלון בלי גלילה',
+       'קיפול קטגוריות ברצועה נשמר ונקרא חזרה',
+       'גרירת הקיצורים תעבוד במכשיר הזה (BLD-04)',
+       'שורת הקיצורים העליונה אינה גולשת',
+       'המסך הנוכחי אינו גולש לרוחב (ACT-05 · BLD-05)'
+      ].forEach(n => t.has(names, n,
+        '⛔ אצווה שנוגעת ביכולת דפדפן חייבת להוסיף לשכבה 2 — חסרה הטענה: ' + n));
+    },
+
+    'הטענות החדשות אינן שולחות בקשה לשרת': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.go('audit');
+      w.__fetches.length = 0;
+      w.b61Run();
+      t.eq(w.__fetches.length, 0, 'הבדיקה העצמית שולחת בקשות — היא חייבת להיות קריאה בלבד');
+    },
+
+    'הבדיקה העצמית אינה משאירה זבל ב-localStorage': (t, { w, srv, H }) => {
+      H.setWidth(w, 1422);
+      H.login(w, 'מנהל', srv);
+      w.b62NavPinsSave(['ארגון']);
+      w.b61Run();
+      w.B62_PINS = null;
+      t.eq(w.b62NavPins().join(','), 'ארגון',
+        'הבדיקה העצמית דרסה את מצב הקיפול של המשתמש במקום להחזיר אותו');
+    }
+
+  }
+});
+
+/* ==================== חלק 2 — המריץ ==================== */
+
+/* ============================================================
+   MAPA-NOBLE — מריץ הבדיקות   (B61 · BLD-08)
+   ============================================================
+   הרצה מתוך שורש הריפו:   node tests/run.js
+   הרצת קובץ אחד:          node tests/run.js t02
+
+   **אבי לא מריץ את זה. אף פעם.** הריצה היא אצל הצ'אט, לפני כל מסירה.
+   מי שמריץ הוא הצ'אט שבונה את האצווה — וחייב לדווח את המספר.
+
+   ⚠ שלושה כללים שהמריץ אוכף בעצמו:
+   1. **בדיקת תחביר לפני הכול.** node --check על בלוק ה-<script> ועל
+      קוד השרת. אם התחביר שבור — עוצרים מיד, בלי להריץ בדיקה אחת.
+   2. **מניעת ריקבון.** כל קובץ בדיקות מצהיר ב-requires על הסמלים
+      בקוד החי שהוא נשען עליהם. סמל שנמחק מהקוד ⇦ **הקובץ כולו נכשל
+      ברעש**, ולא עובר בשקט. זה מה שמונע ספרייה של בדיקות מתות.
+   3. **אין רשת.** fetch מוחלף; כל קריאה לא צפויה נספרת וניתנת לבדיקה.
+   ============================================================ */
+
+const cp = require('child_process');
+
+const only = process.argv[2] || '';
+const RED = s => '\x1b[31m' + s + '\x1b[0m';
+const GRN = s => '\x1b[32m' + s + '\x1b[0m';
+const YEL = s => '\x1b[33m' + s + '\x1b[0m';
+const DIM = s => '\x1b[2m' + s + '\x1b[0m';
+
+/* ---------- שלב 0: בדיקת תחביר ---------- */
+function syntaxCheck() {
+  const tmp = path.join(ROOT, '.syntax');
+  fs.mkdirSync(tmp, { recursive: true });
+  const a = path.join(tmp, 'ui.js');
+  const b = path.join(tmp, 'server.js');
+  fs.writeFileSync(a, H.uiScript(), 'utf8');
+  fs.writeFileSync(b, H.serverSrc(), 'utf8');
+  const run = f => {
+    try { cp.execFileSync(process.execPath, ['--check', f], { stdio: 'pipe' }); return null; }
+    catch (e) { return String(e.stderr || e.message).split('\n').slice(0, 4).join('\n'); }
+  };
+  const ea = run(a), eb = run(b);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return { ui: ea, server: eb };
+}
+
+/* ---------- כלי טענה ---------- */
+function makeT() {
+  const fails = [];
+  const t = {
+    ok(v, msg) { if (!v) fails.push(msg || 'ציפיתי לערך אמת, קיבלתי ' + JSON.stringify(v)); },
+    no(v, msg) { if (v) fails.push(msg || 'ציפיתי לערך שקר, קיבלתי ' + JSON.stringify(v)); },
+    eq(a, b, msg) { if (a !== b) fails.push((msg ? msg + ' — ' : '') + 'ציפיתי ל-' + JSON.stringify(b) + ', קיבלתי ' + JSON.stringify(a)); },
+    ne(a, b, msg) { if (a === b) fails.push((msg ? msg + ' — ' : '') + 'ציפיתי שיהיה שונה מ-' + JSON.stringify(b)); },
+    has(hay, needle, msg) { if (String(hay).indexOf(needle) === -1) fails.push((msg ? msg + ' — ' : '') + 'לא נמצא: ' + needle); },
+    hasNot(hay, needle, msg) { if (String(hay).indexOf(needle) > -1) fails.push((msg ? msg + ' — ' : '') + 'נמצא ואסור: ' + needle); },
+    throws(fn, msg) { let th = false; try { fn(); } catch (e) { th = true; } if (!th) fails.push(msg || 'ציפיתי לשגיאה'); },
+    fail(msg) { fails.push(msg || 'נכשל'); },
+    _fails: fails
+  };
+  return t;
+}
+
+/* ---------- מניעת ריקבון ---------- */
+function checkRequires(spec, scope, label) {
+  const missing = (spec.requires || []).filter(name => {
+    const v = scope[name];
+    return v === undefined || v === null;
+  });
+  if (!missing.length) return null;
+  return 'ריקבון בדיקות — ' + missing.length + ' סמלים שהקובץ נשען עליהם כבר לא קיימים ב' + label +
+    ':\n        ' + missing.join(', ') +
+    '\n        או שהקוד השתנה והבדיקה צריכה עדכון, או שנמחק משהו בטעות. אין לעבור על זה בשתיקה.';
+}
+
+/* ---------- ראשי ---------- */
+(function main() {
+  const t0 = Date.now();
+  console.log('\n' + '='.repeat(62));
+  console.log('  MAPA-NOBLE — בדיקות רגרסיה');
+  console.log('='.repeat(62));
+
+  const syn = syntaxCheck();
+  if (syn.ui || syn.server) {
+    console.log(RED('\n  ✗ בדיקת תחביר נכשלה — עוצר לפני שהורצה בדיקה אחת.\n'));
+    if (syn.ui) console.log(RED('  index.html:\n') + syn.ui);
+    if (syn.server) console.log(RED('  קוד שרת.txt:\n') + syn.server);
+    process.exit(1);
+  }
+  console.log(GRN('  ✓ תחביר: index.html + קוד שרת.txt תקינים'));
+
+  const files = SPECS.filter(sp => !only || String(sp.file).indexOf(only) === 0);
+
+  if (!files.length) { console.log(RED('  לא נמצא חלק בדיקות בשם ' + only + '')); process.exit(1); }
+
+  /* הקשרים משותפים — נבנים פעם אחת ומועברים לקבצים שמבקשים אותם */
+  let serverCtx = null, uiCache = null;
+  const getServer = () => (serverCtx || (serverCtx = H.loadServer()));
+  const getUi = () => H.loadUi();   // חלון טרי לכל קובץ — בידוד מצב
+
+  let pass = 0, fail = 0, rot = 0;
+  const failures = [];
+
+  files.forEach(spec => {
+    const f = spec.file || '?';
+    const needs = spec.needs || 'src';
+    console.log('\n  ' + DIM('─'.repeat(58)));
+    console.log('  ' + (spec.title || f) + DIM('   [' + f + ']'));
+
+    let scope = {}, label = 'קוד', env = {};
+    try {
+      if (needs === 'server') { const c = getServer(); scope = c; label = 'קוד השרת'; env = { srv: c, H }; }
+      else if (needs === 'ui') { const u = getUi(); uiCache = u; scope = u.window; label = 'ממשק'; env = { w: u.window, dom: u.dom, srv: getServer(), H }; }
+      else { scope = { src: 1 }; env = { H, srv: getServer() }; }
+    } catch (e) {
+      console.log('    ' + RED('✗ טעינת הסביבה נכשלה: ' + e.message));
+      fail++; failures.push(f + ' — טעינת סביבה: ' + e.message);
+      return;
+    }
+
+    const rotErr = checkRequires(spec, scope, label);
+    if (rotErr) {
+      console.log('    ' + RED('✗✗ ' + rotErr));
+      rot++; fail++; failures.push(f + ' — ' + rotErr.split('\n')[0]);
+      if (uiCache) { try { uiCache.dom.window.close(); } catch (e) {} uiCache = null; }
+      return;
+    }
+
+    Object.keys(spec.tests).forEach(name => {
+      const t = makeT();
+      try { spec.tests[name](t, env); }
+      catch (e) { t._fails.push('שגיאה בזמן ריצה: ' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e)); }
+      if (t._fails.length) {
+        fail++;
+        console.log('    ' + RED('✗ ') + name);
+        t._fails.forEach(m => console.log('        ' + RED(m)));
+        failures.push(f + ' › ' + name);
+      } else {
+        pass++;
+        console.log('    ' + GRN('✓ ') + DIM(name));
+      }
+    });
+
+    if (uiCache) { try { uiCache.dom.window.close(); } catch (e) {} uiCache = null; }
+  });
+
+  const ms = Date.now() - t0;
+  console.log('\n' + '='.repeat(62));
+  if (fail === 0) {
+    console.log(GRN('  ✓ ' + pass + ' בדיקות · 0 כשלים') + DIM('   (' + files.length + ' חלקים · ' + ms + ' מ״ש)'));
+  } else {
+    console.log(RED('  ✗ ' + fail + ' כשלים') + ' · ' + pass + ' עברו' + (rot ? YEL('  · ' + rot + ' קבצי ריקבון') : ''));
+    failures.forEach(x => console.log('    ' + RED('· ') + x));
+  }
+  console.log('='.repeat(62) + '\n');
+  process.exit(fail === 0 ? 0 : 1);
+})();
