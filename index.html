@@ -505,7 +505,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.56-B58a · 30.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.57-B59 · 30.07.2026</div>
   </div>
 </div>
 
@@ -2839,19 +2839,91 @@ function openLaundryTask(tid){
     '</div>');
 }
 /* --- קידום שלב: עגלה ומכונה חובה; בסיום — הכרעת מידוף --- */
-/* B40 (החלטת אבי): אין יותר דילוג. כל מעבר שלב מחייב עגלה וגם מכונה.
+/* B40 (החלטת אבי): כל מעבר שלב מחייב עגלה וגם מכונה.
    כדי שזה לא ייצור מבוי סתום — אם אין עגלה פנויה או מכונה פעילה,
-   אפשר ליצור אחת מתוך אותו מסך. */
+   אפשר ליצור אחת מתוך אותו מסך.
+   ⭐ B59 (T5 — הכרעת אבי 30.07.2026): שלב היעד נבחר מפורשות
+   ואינו נגזר מהסדר. עד כאן advanceForm חישבה STAGES[idx+1] ושלחה
+   לשרת עגלה ומכונה בלבד — ולכן בחירת מכונת גיהוץ/אריזה קידמה
+   בכל זאת ל"בייבוש". מעכשיו: בורר "שלב יעד", דילוג קדימה
+   וחזרה אחורה מותרים, ורשימת המכונות מסודרת כך שהמתאימות
+   לשלב הנבחר מופיעות ראשונות.
+   ⚠ "באריזה" אינו שלב בלוח הכביסה (STAGES) אלא שלב מכונה בלבד
+   (NOBLE_MACHINE_STAGES) — מכונת אריזה נחשבת מתאימה ל"בגיהוץ וקיפול".
+   אין עמודה חדשה בלוח ואין שינוי בערכים הנשמרים. */
+function b59MachStage(m){
+  var s = String((m&&m.auto_stage)||'');
+  return s==='באריזה' ? 'בגיהוץ וקיפול' : s;
+}
+function b59Targets(cur){
+  return STAGES.filter(function(s){ return s!==cur && s!=='התקבל'; });
+}
+function b59TargetLabel(cur, s){
+  var i = STAGES.indexOf(cur), j = STAGES.indexOf(s);
+  if(j===i+1) return s+' — השלב הבא';
+  if(j>i)     return s+' — דילוג שלבים';
+  return s+' — חזרה אחורה';
+}
+function b59Machines(){
+  return (DB.machines||[]).filter(function(m){ return !m.status || m.status==='פעילה'; });
+}
+function b59MachOpts(target, sel){
+  var fit=[], oth=[];
+  b59Machines().forEach(function(m){ (b59MachStage(m)===target?fit:oth).push(m); });
+  var opt=function(m){ return '<option value="'+esc(m.id)+'"'+(m.id===sel?' selected':'')+'>'+
+    esc(m.type||'מכונה')+' · '+esc(m.id)+(m.auto_stage?' ('+esc(m.auto_stage)+')':'')+'</option>'; };
+  var h='<option value="">— בחר מכונה —</option>';
+  if(fit.length) h+='<optgroup label="מתאימות ל'+esc(target)+'">'+fit.map(opt).join('')+'</optgroup>';
+  if(oth.length) h+='<optgroup label="מכונות אחרות">'+oth.map(opt).join('')+'</optgroup>';
+  return h;
+}
+/* המכונה שתיבחר מראש: הנוכחית אם היא מתאימה לשלב, אחרת הראשונה שמתאימה */
+function b59DefaultMach(target, cur){
+  var ms = b59Machines();
+  var keep = ms.filter(function(m){ return m.id===cur && b59MachStage(m)===target; })[0];
+  if(keep) return keep.id;
+  var fit = ms.filter(function(m){ return b59MachStage(m)===target; })[0];
+  if(fit) return fit.id;
+  return ms.some(function(m){ return m.id===cur; })? cur : '';
+}
+var B59_TASK = null;
 function advanceForm(tid){
   var t = DB.laundryTasks.find(x=>x.id===tid); if(!t) return;
   var idx = STAGES.indexOf(t.stage);
-  var nextSt = (idx>-1 && idx<STAGES.length-1)? STAGES[idx+1] : '';
-  if(!nextSt) return toast('המשימה כבר בשלב מוכן', true);
-  var head = '<h2>קידום שלב — '+esc(t.stage)+' ← '+esc(nextSt)+'</h2>'+
-    '<div class="muted" style="margin-bottom:10px">'+esc(item(t.item_id))+' × '+esc(t.qty)+' · '+esc(cust((DB.orders.find(o=>o.id===t.order_id)||{}).customer_id))+'</div>';
-  if(nextSt==='מוכן'){
+  /* B59: משימה שהגיעה ל"מוכן" נסגרה — done_date נרשם, העגלה שוחררה
+     וייתכן שההזמנה נסגרה. השרת חוסם את זה, והמסך חייב להסכים איתו. */
+  if(idx===STAGES.length-1) return toast('המשימה כבר בשלב מוכן', true);
+  var targets = (idx>-1)? b59Targets(t.stage) : [];
+  if(!targets.length) return toast('המשימה כבר בשלב מוכן', true);
+  var def = (idx>-1 && idx<STAGES.length-1)? STAGES[idx+1] : targets[0];
+  B59_TASK = t;
+  openModal(
+    '<h2>קידום שלב — '+esc(t.stage)+' ← <span id="adv_head">'+esc(def)+'</span></h2>'+
+    '<div class="muted" style="margin-bottom:10px">'+esc(item(t.item_id))+' × '+esc(t.qty)+' · '+
+      esc(cust((DB.orders.find(o=>o.id===t.order_id)||{}).customer_id))+'</div>'+
+    '<div class="frow"><label>שלב יעד <b style="color:var(--danger)">*</b></label>'+
+      '<select id="adv_to" onchange="b59StageChg()">'+
+      targets.map(function(s){ return '<option value="'+esc(s)+'"'+(s===def?' selected':'')+'>'+
+        esc(b59TargetLabel(t.stage,s))+'</option>'; }).join('')+'</select>'+
+      '<div class="muted" style="font-size:12px">אפשר לדלג על שלבים או לחזור אחורה — המעבר נרשם ביומן המשימה.</div></div>'+
+    '<div id="adv_body"></div>'+
+    '<div class="row" style="margin-top:6px">'+
+      '<button class="btn" id="adv_go" onclick="doAdvance(\''+esc(tid)+'\')">קדם ל'+esc(def)+'</button>'+
+      '<button class="btn ghost" onclick="openLaundryTask(\''+esc(tid)+'\')">ביטול</button></div>');
+  b59StageChg();
+}
+/* בחירת שלב יעד מחליפה את גוף הטופס: "מוכן" → הכרעת מידוף,
+   כל שלב עבודה → עגלה ומכונה. אותם מזהי שדה כמו קודם — doAdvance לא השתנתה. */
+function b59StageChg(){
+  var t = B59_TASK; if(!t) return;
+  var sel = el('adv_to'); if(!sel) return;
+  var to = sel.value;
+  var hd = el('adv_head'); if(hd) hd.textContent = to;
+  var go = el('adv_go'); if(go) go.textContent = (to==='מוכן'? 'סיים והעבר ל"מוכן"' : 'קדם ל'+to);
+  var body = el('adv_body'); if(!body) return;
+  if(to==='מוכן'){
     var shelves = (DB.shelves||[]).filter(s=>s.active!=='לא');
-    return openModal(head+
+    body.innerHTML =
       '<div class="card" style="background:#EFF6F5;border-color:var(--teal);padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
         'הכביסה מסתיימת וחוזרת למלאי הזמין. לפני זה — לאן היא הולכת פיזית?</div>'+
       '<div class="frow"><label>יעד</label><select id="adv_rel" onchange="b40RelChg()">'+
@@ -2860,26 +2932,22 @@ function advanceForm(tid){
       '<div class="frow" id="adv_shelfrow"><label>מדף יעד</label><select id="adv_shelf">'+
         (shelves.length? shelves.map(s=>'<option value="'+esc(s.code)+'">'+esc(s.code)+(s.location?' · '+esc(s.location):'')+'</option>').join('')
                        : '<option value="">— אין מדפים מוגדרים —</option>')+'</select>'+
-        (shelves.length?'':'<div class="muted" style="font-size:12px">אין מדפים במערכת. הגדר מדפים במסך "מדפים", או בחר "ללא מידוף".</div>')+'</div>'+
-      '<div class="row" style="margin-top:6px">'+
-        '<button class="btn" onclick="doAdvance(\''+tid+'\')">סיים והעבר ל"מוכן"</button>'+
-        '<button class="btn ghost" onclick="openLaundryTask(\''+tid+'\')">ביטול</button></div>');
+        (shelves.length?'':'<div class="muted" style="font-size:12px">אין מדפים במערכת. הגדר מדפים במסך "מדפים", או בחר "ללא מידוף".</div>')+'</div>';
+    return;
   }
   /* B49b: עגלות וירטואליות (קליטה ידנית NOBLE) אינן נכס פיזי — לא בוחרים בהן */
   var freeCarts = b49bRealCarts().filter(c=>c.status==='פנויה' || c.id===t.cart_id);
-  var machines  = (DB.machines||[]).filter(m=>!m.status || m.status==='פעילה');
-  openModal(head+
+  var machines  = b59Machines();
+  var defMach   = b59DefaultMach(to, t.machine_id||'');
+  body.innerHTML =
     '<div class="card" style="background:#EFF6F5;border-color:var(--teal);padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
       'חובה לבחור עגלה וגם מכונה. הבחירה נרשמת ביומן המשימה ומופיעה בהיסטוריה.</div>'+
     '<div class="frow"><label>עגלה <b style="color:var(--danger)">*</b></label><select id="adv_cart"><option value="">— בחר עגלה —</option>'+
       freeCarts.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===t.cart_id?' selected':'')+'>'+esc(c.id)+(c.location?' · '+esc(c.location):'')+(String(c.condition||'תקינה')!=='תקינה'?' ⚠ '+esc(c.condition):'')+'</option>').join('')+'</select>'+
       (freeCarts.length?'':'<div class="muted" style="font-size:12px">אין עגלות פנויות. <span class="lnk" onclick="closeModal();go(\'assets\');cartForm()">צור עגלה חדשה</span></div>')+'</div>'+
-    '<div class="frow"><label>מכונה <b style="color:var(--danger)">*</b></label><select id="adv_mach"><option value="">— בחר מכונה —</option>'+
-      machines.map(m=>'<option value="'+esc(m.id)+'"'+(m.id===t.machine_id?' selected':'')+'>'+esc(m.type||'מכונה')+' · '+esc(m.id)+(m.auto_stage?' ('+esc(m.auto_stage)+')':'')+'</option>').join('')+'</select>'+
-      (machines.length?'':'<div class="muted" style="font-size:12px">אין מכונות פעילות. <span class="lnk" onclick="closeModal();go(\'assets\');machForm()">צור מכונה חדשה</span></div>')+'</div>'+
-    '<div class="row" style="margin-top:6px">'+
-      '<button class="btn" onclick="doAdvance(\''+tid+'\')">קדם ל'+esc(nextSt)+'</button>'+
-      '<button class="btn ghost" onclick="openLaundryTask(\''+tid+'\')">ביטול</button></div>');
+    '<div class="frow"><label>מכונה <b style="color:var(--danger)">*</b></label><select id="adv_mach">'+
+      b59MachOpts(to, defMach)+'</select>'+
+      (machines.length?'':'<div class="muted" style="font-size:12px">אין מכונות פעילות. <span class="lnk" onclick="closeModal();go(\'assets\');machForm()">צור מכונה חדשה</span></div>')+'</div>';
 }
 function b40RelChg(){
   var isShelf = el('adv_rel').value==='מדף';
@@ -2887,6 +2955,9 @@ function b40RelChg(){
 }
 async function doAdvance(tid){
   var pl = {task_id:tid};
+  /* B59: שלב היעד נשלח מפורשות. בהעדרו השרת נופל חזרה לשלב הבא לפי הסדר. */
+  var to = el('adv_to');
+  if(to && to.value) pl.to_stage = to.value;
   var rel = el('adv_rel');
   if(rel){
     pl.release_mode = rel.value;
