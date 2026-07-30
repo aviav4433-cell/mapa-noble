@@ -98,6 +98,15 @@
 //                   ⚠ bumpDataVersion לא נגעה (R4) — חותמות audit_log כבר
 //                     מספקות את יומן הדריסות רטרואקטיבית.
 //                   ⚠ אין תיקון ביצועים באצווה הזו. אין שינוי סכימה.
+//             B59 — T5: קידום שלב לפי בחירה, לא לפי הסדר — canary v4.57-B59
+//                   • advanceLaundry מקבלת opts.to_stage. בהעדרו — STAGES[idx+1],
+//                     זהה ביט-אחר-ביט להתנהגות B40 (R4).
+//                   • מותר: דילוג קדימה (בכביסה ← בגיהוץ וקיפול) וחזרה אחורה
+//                     (כביסה חוזרת). אסור: שלב לא מוכר · "התקבל" · השלב הנוכחי.
+//                   • המעבר נרשם ב-laundry_task_events עם הערת "דילוג שלבים"/"חזרה
+//                     לשלב קודם". stage_from/stage_to כבר קיימות — אין עמודה חדשה.
+//                   ⚠ b49cAfterAdvance לא נגעה — הגשר משקף את toStage כמות שהוא.
+//                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -2377,9 +2386,11 @@ function handle(action, p, db, user) {
     }
     case 'advanceLaundry': {
       // B40: שיוך עגלה+מכונה חובה; בסיום — הכרעת מידוף. הכול נרשם ביומן.
+      // B59: שלב היעד מגיע מהמסך (to_stage) — דילוג וחזרה מותרים.
       var r5 = advanceLaundry(db, p.task_id, today(), {
         cart_id: p.cart_id, machine_id: p.machine_id, worker: p.worker,
-        release_mode: p.release_mode, shelf_code: p.shelf_code, note: p.note
+        release_mode: p.release_mode, shelf_code: p.shelf_code, note: p.note,
+        to_stage: p.to_stage   // B59: שלב יעד נבחר; בהעדרו — השלב הבא לפי הסדר
       }, genId, user);
       if (r5.ok) {
         // C3: הנפקת ברקוד אריזה אוטומטי במעבר ל'מוכן'
@@ -4738,6 +4749,21 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   var idx = STAGES.indexOf(t.stage);
   if (idx === -1 || idx === STAGES.length - 1) return { ok: false, error: 'המשימה כבר בשלב מוכן' };
   var fromStage = t.stage, toStage = STAGES[idx + 1];
+  /* ⭐ B59 (T5 — הכרעת אבי 30.07.2026): שלב היעד נקבע לפי הבחירה,
+     לא לפי הסדר. בהעדר to_stage — התנהגות זהה לחלוטין לקודם (R4).
+     מותר: דילוג קדימה וחזרה אחורה (כביסה חוזרת).
+     אסור: שלב שאינו ב-STAGES, חזרה ל"התקבל", ובחירת השלב הנוכחי.
+     ⚠ אין שינוי סכימה — הערכים הנשמרים הם אותם ערכי STAGES. */
+  if (opts.to_stage !== undefined && opts.to_stage !== null && String(opts.to_stage).trim() !== '') {
+    var b59Want = String(opts.to_stage).trim();
+    var b59Wi = STAGES.indexOf(b59Want);
+    if (b59Wi === -1) return { ok: false, error: 'שלב יעד לא מוכר: ' + b59Want };
+    if (b59Want === 'התקבל') return { ok: false, error: 'אין להחזיר משימה לשלב "התקבל"' };
+    if (b59Wi === idx) return { ok: false, error: 'המשימה כבר בשלב ' + b59Want };
+    toStage = b59Want;
+  }
+  var b59To = STAGES.indexOf(toStage);
+  var b59Jump = (b59To > idx + 1), b59Back = (b59To < idx);
   var isFinish = (toStage === 'מוכן');
   // B49c: העגלה שהחזיקה את המשימה עד לרגע הזה — עליה נסגרים השלבים הפתוחים
   // ביומן NOBLE. חייבים לתפוס אותה לפני assignCart ולפני השחרור שבסיום.
@@ -4786,13 +4812,17 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   b40LogTask(db, t, isFinish ? 'סיום' : 'קידום שלב', {
     stage_from: fromStage, stage_to: toStage,
     cart_id: isFinish ? '' : (t.cart_id || ''), machine_id: t.machine_id || '',
-    shelf_code: t.shelf_code || '', note: opts.note || ''
+    shelf_code: t.shelf_code || '',
+    /* B59: מעבר שאינו "השלב הבא" מסומן ביומן — כדי שההיסטוריה תסביר למה שלב דולג */
+    note: [opts.note || '', b59Back ? 'חזרה לשלב קודם (B59)' : (b59Jump ? 'דילוג שלבים (B59)' : '')]
+      .filter(function (x) { return x; }).join(' · ')
   }, genIdFn, user);
   /* B49c — הגשר. קריאה אחת בסוף, אחרי שהמעבר כבר הוכרע ונרשם ביומן המשימה.
      אין כאן שום לוגיקת שלבים חדשה — רק שיקוף המעבר ליומן NOBLE. */
   var b49c = b49cAfterAdvance(db, t, fromStage, toStage, b49cCartBefore, user);
   return {
     ok: true, stage: t.stage, release_mode: t.release_mode || '', shelf_code: t.shelf_code || '',
+    from_stage: fromStage, skipped: b59Jump ? 'כן' : '', back: b59Back ? 'כן' : '',
     noble_events: b49c.events, intake_closed: b49c.closed ? 'כן' : ''
   };
 }
