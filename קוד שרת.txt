@@ -819,19 +819,46 @@ function b58ColLetter(n) {
   while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
   return s;
 }
+// ----------------------------------------------------------------------------
+// B58a — המרת תא-תאריך. מדוע זה נדרש:
+// getValues() מחזיר תא-תאריך כאובייקט Date, ו-readTable הופך אותו ל-'yyyy-MM-dd'.
+// batchGet עם FORMATTED_STRING החזיר את **מחרוזת התצוגה של הגיליון** (למשל
+// '30/07/2026') — אותו נתון בייצוג אחר. אבחון ACT-17 על נתוני אבי תפס בדיוק את
+// זה בארבע טבלאות: tasks · task_comments · meetings · credit_profiles.
+//
+// הפתרון: קוראים כל טווח **בשני ייצוגים** בשתי קריאות batchGet:
+//   SERIAL_NUMBER    — תא-תאריך חוזר כמספר סידורי, כל השאר כטיפוס האמיתי שלו
+//   FORMATTED_STRING — תא-תאריך חוזר כמחרוזת, כל השאר **בדיוק אותו דבר**
+// ההפרש בין שתי הקריאות הוא dateTimeRenderOption ותו לא. לכן:
+//   תא הוא תאריך/שעה  ⇔  serial הוא number **ו**-formatted הוא string.
+// זיהוי ודאי, לא ניחוש לפי תבנית טקסט. שתי קריאות במקום 55 — עדיין ~1 שנ׳.
+// ----------------------------------------------------------------------------
+// אפס לוח השנה של Sheets הוא 30.12.1899. החישוב אריתמטי טהור ב-UTC ולכן חסין
+// לאזור זמן — התוצאה היא התאריך האזרחי שבתא, בדיוק כמו
+// Utilities.formatDate(getValues()[i][j], scriptTz, 'yyyy-MM-dd').
+function b58SerialYmd(serial) {
+  var days = Math.floor(Number(serial));
+  var d = new Date(Date.UTC(1899, 11, 30) + days * 86400000);
+  var mm = d.getUTCMonth() + 1, dd = d.getUTCDate();
+  return d.getUTCFullYear() + '-' + (mm < 10 ? '0' + mm : mm) + '-' + (dd < 10 ? '0' + dd : dd);
+}
 // המרה זהה לזו של readTable, שורה-שורה. batchGet מחזיר שורות קצוצות בסופן
 // (תאים ריקים בסוף מושמטים) — לכן undefined מתורגם ל-'' בדיוק כמו getValues.
-function b58RowsFromValues(name, vals) {
+function b58RowsFromPair(name, serialVals, fmtVals) {
   var cols = TABLES[name];
   var out = [];
-  for (var i = 0; i < vals.length; i++) {
-    var r = vals[i] || [];
+  for (var i = 0; i < serialVals.length; i++) {
+    var r = serialVals[i] || [];
+    var f = (fmtVals && fmtVals[i]) || [];
     var first = (r.length ? r[0] : '');
     if (first === '' || first === undefined || first === null) continue;   // כמו readTable
     var o = {};
     for (var j = 0; j < cols.length; j++) {
       var v = (j < r.length && r[j] !== undefined) ? r[j] : '';
-      if (v instanceof Date) v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      var fv = (j < f.length && f[j] !== undefined) ? f[j] : '';
+      // תא-תאריך/שעה: מספר בייצוג הסידורי ומחרוזת בייצוג המעוצב
+      if (typeof v === 'number' && typeof fv === 'string' && fv !== '') v = b58SerialYmd(v);
+      else if (v instanceof Date) v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
       o[cols[j]] = v;
     }
     out.push(o);
@@ -857,22 +884,26 @@ function b58BatchRead(names) {
   var ranges = want.map(function (n) {
     return "'" + String(n).replace(/'/g, "''") + "'!A2:" + b58ColLetter(TABLES[n].length);
   });
-  var res;
+  var serial, fmt;
   try {
-    res = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
-      ranges: ranges,
-      majorDimension: 'ROWS',
-      valueRenderOption: 'UNFORMATTED_VALUE',
-      dateTimeRenderOption: 'FORMATTED_STRING'
+    // B58a: שתי קריאות, ההפרש היחיד ביניהן הוא dateTimeRenderOption.
+    serial = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
+      ranges: ranges, majorDimension: 'ROWS',
+      valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER'
+    });
+    fmt = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
+      ranges: ranges, majorDimension: 'ROWS',
+      valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'FORMATTED_STRING'
     });
   } catch (e) {
     try { CacheService.getScriptCache().put('b58_last_err', String(e).substring(0, 300), B58_VERIFY_TTL); } catch (e2) { }
     return null;
   }
-  var vr = (res && res.valueRanges) || [];
-  if (vr.length !== want.length) return null;   // תשובה לא צפויה — נפילה חיננית
+  var vs = (serial && serial.valueRanges) || [];
+  var vf = (fmt && fmt.valueRanges) || [];
+  if (vs.length !== want.length || vf.length !== want.length) return null;   // תשובה לא צפויה — נפילה חיננית
   var out = {};
-  for (var i = 0; i < want.length; i++) out[want[i]] = b58RowsFromValues(want[i], vr[i].values || []);
+  for (var i = 0; i < want.length; i++) out[want[i]] = b58RowsFromPair(want[i], vs[i].values || [], vf[i].values || []);
   missing.forEach(function (n) { out[n] = []; });   // גיליון שאינו קיים — כמו readTable
   return out;
 }
@@ -9709,15 +9740,23 @@ function b58Probe(p) {
     res.tables_checked++;
     var a = '', b = '';
     try { a = JSON.stringify(fast[n] || []); b = JSON.stringify(slow[n]); } catch (e) { return; }
-    if (a === b) res.identical++;
-    else bad.push({ table: n, fast_rows: (fast[n] || []).length, slow_rows: slow[n].length });
+    if (a === b) { res.identical++; return; }
+    // B58a: לא מסתפקים ב"לא זהה" — מאתרים את התא המדויק שנבדל ומדווחים אותו
+    // עם שני הערכים ושני הטיפוסים. R1: הכל על המסך, בלי ייצוא ובלי ניחוש.
+    bad.push({
+      table: n, fast_rows: (fast[n] || []).length, slow_rows: slow[n].length,
+      cells: b58DiffCells(n, fast[n] || [], slow[n])
+    });
   });
   res.mismatched = bad;
 
   if (!bad.length) {
+    // B58a: זהות מלאה = הפעלה מחדש אוטומטית. אבי לא צריך ללחוץ על מתג נוסף.
+    b58SetFastRead(true);
     try { c.remove(B58_MISMATCH_KEY); c.put(B58_VERIFIED_KEY, nowTs(), B58_VERIFY_TTL); } catch (e) { }
+    res.fast_enabled = b58FastReadEnabled();
     res.verified_at = nowTs();
-    res.note = 'זהות מלאה: ' + res.identical + ' מתוך ' + res.tables_checked + ' טבלאות זהות ביט-אחר-ביט.';
+    res.note = 'זהות מלאה: ' + res.identical + ' מתוך ' + res.tables_checked + ' טבלאות זהות ביט-אחר-ביט. המסלול המהיר פעיל.';
   } else {
     try { c.put(B58_MISMATCH_KEY, JSON.stringify({ ts: nowTs(), tables: bad.map(function (x) { return x.table; }) }), B58_VERIFY_TTL); } catch (e) { }
     b58SetFastRead(false);
@@ -9725,4 +9764,32 @@ function b58Probe(p) {
     res.note = 'נמצאה אי-התאמה ב-' + bad.length + ' טבלאות — המסלול המהיר כובה אוטומטית. המערכת עובדת כרגיל.';
   }
   return res;
+}
+
+// B58a: שלושת התאים הראשונים שנבדלים בטבלה, עם שם העמודה, שני הערכים ושני
+// הטיפוסים. זה מה שהופך "לא זהה" לאבחנה שאפשר לתקן לפיה.
+function b58DiffCells(name, fastRows, slowRows) {
+  var cols = TABLES[name] || [];
+  var out = [];
+  var lim = Math.max(fastRows.length, slowRows.length);
+  for (var i = 0; i < lim && out.length < 3; i++) {
+    var fr = fastRows[i], sr = slowRows[i];
+    if (!fr || !sr) {
+      out.push({ row: i + 2, col: '(שורה חסרה)', fast: fr ? 'קיימת' : 'חסרה', slow: sr ? 'קיימת' : 'חסרה', fast_type: '', slow_type: '' });
+      continue;
+    }
+    for (var j = 0; j < cols.length && out.length < 3; j++) {
+      var c = cols[j];
+      var fv = fr[c], sv = sr[c];
+      if (fv === sv) continue;
+      out.push({
+        row: i + 2, col: c,
+        fast: String(fv === undefined ? '(אין)' : fv).substring(0, 60),
+        slow: String(sv === undefined ? '(אין)' : sv).substring(0, 60),
+        fast_type: (fv instanceof Date) ? 'Date' : typeof fv,
+        slow_type: (sv instanceof Date) ? 'Date' : typeof sv
+      });
+    }
+  }
+  return out;
 }
