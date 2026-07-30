@@ -80,6 +80,16 @@ header .qnav button{background:transparent;border:1px solid rgba(255,255,255,.14
 header .qnav button:hover{background:rgba(255,255,255,.07);color:#fff;border-color:rgba(255,255,255,.28)}
 header .qnav svg{flex:none;width:16px;height:16px}
 @media(max-width:1279px){header .qnav .qtx{display:none}header .qnav button{width:32px;min-width:32px;padding:0}}
+/* B62/BLD-04: מעל 6 קיצורים אין מקום לתוויות בשורה העליונה — עוברים לאייקון בלבד
+   בכל רוחב. השם נשמר ב-title, ואף כפתור לא נעלם. */
+header .qnav.qmini .qtx{display:none}
+header .qnav.qmini button{width:32px;min-width:32px;padding:0}
+header .qnav{flex-wrap:nowrap;min-width:0}
+/* B62/T2: תפריט הפעולות של השורה העליונה — אותו דפוס .more-wrap, בגוון כהה */
+header .more-pop{background:var(--sb);border-color:rgba(255,255,255,.14)}
+header .more-pop .btn{color:#D6DEE7;background:transparent;border:none}
+header .more-pop .btn:hover{background:rgba(255,255,255,.08);color:#fff}
+header .more-wrap>.btn{padding:6px 11px;line-height:1;font-size:15px}
 nav{display:flex;background:var(--sb);border-bottom:1px solid rgba(255,255,255,.06);overflow-x:auto;position:sticky;top:54px;z-index:19;-webkit-overflow-scrolling:touch}
 main{padding:20px;max-width:1080px;margin:0 auto;padding-bottom:48px}
 /* ===== כרטיסים ===== */
@@ -137,6 +147,24 @@ main{padding:20px;max-width:1080px;margin:0 auto;padding-bottom:48px}
 .more-pop .btn,.more-pop a.btn{display:block;width:100%;text-align:right;margin:2px 0;background:#fff;color:#344054;border:none;font-weight:500;padding:9px 12px}
 .more-pop .btn:hover,.more-pop a.btn:hover{background:#F5F7FA}
 .more-pop .btn.dng{color:var(--danger)}
+/* ===== B62/BLD-04: סידור קיצורי הדרך בגרירה =====
+   ⚠ touch-action:none הוא הסעיף הקריטי. בלעדיו הדפדפן במכשיר מגע גולל את
+   הדף במקום להעביר pointermove, והגרירה פשוט לא עובדת — בדיוק סוג הכשל
+   שנפל ב-B60. הגרירה ממומשת ב-Pointer Events (עכבר + מגע באותו קוד),
+   ולא ב-HTML5 drag-and-drop שאינו נורה במסך מגע. */
+.qorder{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 2px}
+.qchip{display:inline-flex;align-items:center;gap:6px;background:#F5F7FA;border:1px solid var(--line);
+  border-radius:999px;padding:5px 11px 5px 6px;font-size:13px;font-weight:500;color:var(--navy);
+  cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;transition:box-shadow .12s,transform .12s}
+.qchip:hover{border-color:var(--teal)}
+.qchip.drag{cursor:grabbing;box-shadow:0 6px 18px rgba(16,24,40,.18);transform:scale(1.04);
+  background:#fff;border-color:var(--teal)}
+.qchip .qgrip{color:var(--muted);font-size:13px;letter-spacing:-1px;line-height:1}
+.qchip .qnum{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;
+  border-radius:50%;background:var(--navy);color:#fff;font-size:10.5px;font-weight:700}
+.qchip .qmv{background:transparent;border:none;color:var(--muted);font-size:15px;line-height:1;
+  padding:0 3px;width:auto;min-height:0;font-weight:700;cursor:pointer}
+.qchip .qmv:hover{color:var(--navy)}
 .stop-done{opacity:.6}
 .stop-done .lead{font-size:15px;font-weight:500;color:var(--muted)}
 .route-prog{height:4px;background:var(--line);border-radius:99px;overflow:hidden;margin:4px 0 14px}
@@ -342,14 +370,34 @@ nav .nitem.on{color:#fff}
       border-bottom:none;border-inline-end:1px solid rgba(0,0,0,.18)}
   body:not(.driver-mode) main{flex:1;min-width:0;max-width:none;margin:0;
       padding:26px 28px;padding-bottom:52px}
-  /* כותרת קטגוריה = תווית לא-לחיצה */
-  nav .ngrp.side{display:block;position:static;padding:0;margin:0 0 2px;border:none}
-  nav .gcap{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:600;
-      letter-spacing:.08em;color:var(--sb-mut);padding:13px 16px 5px;white-space:nowrap}
-  nav .gcap svg{flex:none;width:16px;height:16px}
+  /* ===== B62/T2 · N3א — קטגוריה נפתחת ונעצרת. אין אקורדיון ואין חצים =====
+     הכלל: קטגוריה פתוחה אם היא **נעוצה** או אם המסך הנוכחי נמצא בתוכה.
+     לחיצה על שורת הכותרת נועצת/משחררת, והמצב נשמר ב-localStorage — כלומר
+     שורד מעבר בין מסכים, רענון, וגם סגירת הדפדפן. אפס בקשות שרת (R10).
+     ⚠ הפתיחה מונפשת דרך grid-template-rows ולא דרך רינדור מחדש: b62NavPin
+     מחליף מחלקה על האלמנט החי, ולכן המעבר רך ואין קפיצת פריסה. */
+  nav .ngrp.side{display:block;position:static;padding:0;margin:0;border:none}
+  nav .gcap{display:flex;align-items:center;gap:8px;width:100%;text-align:right;
+      background:none;border:none;border-radius:0;box-shadow:none;min-height:0;
+      font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--sb-mut);
+      padding:9px 12px 4px 10px;white-space:nowrap;cursor:pointer}
+  nav .gcap:hover{color:#C8D2DC}
+  nav .gcap svg{flex:none;width:15px;height:15px}
+  nav .gcap .gtxt{flex:1;overflow:hidden;text-overflow:ellipsis;text-align:right}
+  /* מונה מסכים — מופיע רק כשהקטגוריה סגורה, כדי ששום מידע לא ייעלם */
+  nav .gcap .gcnt{flex:none;font-size:10.5px;font-weight:600;letter-spacing:0;opacity:.7}
+  nav .ngrp.side.open .gcap .gcnt{display:none}
+  /* הסיכה גלויה תמיד ולא רק בריחוף — במכשיר מגע אין ריחוף */
+  nav .gcap .gpin{flex:none;display:inline-flex;width:15px;height:15px;opacity:.32;
+      transition:opacity .15s,color .15s}
+  nav .gcap:hover .gpin{opacity:.7}
+  nav .ngrp.side.pin .gcap .gpin{opacity:1;color:var(--teal)}
+  nav .gbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows .18s ease}
+  nav .ngrp.side.open>.gbody{grid-template-rows:1fr}
+  nav .gbody>div{overflow:hidden;min-height:0}
   nav .ngrp.side .nitem{display:block;width:100%;text-align:right;background:none;
-      font-size:14px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
-      padding:8px 30px 8px 14px;margin:0;border:none;border-right:3px solid transparent;
+      font-size:13.5px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
+      padding:5px 30px 5px 14px;margin:0;border:none;border-right:3px solid transparent;
       border-radius:0;box-shadow:none;min-height:0;overflow:hidden;text-overflow:ellipsis}
   nav .ngrp.side .nitem:hover{background:var(--sb-hi);color:#fff}
   nav .ngrp.side .nitem.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
@@ -357,7 +405,7 @@ nav .nitem.on{color:#fff}
   /* מסך יחיד שאינו שייך לקטגוריה מרובת-מסכים — קישור ישיר בראש הסרגל */
   nav .nitem.lone.side{display:flex;align-items:center;gap:9px;width:100%;text-align:right;
       background:none;font-size:13.5px;font-weight:600;color:var(--sb-tx);white-space:nowrap;
-      padding:10px 16px;margin:0;border:none;border-right:3px solid transparent;
+      padding:7px 16px;margin:0;border:none;border-right:3px solid transparent;
       border-radius:0;box-shadow:none;min-height:0}
   nav .nitem.lone.side svg{flex:none;width:16px;height:16px}
   nav .nitem.lone.side:hover{background:var(--sb-hi);color:#fff}
@@ -368,9 +416,9 @@ nav .nitem.on{color:#fff}
 @media(min-width:1100px) and (max-width:1279px){
   body:not(.driver-mode) nav{width:198px}
   body:not(.driver-mode) main{padding:22px 18px;padding-bottom:52px}
-  nav .ngrp.side .nitem{padding:8px 26px 8px 12px;font-size:13.5px}
-  nav .gcap{padding:12px 13px 5px}
-  nav .nitem.lone.side{padding:9px 13px;font-size:13px}
+  nav .ngrp.side .nitem{padding:5px 26px 5px 12px;font-size:13px}
+  nav .gcap{padding:8px 10px 4px 8px}
+  nav .nitem.lone.side{padding:7px 13px;font-size:13px}
 }
 /* הדגשת תרשומת שמנווטים אליה — רקע שדוהה לאורך ~10 שניות */
 .hl-fade{animation:hlfade 10s ease-out forwards;border-radius:6px}
@@ -505,7 +553,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.60-B61 · 30.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.61-B62 · 31.07.2026</div>
   </div>
 </div>
 
@@ -515,9 +563,17 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div class="logo" id="brandLbl" onclick="goHome()" title="לוח בקרה">MAPA<span>·</span>NOBLE</div>
     <div class="qnav" id="qnav"></div>
     <div class="who" id="whoLbl"></div>
-    <button id="btnChangePw" class="btn sm" onclick="changeMyPassword()" title="שינוי סיסמה למשתמש המחובר">שינוי סיסמה</button>
-    <button class="btn sm" onclick="doLogout()" title="יציאה מהמערכת ומחיקת ההתחברות ממכשיר זה">יציאה</button>
     <button id="btnRefresh" class="btn sm" onclick="refresh()" title="משיכת נתונים עדכניים מהשרת"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg> רענון</button>
+    <!-- B62/T2: פעולה ראשית אחת גלויה (רענון); שינוי סיסמה ויציאה עברו ל-⋯.
+         אותו דפוס .more-wrap/toggleMore/closeMore הקיים — אין דפוס שני (R8).
+         שתי הפעולות לא נעלמו ולא שינו הרשאה, רק את מקומן. -->
+    <span class="more-wrap" id="hdrMore">
+      <button class="btn sm ico" onclick="toggleMore(this,event)" title="פעולות נוספות" aria-label="פעולות נוספות">⋯</button>
+      <span class="more-pop">
+        <button id="btnChangePw" class="btn" onclick="closeMore();changeMyPassword()" title="שינוי סיסמה למשתמש המחובר">שינוי סיסמה</button>
+        <button class="btn" onclick="closeMore();doLogout()" title="יציאה מהמערכת ומחיקת ההתחברות ממכשיר זה">יציאה</button>
+      </span>
+    </span>
   </header>
   <div id="offlineBanner">אין חיבור לאינטרנט — מוצג מסלול שמור מהטעינה האחרונה</div>
   <!-- B53: עטיפת פריסה בלבד. במסך רחב (1100px+) היא הופכת לשתי עמודות —
@@ -1523,6 +1579,45 @@ function allowedViews(){
   return base;
 }
 function navGroupOf(key){ var g = NAV_GROUPS.find(x=>x[2].includes(key)); return g? g[1] : ''; }
+/* ================= B62/T2 · N3א — נעיצת קטגוריות בסרגל הצד =================
+   ההכרעה: 29 מסכים אינם נכנסים ב-596px גובה, ולכן קטגוריה שאינה בשימוש
+   מכווצת. הכלל היחיד: **פתוחה אם נעוצה או אם המסך הנוכחי בתוכה.**
+   אין מצב שני, אין אקורדיון ואין חצים. NAV_OPEN ו-toggleNavPanel נשארים
+   של המובייל בלבד ואינם נוגעים לכאן (R4).
+   הנעיצה נשמרת ב-localStorage ולא בהגדרות השרת — היא העדפת מכשיר, לא
+   נתון עסקי, ואסור שתעלה בקשת רשת אחת (R10). */
+var B62_PINS_KEY = 'mn_nav_pins';
+var B62_PINS = null;
+function b62NavPins(){
+  if(B62_PINS) return B62_PINS;
+  var a = [];
+  try{
+    var raw = localStorage.getItem(B62_PINS_KEY);
+    if(raw){ var j = JSON.parse(raw); if(Array.isArray(j)) a = j.filter(function(x){ return typeof x === 'string'; }); }
+  }catch(e){ a = []; }   /* localStorage חסום/פגום — הסרגל עובד בלי זיכרון, לא נשבר */
+  B62_PINS = a; return a;
+}
+function b62NavPinsSave(a){
+  B62_PINS = a || [];
+  try{ localStorage.setItem(B62_PINS_KEY, JSON.stringify(B62_PINS)); }catch(e){}
+}
+function b62NavPinned(name){ return b62NavPins().indexOf(name) > -1; }
+var B62_PIN_SVG = '<svg class="gpin" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 3h6l-1 7 3 3v2H7v-2l3-3z"/></svg>';
+/* לחיצה על שורת הכותרת נועצת/משחררת. **בלי renderNav** — מחליפים מחלקה
+   על האלמנט החי, וכך המעבר מונפש ואין קפיצת פריסה (תנאי ב' של N3א). */
+function b62NavPin(btn){
+  var grp = btn && btn.parentNode;
+  while(grp && !(grp.classList && grp.classList.contains('ngrp'))) grp = grp.parentNode;
+  if(!grp) return;
+  var name = grp.getAttribute('data-g'); if(!name) return;
+  var pins = b62NavPins().slice(), i = pins.indexOf(name);
+  if(i > -1) pins.splice(i, 1); else pins.push(name);
+  b62NavPinsSave(pins);
+  var on = pins.indexOf(name) > -1;
+  grp.classList.toggle('pin', on);
+  /* הקטגוריה של המסך הנוכחי נשארת פתוחה תמיד — שחרור סיכה לא סוגר אותה */
+  if(!grp.classList.contains('cur')) grp.classList.toggle('open', on);
+}
 /* B18: אייקוני סרגל הטאבים התחתון של הנהג — מסלול | נוכחות | שכר | משימות */
 var DRIVER_TAB_ORDER = ['deliveries','attendance','payroll','tasks'];
 var DRIVER_TAB_ICONS = {
@@ -1552,8 +1647,11 @@ function renderNav(views){
   var extra = views.filter(v=>!navGroupOf(v[0])).map(v=>v[0]); // ביטחון — מסך שלא שויך לקטגוריה
   if(extra.length) groups = groups.concat([['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>','עוד',extra]]);
   NAV_MODE = navMode();
-  /* B53/N2: סרגל צד — כל המסכים המותרים גלויים תמיד, מקובצים לפי NAV_GROUPS,
-     בלי כותרת לחיצה ובלי חלונית נפתחת. אותו #nav, רינדור אחר, אותו allowedViews. */
+  /* B53/N2 + B62/T2/N3א: סרגל צד — כל המסכים המותרים קיימים תמיד ומקובצים
+     לפי NAV_GROUPS. ⚠ שינוי B62: קטגוריה מוצגת פתוחה רק אם היא נעוצה או אם
+     המסך הנוכחי בתוכה. הפריטים **תמיד ברשימה** ורק מכווצים ב-CSS — כך
+     המעבר מונפש, ושום מסך לא נמחק מה-DOM ולא נעלם מהחיפוש בדפדפן.
+     אותו #nav, אותו allowedViews, בלי דפוס ניווט רביעי. */
   if(NAV_MODE==='side'){
     el('nav').innerHTML = navActions + groups.map(function(g){
       var items = g[2].filter(k=>allowed[k]!==undefined);
@@ -1564,10 +1662,20 @@ function renderNav(views){
           g[0]+'<span class="gtxt">'+allowed[lk]+'</span>'+
           (lk==='approvals'&&APPROVALS_COUNT>0?'<span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>';
       }
-      return '<div class="ngrp side">'+
-        '<div class="gcap">'+g[0]+'<span class="gtxt">'+g[1]+'</span></div>'+
-        items.map(k=>'<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
-          (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>').join('')+
+      var cur  = items.indexOf(VIEW) > -1;
+      var pin  = b62NavPinned(g[1]);
+      var open = cur || pin;
+      var grpBadge = (items.indexOf('approvals')>-1 && APPROVALS_COUNT>0) ? '<span class="navbadge">'+APPROVALS_COUNT+'</span>' : '';
+      var tip = cur ? 'הקטגוריה של המסך הנוכחי — פתוחה תמיד. לחיצה נועצת אותה כדי שתישאר פתוחה גם אחר כך'
+                    : (pin ? 'נעוצה — לחיצה תכווץ אותה' : 'לחיצה תנעץ את הקטגוריה ותשאיר אותה פתוחה');
+      return '<div class="ngrp side'+(open?' open':'')+(pin?' pin':'')+(cur?' cur':'')+'" data-g="'+esc(g[1])+'">'+
+        '<button class="gcap" onclick="b62NavPin(this)" title="'+esc(tip)+'" aria-expanded="'+(open?'true':'false')+'">'+
+          g[0]+'<span class="gtxt">'+esc(g[1])+'</span>'+grpBadge+
+          '<span class="gcnt">'+items.length+'</span>'+B62_PIN_SVG+'</button>'+
+        '<div class="gbody"><div>'+
+          items.map(k=>'<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
+            (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>').join('')+
+        '</div></div>'+
         '</div>';
     }).join('');
     return; // אין חלונית למדוד — navFixDD לא רלוונטי
@@ -1647,7 +1755,11 @@ function goHome(){ if(allowedViews().some(function(v){return v[0]==='dash';})) g
    האייקונים המקודדים של B47 נשמרו; לכל מסך אחר נלקח האייקון של הקטגוריה
    שלו מ-NAV_GROUPS — אין ציור אייקון חדש לכל מסך. */
 var NAV_QUICK_DEFAULT = 'orders,customers,deliveries,laundry,calendar';
-var NAV_QUICK_MAX = 6;
+/* B62/BLD-04: התקרה הועלתה מ-6 ל-10. הרקע: T2 מכווץ את סרגל הצד, ולכן
+   שורת הקיצורים היא עכשיו המסלול ה"לחיצה אחת מכל מקום" — היא צריכה להכיל
+   יותר. מעל 6 קיצורים התוויות יורדות אוטומטית (qmini) כדי שלא תהיה גלישה. */
+var NAV_QUICK_MAX = 10;
+var NAV_QUICK_LABEL_MAX = 6;
 var QNAV_ICONS = {
   orders:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>',
   customers:'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -1671,13 +1783,18 @@ function navQuickKeys(){
 function renderTopbar(views){
   var labelOf = {}; views.forEach(function(v){ labelOf[v[0]] = v[1]; });
   var qn = el('qnav');
-  if(qn) qn.innerHTML = navQuickKeys()
-    .filter(function(k){ return labelOf[k] !== undefined; }) // מפתח שגוי או מסך אסור לתפקיד — מסונן בשקט
-    .slice(0, NAV_QUICK_MAX)
-    .map(function(k){
+  if(qn){
+    var qkeys = navQuickKeys()
+      .filter(function(k){ return labelOf[k] !== undefined; }) // מפתח שגוי או מסך אסור לתפקיד — מסונן בשקט
+      .slice(0, NAV_QUICK_MAX);
+    /* B62: מעל שישה קיצורים אין רוחב לתוויות בשורה העליונה. עוברים לאייקון
+       בלבד במקום להסתיר קיצור — אסור שכפתור ייעלם (T2). */
+    qn.className = 'qnav' + (qkeys.length > NAV_QUICK_LABEL_MAX ? ' qmini' : '');
+    qn.innerHTML = qkeys.map(function(k){
       return '<button onclick="go(\''+k+'\')" title="'+esc(labelOf[k])+'">'+
         (QNAV_ICONS[k] || navGroupIcon(k))+'<span class="qtx">'+esc(labelOf[k])+'</span></button>';
     }).join('');
+  }
   var bl = el('brandLbl');
   if(bl){
     var bn = setting('business_name'), lu = setting('logo_url');
@@ -2680,16 +2797,34 @@ function openOrder(oid){
   var delivs = DB.deliveries.filter(d=>d.order_id===oid);
   var total = orderTotal(oid), bal = orderBalance(oid);
   var editable = (o.status==='טיוטה'||o.status==='הצעת מחיר');
-  var actions = '';
-  if(o.status==='הצעת מחיר') actions = '<button class="btn" onclick="doAct(\'convertQuote\',\''+oid+'\',\'הומרה להזמנה\')">המר להזמנה</button> <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
-  if(o.status==='טיוטה') actions = '<button class="btn" onclick="doAct(\'approveOrder\',\''+oid+'\',\'אושרה — המלאי שוריין ונוצרו משלוחים\')">אשר (בדיקת מלאי)</button> <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
   /* B29: משלוח שכבר "בדרך" אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד (אכיפה גם בשרת) */
   var inTransit = delivs.some(d=>d.kind!=='איסוף' && d.status==='בדרך');
-  if(o.status==='מאושרת') actions = (inTransit && ROLE!=='מנהל'
-      ? '<span class="muted" style="font-size:12.5px">המשלוח בדרך אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד</span> '
-      : '<button class="btn warn" onclick="doAct(\'deliverOrder\',\''+oid+'\',\'סומנה כסופקה\')">סמן כסופקה'+(inTransit?' (מנהל)':'')+'</button>')+(inv?'':' <button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>')+' <button class="btn danger sm" onclick="doCancel(\''+oid+'\')">בטל</button>';
-  if(o.status==='סופקה') actions = '<button class="btn" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>'+(inv?'':' <button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>');
-  if((o.status==='הוחזרה'||o.status==='הושלמה')&&!inv) actions = '<button class="btn ghost" onclick="doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
+  /* ===== B62/T2 — פעולה ראשית אחת גלויה, השאר ב-⋯ =====
+     קודם כל פעולות הכרטיס ישבו בשורה אחת שטוחה (14 כפתורים במצבים מסוימים).
+     כאן נשמר בדיוק אותו סט פעולות ואותם תנאי הרשאה — רק החלוקה השתנתה:
+     `pri` היא הפעולה שממשיכה את זרימת העבודה, וכל השאר עוברות לתפריט ⋯
+     הקיים (moreMenu/toggleMore/closeMore — R8, אין דפוס שני).
+     ⛔ אף כפתור לא הוסר ואף בדיקת הרשאה לא נחלשה — כל תנאי משוכפל כלשונו. */
+  var pri = '', note = '', more = [];
+  var invBtn = '<button class="btn" onclick="closeMore();doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
+  var cancelBtn = '<button class="btn dng" onclick="closeMore();doCancel(\''+oid+'\')">בטל הזמנה</button>';
+  if(o.status==='הצעת מחיר'){
+    pri = '<button class="btn pri" onclick="doAct(\'convertQuote\',\''+oid+'\',\'הומרה להזמנה\')">המר להזמנה</button>';
+    more.push(cancelBtn);
+  } else if(o.status==='טיוטה'){
+    pri = '<button class="btn pri" onclick="doAct(\'approveOrder\',\''+oid+'\',\'אושרה — המלאי שוריין ונוצרו משלוחים\')">אשר (בדיקת מלאי)</button>';
+    more.push(cancelBtn);
+  } else if(o.status==='מאושרת'){
+    if(inTransit && ROLE!=='מנהל') note = '<span class="muted" style="font-size:12.5px">המשלוח בדרך אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד</span>';
+    else pri = '<button class="btn pri warn" onclick="doAct(\'deliverOrder\',\''+oid+'\',\'סומנה כסופקה\')">סמן כסופקה'+(inTransit?' (מנהל)':'')+'</button>';
+    if(!inv) more.push(invBtn);
+    more.push(cancelBtn);
+  } else if(o.status==='סופקה'){
+    pri = '<button class="btn pri" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>';
+    if(!inv) more.push(invBtn);
+  } else if((o.status==='הוחזרה'||o.status==='הושלמה') && !inv){
+    pri = '<button class="btn pri" onclick="closeMore();doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
+  }
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
     docChainHtml(oid,'order')+
     '<div class="muted" style="margin-bottom:12px">'+(o.order_number?'הזמנה #'+esc(o.order_number)+' · ':'')+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(DB.warehouses.length?' · מחסן: '+esc(whn(o.warehouse_id)):'')+(o.notes?' · '+esc(o.notes):'')+'</div>'+
@@ -2721,7 +2856,16 @@ function openOrder(oid){
     (delivs.length?'<h3 style="margin-top:14px">משלוחים</h3>'+delivs.map(d=>'<div class="row" style="padding:5px 0;cursor:pointer" onclick="openDelivery(\''+d.id+'\')"><div class="grow">'+esc(d.kind)+' · '+esc(d.date)+(d.driver?' · '+esc(d.driver):'')+'</div><span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span></div>').join(''):'')+
     b44PickBlockHtml(oid)+
     linksSection('order',oid)+
-    '<div style="margin-top:16px" class="row">'+actions+' <button class="btn ghost sm" onclick="printOrderForm(\''+oid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> '+(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה')+'</button> '+notesBtn('order',oid)+' '+tagBtn('order',oid)+'</div>');
+    b62OrderActions(o, oid, pri, note, more));
+}
+/* B62/T2: שורת הפעולות של כרטיס ההזמנה. ההדפסה, התרשומות והתגיות אינן
+   פעולות זרימת עבודה — הן תמיד משניות ולכן תמיד ב-⋯. */
+function b62OrderActions(o, oid, pri, note, more){
+  var printBtn = '<button class="btn" onclick="closeMore();printOrderForm(\''+oid+'\')">'+
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> '+
+    (o.status==='הצעת מחיר'?'הדפס הצעת מחיר':'הדפס טופס הזמנה')+'</button>';
+  var list = (more||[]).concat([printBtn, notesBtn('order',oid), tagBtn('order',oid)]);
+  return '<div class="actrow">'+(pri||'')+(note||'')+' '+moreMenu(list)+'</div>';
 }
 async function doAct(action, oid, msg){ var r=await act(action,{order_id:oid},msg); if(r) openOrder(oid); }
 function doCancel(oid){
@@ -6939,7 +7083,7 @@ function b60Card(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.60-B61';
+var B61_CANARY = 'v4.61-B62';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -7153,6 +7297,89 @@ function b61Tests(){ return [
     var leak = (ROLE !== 'מנהל') && keys.indexOf('audit') > -1;
     return { ok: a.length > 0 && !leak,
       note: a.length + ' מסכים לתפקיד "' + (ROLE||'?') + '"' + (leak ? ' · ⚠ יומן פעולות דלף' : '') };
+} },
+
+/* ===== קבוצה 6 — B62: סרגל הצד, גלישה וקיצורים =====
+   ⚠ אלה הטענות שאי אפשר לבדוק ב-jsdom: ל-jsdom אין מנוע פריסה, ולכן
+   scrollHeight/getBoundingClientRect מחזירים אפס. המספרים כאן נמדדים
+   רק בדפדפן האמיתי — זו בדיוק הסיבה שהשכבה השנייה קיימת (R11). */
+{ g:'פריסה ותצוגה', n:'סרגל הצד נכנס לגובה החלון בלי גלילה', f:function(){
+    var n = el('nav');
+    if(!n) return { ok:false, note:'אלמנט הניווט לא נמצא' };
+    if(navMode() !== 'side') return { ok:true, note:'לא רלוונטי — מצב הניווט הוא ' + navMode() };
+    var need = n.scrollHeight, have = n.clientHeight;
+    if(!have) return { ok:false, note:'אין פריסה למדוד (החלון מוסתר?)' };
+    var over = need - have;
+    return { ok: over <= 2,
+      note: 'תוכן ' + need + 'px · גובה זמין ' + have + 'px' +
+            (over > 2 ? ' · ⚠ חסרים ' + over + 'px — נעץ פחות קטגוריות' : ' · נכנס') };
+} },
+
+{ g:'פריסה ותצוגה', n:'נעיצת קטגוריות נשמרת ונקראת חזרה', f:function(){
+    var before = null, ok = false, note = '';
+    try{ before = localStorage.getItem(B62_PINS_KEY); }catch(e){}
+    try{
+      var probe = ['__b62_probe__'];
+      b62NavPinsSave(probe);
+      B62_PINS = null;                      /* מאלץ קריאה אמיתית מהאחסון */
+      ok = b62NavPinned('__b62_probe__');
+      note = ok ? 'כתיבה וקריאה עברו — הנעיצה תשרוד רענון וסגירת דפדפן'
+                : 'localStorage חסום — הסרגל יעבוד, אבל הנעיצה לא תישמר';
+    } catch(e){ note = 'שגיאה: ' + e.message; }
+    finally{
+      try{ if(before === null) localStorage.removeItem(B62_PINS_KEY); else localStorage.setItem(B62_PINS_KEY, before); }catch(e){}
+      B62_PINS = null;
+    }
+    var live = b62NavPins();
+    return { ok: ok, note: note + ' · נעוצות כרגע: ' + (live.length ? live.join(' · ') : 'אף אחת') };
+} },
+
+{ g:'פריסה ותצוגה', n:'גרירת הקיצורים תעבוד במכשיר הזה (BLD-04)', f:function(){
+    var hasPE = (typeof window.PointerEvent === 'function');
+    var hasCap = !!(window.Element && Element.prototype && Element.prototype.setPointerCapture);
+    var probe = document.createElement('span');
+    probe.className = 'qchip'; probe.style.position='absolute'; probe.style.left='-9999px';
+    document.body.appendChild(probe);
+    var ta = '';
+    try{ ta = getComputedStyle(probe).touchAction || ''; }catch(e){}
+    document.body.removeChild(probe);
+    var taOk = (ta === 'none');
+    return { ok: hasPE && hasCap && taOk,
+      note: 'PointerEvent=' + hasPE + ' · לכידת מצביע=' + hasCap + ' · touch-action=' + (ta||'?') +
+            ' · קלט: ' + (b61Touch() ? 'מגע' : 'עכבר') +
+            (taOk ? '' : ' · ⚠ בלי touch-action:none הגרירה תגלול את הדף במקום לסדר') };
+} },
+
+{ g:'פריסה ותצוגה', n:'שורת הקיצורים העליונה אינה גולשת', f:function(){
+    var q = el('qnav');
+    if(!q) return { ok:false, note:'שורת הקיצורים לא נמצאה' };
+    var cnt = q.children.length;
+    var over = q.scrollWidth - q.clientWidth;
+    if(!q.clientWidth) return { ok: true, note: cnt + ' קיצורים · אין פריסה למדוד' };
+    return { ok: over <= 2,
+      note: cnt + ' קיצורים · ' + (/qmini/.test(q.className) ? 'אייקון בלבד' : 'עם תוויות') +
+            (over > 2 ? ' · ⚠ גולש ב-' + over + 'px' : ' · נכנס') };
+} },
+
+{ g:'פריסה ותצוגה', n:'המסך הנוכחי אינו גולש לרוחב (ACT-05 · BLD-05)', f:function(){
+    /* המספר שמכריע אם אפשר להוריד את נקודת השבירה ל-1024px: כמה רוחב
+       התוכן באמת צריך, ועוד רוחב הסרגל. נמדד על המסך שפתוח כרגע. */
+    var m = document.querySelector('main');
+    if(!m || !m.clientWidth) return { ok:true, note:'אין פריסה למדוד' };
+    var widest = m.scrollWidth, what = 'התוכן';
+    var boxes = document.querySelectorAll('main table, main .card');
+    for(var i=0;i<boxes.length;i++){
+      if(boxes[i].scrollWidth > boxes[i].clientWidth + 2 && boxes[i].scrollWidth > widest){
+        widest = boxes[i].scrollWidth; what = 'טבלה';
+      }
+    }
+    var over = widest - m.clientWidth;
+    var nav = el('nav');
+    var navW = (nav && navMode()==='side') ? nav.getBoundingClientRect().width : 0;
+    var need = Math.round(widest + navW + 56);
+    return { ok: over <= 2,
+      note: 'מסך "' + VIEW + '" · רוחב חלון ' + window.innerWidth + 'px · דרוש למערכת ~' + need + 'px' +
+            (over > 2 ? ' · ⚠ ' + what + ' גולש ב-' + over + 'px' : ' · נכנס') };
 } }
 
 ]; }
@@ -9366,7 +9593,10 @@ function b53QuickNavPanelHtml(){
   return '<div class="section-title"><h3>קיצורי דרך בשורה העליונה</h3></div>'+
     '<div class="card">'+
       '<div style="font-size:13px">עד '+NAV_QUICK_MAX+' מסכים יופיעו ככפתורים בשורה העליונה, ליד הלוגו — '+
-      'אלה שנכנסים אליהם הרבה. כל שאר המסכים נשארים בסרגל הצד ואינם נעלמים.</div>'+
+      'אלה שנכנסים אליהם הרבה. כל שאר המסכים נשארים בסרגל הצד ואינם נעלמים.'+
+      ' מעל '+NAV_QUICK_LABEL_MAX+' קיצורים מוצג אייקון בלבד, והשם מופיע בריחוף.</div>'+
+      '<div class="muted" style="font-size:12.5px;margin-top:10px;font-weight:600">סדר התצוגה — גרור לסידור מחדש</div>'+
+      '<div id="b62QOrderWrap">'+b62QuickOrderHtml()+'</div>'+
       boxes+
       '<div id="b53QuickState" class="muted" style="font-size:12.5px;margin-top:8px"></div>'+
       '<input type="hidden" id="set_nav_quick" value="'+esc(B53_QUICK.join(','))+'">'+
@@ -9385,7 +9615,102 @@ function b53QuickToggle(cb){
     }
   } else if(i > -1) B53_QUICK.splice(i, 1);
   var h = el('set_nav_quick'); if(h) h.value = B53_QUICK.join(',');
+  b62QPaint();
   b53QuickState();
+}
+/* ================= B62/BLD-04: סידור הקיצורים בגרירה =================
+   עד היום הסדר נקבע לפי סדר הסימון בתיבות ולא היה ניתן לשינוי בלי לנקות
+   הכל ולסמן מחדש. כאן הסדר הופך לרצועת שבבים הניתנת לגרירה.
+
+   ⚠ מדוע Pointer Events ולא HTML5 drag-and-drop: המכשיר של אבי הוא מסך
+   מגע (נמדד 30.07.2026). dragstart/dragover אינם נורים במגע כלל, ולכן
+   התכונה הייתה נראית קיימת ולא עובדת — אותה מחלקת כשל של B60. pointerdown/
+   pointermove מכסים עכבר ומגע באותו קוד, בתנאי ש-touch-action:none מוגדר
+   על השבב (אחרת הדפדפן גולל במקום להעביר את האירוע).
+
+   ⚠ אין רינדור מחדש בזמן גרירה. מזיזים את צומת ה-DOM עצמו ב-insertBefore;
+   רינדור מחדש היה הורס את האלמנט הנגרר ומאבד את לכידת המצביע באמצע.
+
+   נגישות ומסלול חלופי: לכל שבב שני חצים המזיזים אותו מקום אחד. אם הגרירה
+   לא תעבוד במכשיר כלשהו — הסידור עדיין אפשרי במלואו. */
+function b62QuickOrderHtml(){
+  var labelOf = {}; VIEWS.forEach(function(v){ labelOf[v[0]] = v[1]; });
+  if(!B53_QUICK.length)
+    return '<div class="muted" style="font-size:12.5px;margin:8px 0 2px">אין קיצורים נבחרים — סמן מסכים ברשימה שמתחת.</div>';
+  return '<div class="qorder" id="b62QOrder">'+B53_QUICK.map(function(k,i){
+    return '<span class="qchip" data-k="'+esc(k)+'" onpointerdown="b62QDown(event,this)" title="גרור כדי לשנות סדר">'+
+      '<span class="qnum">'+(i+1)+'</span>'+
+      '<span class="qgrip" aria-hidden="true">⣿</span>'+
+      esc(labelOf[k] || k)+
+      '<button class="qmv" onclick="b62QMove(\''+esc(k)+'\',-1)" title="הזז ימינה" aria-label="הזז ימינה">›</button>'+
+      '<button class="qmv" onclick="b62QMove(\''+esc(k)+'\',1)" title="הזז שמאלה" aria-label="הזז שמאלה">‹</button>'+
+      '</span>';
+  }).join('')+'</div>';
+}
+function b62QPaint(){
+  var wrap = el('b62QOrderWrap'); if(!wrap) return;
+  wrap.innerHTML = b62QuickOrderHtml();
+}
+function b62QSync(){
+  var h = el('set_nav_quick'); if(h) h.value = B53_QUICK.join(',');
+  b53QuickState();
+}
+function b62QMove(key, dir){
+  var i = B53_QUICK.indexOf(key); if(i < 0) return;
+  var j = i + dir;
+  if(j < 0 || j >= B53_QUICK.length) return;   /* בקצה — לא עושים כלום, בלי גלישה */
+  B53_QUICK.splice(j, 0, B53_QUICK.splice(i, 1)[0]);
+  b62QPaint(); b62QSync();
+}
+var B62_DRAG = null;
+function b62QDown(ev, chip){
+  if(typeof ev.button === 'number' && ev.button !== 0) return;      /* כפתור ימני */
+  var tg = ev.target;
+  if(tg && tg.classList && tg.classList.contains('qmv')) return;    /* לחיצה על חץ — לא גרירה */
+  if(ev.preventDefault) ev.preventDefault();
+  B62_DRAG = { el: chip };
+  chip.classList.add('drag');
+  try{ chip.setPointerCapture(ev.pointerId); }catch(e){}
+  chip.addEventListener('pointermove', b62QDrag);
+  chip.addEventListener('pointerup', b62QUp);
+  chip.addEventListener('pointercancel', b62QUp);
+}
+function b62QDrag(ev){
+  if(!B62_DRAG) return;
+  var box = el('b62QOrder'); if(!box) return;
+  var chips = Array.prototype.slice.call(box.querySelectorAll('.qchip'));
+  var over = null;
+  for(var i = 0; i < chips.length; i++){
+    if(chips[i] === B62_DRAG.el) continue;
+    var r = chips[i].getBoundingClientRect();
+    if(ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom){ over = chips[i]; break; }
+  }
+  if(!over) return;
+  var from = chips.indexOf(B62_DRAG.el), to = chips.indexOf(over);
+  if(to < from) box.insertBefore(B62_DRAG.el, over);
+  else box.insertBefore(B62_DRAG.el, over.nextSibling);
+  b62QCommit();
+}
+function b62QCommit(){
+  var box = el('b62QOrder'); if(!box) return;
+  B53_QUICK = Array.prototype.slice.call(box.querySelectorAll('.qchip'))
+    .map(function(c){ return c.getAttribute('data-k'); })
+    .filter(function(k){ return !!k; });
+  /* המספרים מתעדכנים בלי לצייר מחדש — האלמנט הנגרר חייב לשרוד */
+  Array.prototype.slice.call(box.querySelectorAll('.qchip .qnum'))
+    .forEach(function(n, i){ n.textContent = String(i + 1); });
+  b62QSync();
+}
+function b62QUp(ev){
+  if(!B62_DRAG) return;
+  var c = B62_DRAG.el;
+  try{ c.releasePointerCapture(ev.pointerId); }catch(e){}
+  c.removeEventListener('pointermove', b62QDrag);
+  c.removeEventListener('pointerup', b62QUp);
+  c.removeEventListener('pointercancel', b62QUp);
+  c.classList.remove('drag');
+  B62_DRAG = null;
+  b62QCommit();
 }
 function b53QuickState(){
   var box = el('b53QuickState'); if(!box) return;
