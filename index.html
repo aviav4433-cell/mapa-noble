@@ -91,6 +91,9 @@ header .more-pop .btn{color:#D6DEE7;background:transparent;border:none}
 header .more-pop .btn:hover{background:rgba(255,255,255,.08);color:#fff}
 header .more-wrap>.btn{padding:6px 11px;line-height:1;font-size:15px}
 nav{display:flex;background:var(--sb);border-bottom:1px solid rgba(255,255,255,.06);overflow-x:auto;position:sticky;top:54px;z-index:19;-webkit-overflow-scrolling:touch}
+/* B63: רצועת הצד קיימת ב-DOM תמיד ומוצגת רק מ-1100px ומעלה */
+#rail{display:none}
+body.driver-mode #rail{display:none!important}
 main{padding:20px;max-width:1080px;margin:0 auto;padding-bottom:48px}
 /* ===== כרטיסים ===== */
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px 20px;margin-bottom:12px;box-shadow:var(--shadow)}
@@ -361,13 +364,17 @@ nav .nitem.on{color:#fff}
    900–1099 = תפריט B47 עם החלוניות · מתחת ל-900 = אקורדיון B23.
    הפריסה נעשית ב-#shell (עוטף nav+main) ולא ב-#app, כדי שה-header
    יישאר sticky וכדי שמצב ה-display של #app (פורטל/חנות/קיוסק) לא ייגע. */
+/* ===== B63: רצועת צד — 2–3 קטגוריות נבחרות בלבד =====
+   התפריט הראשי עבר למעלה (#nav, שורה אופקית — דפוס B47 שהיה קיים ובדוק
+   ופשוט היה חסום מעל 1100px). הרצועה כאן היא **מסלול מהיר** לקטגוריות
+   שאבי בוחר בהגדרות, ולא רשימת כל המסכים. כל 29 המסכים נגישים במלואם
+   מהתפריט העליון — הרצועה חוסכת לחיצה, אין לה בלעדיות על שום מסך. */
 @media(min-width:1100px){
   body:not(.driver-mode) #shell{display:flex;align-items:flex-start}
-  body:not(.driver-mode) nav{position:sticky;top:54px;right:auto;left:auto;bottom:auto;
-      width:228px;flex:none;height:calc(100vh - 54px);min-height:0;
-      flex-direction:column;flex-wrap:nowrap;align-items:stretch;
-      overflow-y:auto;overflow-x:hidden;padding:6px 0 24px;
-      border-bottom:none;border-inline-end:1px solid rgba(0,0,0,.18)}
+  body:not(.driver-mode) #rail{display:block;position:sticky;top:97px;
+      width:206px;flex:none;height:calc(100vh - 97px);min-height:0;
+      overflow-y:auto;overflow-x:hidden;padding:8px 0 20px;
+      background:var(--sb);border-inline-end:1px solid rgba(0,0,0,.18)}
   body:not(.driver-mode) main{flex:1;min-width:0;max-width:none;margin:0;
       padding:26px 28px;padding-bottom:52px}
   /* ===== B62/T2 · N3א — קטגוריה נפתחת ונעצרת. אין אקורדיון ואין חצים =====
@@ -376,49 +383,49 @@ nav .nitem.on{color:#fff}
      שורד מעבר בין מסכים, רענון, וגם סגירת הדפדפן. אפס בקשות שרת (R10).
      ⚠ הפתיחה מונפשת דרך grid-template-rows ולא דרך רינדור מחדש: b62NavPin
      מחליף מחלקה על האלמנט החי, ולכן המעבר רך ואין קפיצת פריסה. */
-  nav .ngrp.side{display:block;position:static;padding:0;margin:0;border:none}
-  nav .gcap{display:flex;align-items:center;gap:8px;width:100%;text-align:right;
+  #rail .ngrp.side{display:block;position:static;padding:0;margin:0;border:none}
+  #rail .gcap{display:flex;align-items:center;gap:8px;width:100%;text-align:right;
       background:none;border:none;border-radius:0;box-shadow:none;min-height:0;
       font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--sb-mut);
       padding:9px 12px 4px 10px;white-space:nowrap;cursor:pointer}
-  nav .gcap:hover{color:#C8D2DC}
-  nav .gcap svg{flex:none;width:15px;height:15px}
-  nav .gcap .gtxt{flex:1;overflow:hidden;text-overflow:ellipsis;text-align:right}
+  #rail .gcap:hover{color:#C8D2DC}
+  #rail .gcap svg{flex:none;width:15px;height:15px}
+  #rail .gcap .gtxt{flex:1;overflow:hidden;text-overflow:ellipsis;text-align:right}
   /* מונה מסכים — מופיע רק כשהקטגוריה סגורה, כדי ששום מידע לא ייעלם */
-  nav .gcap .gcnt{flex:none;font-size:10.5px;font-weight:600;letter-spacing:0;opacity:.7}
-  nav .ngrp.side.open .gcap .gcnt{display:none}
+  #rail .gcap .gcnt{flex:none;font-size:10.5px;font-weight:600;letter-spacing:0;opacity:.7}
+  #rail .ngrp.side.open .gcap .gcnt{display:none}
   /* הסיכה גלויה תמיד ולא רק בריחוף — במכשיר מגע אין ריחוף */
-  nav .gcap .gpin{flex:none;display:inline-flex;width:15px;height:15px;opacity:.32;
+  #rail .gcap .gpin{flex:none;display:inline-flex;width:15px;height:15px;opacity:.32;
       transition:opacity .15s,color .15s}
-  nav .gcap:hover .gpin{opacity:.7}
-  nav .ngrp.side.pin .gcap .gpin{opacity:1;color:var(--teal)}
-  nav .gbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows .18s ease}
-  nav .ngrp.side.open>.gbody{grid-template-rows:1fr}
-  nav .gbody>div{overflow:hidden;min-height:0}
-  nav .ngrp.side .nitem{display:block;width:100%;text-align:right;background:none;
+  #rail .gcap:hover .gpin{opacity:.7}
+  #rail .ngrp.side.pin .gcap .gpin{opacity:1;color:var(--teal)}
+  #rail .gbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows .18s ease}
+  #rail .ngrp.side.open>.gbody{grid-template-rows:1fr}
+  #rail .gbody>div{overflow:hidden;min-height:0}
+  #rail .ngrp.side .nitem{display:block;width:100%;text-align:right;background:none;
       font-size:13.5px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
       padding:5px 30px 5px 14px;margin:0;border:none;border-right:3px solid transparent;
       border-radius:0;box-shadow:none;min-height:0;overflow:hidden;text-overflow:ellipsis}
-  nav .ngrp.side .nitem:hover{background:var(--sb-hi);color:#fff}
-  nav .ngrp.side .nitem.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
+  #rail .ngrp.side .nitem:hover{background:var(--sb-hi);color:#fff}
+  #rail .ngrp.side .nitem.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
       color:#fff;font-weight:600;box-shadow:none}
   /* מסך יחיד שאינו שייך לקטגוריה מרובת-מסכים — קישור ישיר בראש הסרגל */
-  nav .nitem.lone.side{display:flex;align-items:center;gap:9px;width:100%;text-align:right;
+  #rail .nitem.lone.side{display:flex;align-items:center;gap:9px;width:100%;text-align:right;
       background:none;font-size:13.5px;font-weight:600;color:var(--sb-tx);white-space:nowrap;
       padding:7px 16px;margin:0;border:none;border-right:3px solid transparent;
       border-radius:0;box-shadow:none;min-height:0}
-  nav .nitem.lone.side svg{flex:none;width:16px;height:16px}
-  nav .nitem.lone.side:hover{background:var(--sb-hi);color:#fff}
-  nav .nitem.lone.side.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
+  #rail .nitem.lone.side svg{flex:none;width:16px;height:16px}
+  #rail .nitem.lone.side:hover{background:var(--sb-hi);color:#fff}
+  #rail .nitem.lone.side.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
       color:#fff;box-shadow:none}
 }
 /* 1100–1279: סרגל צר יותר וריפוד מצומצם — מרוויח רוחב למסכי הטבלאות הרחבים */
 @media(min-width:1100px) and (max-width:1279px){
-  body:not(.driver-mode) nav{width:198px}
+  body:not(.driver-mode) #rail{width:182px}
   body:not(.driver-mode) main{padding:22px 18px;padding-bottom:52px}
-  nav .ngrp.side .nitem{padding:5px 26px 5px 12px;font-size:13px}
-  nav .gcap{padding:8px 10px 4px 8px}
-  nav .nitem.lone.side{padding:7px 13px;font-size:13px}
+  #rail .ngrp.side .nitem{padding:5px 26px 5px 12px;font-size:13px}
+  #rail .gcap{padding:8px 10px 4px 8px}
+  #rail .nitem.lone.side{padding:7px 13px;font-size:13px}
 }
 /* הדגשת תרשומת שמנווטים אליה — רקע שדוהה לאורך ~10 שניות */
 .hl-fade{animation:hlfade 10s ease-out forwards;border-radius:6px}
@@ -553,7 +560,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.61-B62 · 31.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.62-B63 · 31.07.2026</div>
   </div>
 </div>
 
@@ -576,11 +583,14 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     </span>
   </header>
   <div id="offlineBanner">אין חיבור לאינטרנט — מוצג מסלול שמור מהטעינה האחרונה</div>
-  <!-- B53: עטיפת פריסה בלבד. במסך רחב (1100px+) היא הופכת לשתי עמודות —
-       סרגל ניווט ימני קבוע + תוכן. ה-header נשאר מחוץ לעטיפה כדי
-       שה-position:sticky שלו ימשיך לעבוד בדיוק כמו קודם. -->
+  <!-- B63: שתי שורות למעלה, כמו ב-ERP מסחרי. שורת המותג (header) ומתחתיה
+       שורת התפריט (#nav) — שתיהן ברוחב מלא ו-sticky. #nav יצא מ-#shell
+       כדי שיוכל להשתרע לרוחב; ב-#shell נשארו הרצועה והתוכן בלבד.
+       ⚠ מתחת ל-900px ובמצב נהג — #nav הוא position:fixed ולכן מיקומו
+       ב-DOM אינו משנה להם דבר. -->
+  <nav id="nav"></nav>
   <div id="shell">
-    <nav id="nav"></nav>
+    <aside id="rail"></aside>
     <main id="main"></main>
   </div>
 </div>
@@ -1590,11 +1600,15 @@ var B62_PINS_KEY = 'mn_nav_pins';
 var B62_PINS = null;
 function b62NavPins(){
   if(B62_PINS) return B62_PINS;
-  var a = [];
+  var a = null;
   try{
     var raw = localStorage.getItem(B62_PINS_KEY);
     if(raw){ var j = JSON.parse(raw); if(Array.isArray(j)) a = j.filter(function(x){ return typeof x === 'string'; }); }
-  }catch(e){ a = []; }   /* localStorage חסום/פגום — הסרגל עובד בלי זיכרון, לא נשבר */
+  }catch(e){ a = null; }   /* localStorage חסום/פגום — הרצועה עובדת בלי זיכרון, לא נשברת */
+  /* B63: מעולם לא נשמר דבר ⇦ ברירת המחדל היא **כל הקטגוריות שברצועה פתוחות**.
+     ברצועה יש 2–3 קטגוריות בלבד, וכולן נכנסות בנוחות לגובה המסך; להציג
+     אותן מכווצות היה הופך מסלול מהיר למסלול של שתי לחיצות. */
+  if(a === null) a = b63RailGroups();
   B62_PINS = a; return a;
 }
 function b62NavPinsSave(a){
@@ -1602,6 +1616,26 @@ function b62NavPinsSave(a){
   try{ localStorage.setItem(B62_PINS_KEY, JSON.stringify(B62_PINS)); }catch(e){}
 }
 function b62NavPinned(name){ return b62NavPins().indexOf(name) > -1; }
+/* ================= B63 — אילו קטגוריות יושבות ברצועת הצד =================
+   ההגדרה נשמרת כמפתח settings אחד (`nav_rail`) — שמות קטגוריות מופרדים
+   בפסיקים — ואבי בוחר אותן בסימון תיבות בעברית במסך ההגדרות.
+   ⚠ הרצועה אינה מחזיקה בלעדיות על שום מסך: כל 29 המסכים נגישים במלואם
+   מהתפריט העליון. שינוי כאן אינו יכול להסתיר מסך מאף תפקיד. */
+var NAV_RAIL_DEFAULT = 'מכירות ומשלוחים,ייצור ומכבסה,מלאי ומחסן';
+var NAV_RAIL_MAX = 3;
+function b63RailGroups(){
+  var raw = '';
+  try{ raw = setting('nav_rail'); }catch(e){ raw = ''; }
+  raw = String(raw == null ? '' : raw).trim();
+  if(!raw) raw = NAV_RAIL_DEFAULT;
+  var valid = {}; NAV_GROUPS.forEach(function(g){ valid[g[1]] = 1; });
+  var seen = {}, out = [];
+  raw.split(',').forEach(function(x){
+    x = x.trim();
+    if(x && valid[x] && !seen[x]){ seen[x] = 1; out.push(x); }   /* שם קטגוריה שהוסר מהקוד — מסונן בשקט */
+  });
+  return out.slice(0, NAV_RAIL_MAX);
+}
 var B62_PIN_SVG = '<svg class="gpin" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 3h6l-1 7 3 3v2H7v-2l3-3z"/></svg>';
 /* לחיצה על שורת הכותרת נועצת/משחררת. **בלי renderNav** — מחליפים מחלקה
    על האלמנט החי, וכך המעבר מונפש ואין קפיצת פריסה (תנאי ב' של N3א). */
@@ -1634,6 +1668,7 @@ function renderNav(views){
     el('nav').innerHTML = DRIVER_TAB_ORDER.filter(k=>allowedKeys.includes(k)).map(function(k){
       return '<button class="dtab'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+(DRIVER_TAB_ICONS[k]||'')+'<span>'+esc(labelOf[k])+'</span></button>';
     }).join('');
+    if(el('rail')) el('rail').innerHTML = '';
     return;
   }
   var allowed = {}; views.forEach(function(v){ allowed[v[0]]=v[1]; });
@@ -1647,39 +1682,14 @@ function renderNav(views){
   var extra = views.filter(v=>!navGroupOf(v[0])).map(v=>v[0]); // ביטחון — מסך שלא שויך לקטגוריה
   if(extra.length) groups = groups.concat([['<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>','עוד',extra]]);
   NAV_MODE = navMode();
-  /* B53/N2 + B62/T2/N3א: סרגל צד — כל המסכים המותרים קיימים תמיד ומקובצים
-     לפי NAV_GROUPS. ⚠ שינוי B62: קטגוריה מוצגת פתוחה רק אם היא נעוצה או אם
-     המסך הנוכחי בתוכה. הפריטים **תמיד ברשימה** ורק מכווצים ב-CSS — כך
-     המעבר מונפש, ושום מסך לא נמחק מה-DOM ולא נעלם מהחיפוש בדפדפן.
-     אותו #nav, אותו allowedViews, בלי דפוס ניווט רביעי. */
-  if(NAV_MODE==='side'){
-    el('nav').innerHTML = navActions + groups.map(function(g){
-      var items = g[2].filter(k=>allowed[k]!==undefined);
-      if(!items.length) return '';
-      if(items.length===1 && (g[2].length===1 || items[0]==='dash')){
-        var lk = items[0];
-        return '<button class="nitem lone side'+(VIEW===lk?' on':'')+'" onclick="go(\''+lk+'\')">'+
-          g[0]+'<span class="gtxt">'+allowed[lk]+'</span>'+
-          (lk==='approvals'&&APPROVALS_COUNT>0?'<span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>';
-      }
-      var cur  = items.indexOf(VIEW) > -1;
-      var pin  = b62NavPinned(g[1]);
-      var open = cur || pin;
-      var grpBadge = (items.indexOf('approvals')>-1 && APPROVALS_COUNT>0) ? '<span class="navbadge">'+APPROVALS_COUNT+'</span>' : '';
-      var tip = cur ? 'הקטגוריה של המסך הנוכחי — פתוחה תמיד. לחיצה נועצת אותה כדי שתישאר פתוחה גם אחר כך'
-                    : (pin ? 'נעוצה — לחיצה תכווץ אותה' : 'לחיצה תנעץ את הקטגוריה ותשאיר אותה פתוחה');
-      return '<div class="ngrp side'+(open?' open':'')+(pin?' pin':'')+(cur?' cur':'')+'" data-g="'+esc(g[1])+'">'+
-        '<button class="gcap" onclick="b62NavPin(this)" title="'+esc(tip)+'" aria-expanded="'+(open?'true':'false')+'">'+
-          g[0]+'<span class="gtxt">'+esc(g[1])+'</span>'+grpBadge+
-          '<span class="gcnt">'+items.length+'</span>'+B62_PIN_SVG+'</button>'+
-        '<div class="gbody"><div>'+
-          items.map(k=>'<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
-            (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>').join('')+
-        '</div></div>'+
-        '</div>';
-    }).join('');
-    return; // אין חלונית למדוד — navFixDD לא רלוונטי
-  }
+  /* ===== B63: מ-900px ומעלה התפריט הראשי הוא **השורה העליונה** =====
+     עד B62 מצב 'side' רינדר סרגל צד עם כל 29 המסכים, ותפריט B47 העליון היה
+     חסום מעל 1100px אף שהיה בנוי ובדוק. הכרעת אבי (31.07.2026, מול צילום
+     מסך של ERP מסחרי): התפריט עולה למעלה בכל רוחב דסקטופ.
+     ⚠ אין כאן דפוס חדש — זה בדיוק אותו רינדור של מצב 'top', שמשמש 900–1099
+     מאז B47. מ-1100px ומעלה מתווספת לו **רצועת צד** עם 2–3 קטגוריות
+     נבחרות בלבד (renderRail). navMode/navIsSide/navIsTop לא שינו משמעות:
+     'side' עדיין אומר "רחב מספיק לרצועה", רק שהרצועה כבר אינה כל התפריט. */
   el('nav').innerHTML = navActions + groups.map(function(g){
     var items = g[2].filter(k=>allowed[k]!==undefined);
     if(!items.length) return ''; // כל המסכים בקטגוריה מסוננים — לא מציגים אותה
@@ -1702,6 +1712,44 @@ function renderNav(views){
       '</div>';
   }).join('');
   navFixDD();
+  renderRail(views);
+}
+/* ================= B63 — רצועת הצד =================
+   מסלול מהיר בלבד: 2–3 קטגוריות שאבי בוחר בהגדרות, בדיוק בדפוס הקיפול
+   והנעיצה של B62 (b62NavPin — אותו קוד, אותו localStorage, אותה הנפשה).
+   ⚠ שום מסך אינו בלעדי לרצועה. היא נגזרת מ-allowedViews כמו התפריט העליון,
+   ולכן אינה יכולה להציג מסך אסור ואינה יכולה להסתיר מסך מותר. */
+function renderRail(views){
+  var box = el('rail'); if(!box) return;
+  if(ROLE==='נהג' || !navIsSide()){ box.innerHTML = ''; return; }
+  views = views || allowedViews();
+  var allowed = {}; views.forEach(function(v){ allowed[v[0]] = v[1]; });
+  var pick = b63RailGroups();
+  var html = pick.map(function(name){
+    var g = NAV_GROUPS.find(function(x){ return x[1] === name; });
+    if(!g) return '';
+    var items = g[2].filter(function(k){ return allowed[k] !== undefined; });
+    if(!items.length) return '';   /* כל מסכי הקטגוריה אסורים לתפקיד — לא מוצגת */
+    var cur  = items.indexOf(VIEW) > -1;
+    var pin  = b62NavPinned(g[1]);
+    var open = cur || pin;
+    var grpBadge = (items.indexOf('approvals')>-1 && APPROVALS_COUNT>0) ? '<span class="navbadge">'+APPROVALS_COUNT+'</span>' : '';
+    var tip = cur ? 'הקטגוריה של המסך הנוכחי — פתוחה תמיד'
+                  : (pin ? 'לחיצה תכווץ את הקטגוריה' : 'לחיצה תפתח את הקטגוריה ותשאיר אותה פתוחה');
+    return '<div class="ngrp side'+(open?' open':'')+(pin?' pin':'')+(cur?' cur':'')+'" data-g="'+esc(g[1])+'">'+
+      '<button class="gcap" onclick="b62NavPin(this)" title="'+esc(tip)+'" aria-expanded="'+(open?'true':'false')+'">'+
+        g[0]+'<span class="gtxt">'+esc(g[1])+'</span>'+grpBadge+
+        '<span class="gcnt">'+items.length+'</span>'+B62_PIN_SVG+'</button>'+
+      '<div class="gbody"><div>'+
+        items.map(function(k){ return '<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
+          (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>'; }).join('')+
+      '</div></div>'+
+      '</div>';
+  }).join('');
+  box.innerHTML = html;
+  /* לא נבחרה קטגוריה (או שכולן אסורות לתפקיד) — הרצועה נעלמת ולא משאירה
+     פס ריק. התוכן מקבל את הרוחב חזרה. */
+  box.style.display = html ? '' : 'none';
 }
 /* B47: החלונית עוגנת לקצה הקטגוריה. בקטגוריות שבקצה השורה זה עלול לחרוג
    מהמסך (בעיקר האחרונות ב-RTL, וגם כשהתפריט נשבר לשתי שורות), ולכן היא
@@ -7083,7 +7131,7 @@ function b60Card(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.61-B62';
+var B61_CANARY = 'v4.62-B63';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -7282,8 +7330,20 @@ function b61Tests(){ return [
 /* ===== קבוצה 5 — פריסה ותצוגה (חוסם את B62) ===== */
 { g:'פריסה ותצוגה', n:'מצב הניווט בפועל במכשיר הזה', f:function(){
     var m = (typeof navMode === 'function') ? navMode() : '';
-    var names = { side:'סרגל צד קבוע', top:'תפריט עליון', mob:'אקורדיון מובייל' };
+    var names = { side:'תפריט עליון + רצועת צד', top:'תפריט עליון', mob:'אקורדיון מובייל' };
     return { ok: !!m, note: (names[m] || m) + ' · רוחב ' + window.innerWidth + 'px' };
+} },
+
+{ g:'פריסה ותצוגה', n:'שורת התפריט העליונה אינה גולשת (B63)', f:function(){
+    var n = el('nav');
+    if(!n) return { ok:false, note:'שורת התפריט לא נמצאה' };
+    if(navMode() === 'mob') return { ok:true, note:'לא רלוונטי — במובייל התפריט הוא תצוגה נפרדת' };
+    if(!n.clientWidth) return { ok:true, note:'אין פריסה למדוד' };
+    var over = n.scrollWidth - n.clientWidth;
+    var cnt = n.querySelectorAll('.ghead, .nitem.lone').length;
+    return { ok: over <= 2,
+      note: cnt + ' קטגוריות · רוחב נדרש ' + n.scrollWidth + 'px מתוך ' + n.clientWidth + 'px' +
+            (over > 2 ? ' · ⚠ גולש ב-' + over + 'px — התפריט נגלל לצדדים' : ' · נכנס') };
 } },
 
 { g:'פריסה ותצוגה', n:'נקודות השבירה 900px ו-1100px מוערכות נכון', f:function(){
@@ -7303,19 +7363,21 @@ function b61Tests(){ return [
    ⚠ אלה הטענות שאי אפשר לבדוק ב-jsdom: ל-jsdom אין מנוע פריסה, ולכן
    scrollHeight/getBoundingClientRect מחזירים אפס. המספרים כאן נמדדים
    רק בדפדפן האמיתי — זו בדיוק הסיבה שהשכבה השנייה קיימת (R11). */
-{ g:'פריסה ותצוגה', n:'סרגל הצד נכנס לגובה החלון בלי גלילה', f:function(){
-    var n = el('nav');
-    if(!n) return { ok:false, note:'אלמנט הניווט לא נמצא' };
+{ g:'פריסה ותצוגה', n:'רצועת הצד נכנסת לגובה החלון בלי גלילה', f:function(){
+    var n = el('rail');
+    if(!n) return { ok:false, note:'רצועת הצד לא נמצאה' };
     if(navMode() !== 'side') return { ok:true, note:'לא רלוונטי — מצב הניווט הוא ' + navMode() };
+    var pick = (typeof b63RailGroups === 'function') ? b63RailGroups() : [];
+    if(!pick.length) return { ok:true, note:'לא נבחרה קטגוריה לרצועה — כל הניווט מהתפריט העליון' };
     var need = n.scrollHeight, have = n.clientHeight;
-    if(!have) return { ok:false, note:'אין פריסה למדוד (החלון מוסתר?)' };
+    if(!have) return { ok:true, note:'אין פריסה למדוד' };
     var over = need - have;
     return { ok: over <= 2,
-      note: 'תוכן ' + need + 'px · גובה זמין ' + have + 'px' +
-            (over > 2 ? ' · ⚠ חסרים ' + over + 'px — נעץ פחות קטגוריות' : ' · נכנס') };
+      note: pick.length + ' קטגוריות · תוכן ' + need + 'px · גובה זמין ' + have + 'px' +
+            (over > 2 ? ' · ⚠ חסרים ' + over + 'px — כווץ קטגוריה או הסר אחת' : ' · נכנס') };
 } },
 
-{ g:'פריסה ותצוגה', n:'נעיצת קטגוריות נשמרת ונקראת חזרה', f:function(){
+{ g:'פריסה ותצוגה', n:'קיפול קטגוריות ברצועה נשמר ונקרא חזרה', f:function(){
     var before = null, ok = false, note = '';
     try{ before = localStorage.getItem(B62_PINS_KEY); }catch(e){}
     try{
@@ -7374,8 +7436,8 @@ function b61Tests(){ return [
       }
     }
     var over = widest - m.clientWidth;
-    var nav = el('nav');
-    var navW = (nav && navMode()==='side') ? nav.getBoundingClientRect().width : 0;
+    var rail = el('rail');
+    var navW = (rail && navMode()==='side') ? rail.getBoundingClientRect().width : 0;
     var need = Math.round(widest + navW + 56);
     return { ok: over <= 2,
       note: 'מסך "' + VIEW + '" · רוחב חלון ' + window.innerWidth + 'px · דרוש למערכת ~' + need + 'px' +
@@ -9564,11 +9626,62 @@ function rSettings(){
     '<div class="frow"><label>נוסח הסכם השירות</label><textarea id="set_agreement_text" rows="8" style="width:100%;font-family:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px">'+esc(setting('agreement_text'))+'</textarea></div>'+
     '<button class="btn" id="setSaveBtn" onclick="saveSettings()">שמור הכל</button> <button class="btn ghost" onclick="printAgreementPreview()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> תצוגה מקדימה של הסכם</button></div>'+
     '<p class="muted">ההגדרות חלות מיידית על כל המסמכים: חשבוניות, קבלות, תעודות משלוח, טפסים, הסכמים ודוחות.</p>'+
+    b63RailPanelHtml()+
     b53QuickNavPanelHtml()+
     b52KioskPanelHtml()+
     b46FixPanelHtml();
   b52LoadKioskStatus();
   b53QuickState();
+  b63RailState();
+}
+/* ================= B63: אילו קטגוריות ברצועת הצד =================
+   אותו דפוס בדיוק כמו בחירת הקיצורים (B53/N1): תיבות סימון בעברית, שדה
+   מוסתר שנשמר כמפתח settings אחד. אין דפוס הגדרות שני (R8).
+   ⚠ הרצועה היא קיצור דרך ולא הרשאה — מסך שאינו נכנס אליה נשאר נגיש במלואו
+   מהתפריט העליון, ובאותה הרשאה בדיוק. */
+var B63_RAIL = [];
+function b63RailPanelHtml(){
+  var views = allowedViews(), labelOf = {};
+  views.forEach(function(v){ labelOf[v[0]] = v[1]; });
+  B63_RAIL = b63RailGroups();
+  var boxes = NAV_GROUPS.map(function(g){
+    var items = g[2].filter(function(k){ return labelOf[k] !== undefined; });
+    if(items.length < 2) return '';   /* קטגוריה של מסך בודד — אין מה לפתוח ברצועה */
+    return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:400;cursor:pointer;margin:0 0 6px">'+
+      '<input type="checkbox" style="width:auto" data-b63g="'+esc(g[1])+'"'+
+      (B63_RAIL.indexOf(g[1])>-1?' checked':'')+' onchange="b63RailToggle(this)"> '+
+      esc(g[1])+' <span class="muted" style="font-size:11.5px">('+items.length+')</span></label>';
+  }).join('');
+  return '<div class="section-title"><h3>קטגוריות ברצועת הצד</h3></div>'+
+    '<div class="card">'+
+      '<div style="font-size:13px">התפריט הראשי נמצא בשורה העליונה וכל המסכים נגישים ממנו. '+
+      'רצועת הצד היא <b>מסלול מהיר</b> — עד '+NAV_RAIL_MAX+' קטגוריות שאתה נכנס אליהן הכי הרבה, '+
+      'פתוחות לפניך בלי לפתוח תפריט. <b>שום מסך לא נעלם בגלל בחירה כאן.</b></div>'+
+      '<div class="row" style="gap:5px 18px;margin-top:10px">'+boxes+'</div>'+
+      '<div id="b63RailState" class="muted" style="font-size:12.5px;margin-top:8px"></div>'+
+      '<input type="hidden" id="set_nav_rail" value="'+esc(B63_RAIL.join(','))+'">'+
+    '</div>';
+}
+function b63RailToggle(cb){
+  var name = cb.getAttribute('data-b63g'), i = B63_RAIL.indexOf(name);
+  if(cb.checked){
+    if(i < 0){
+      if(B63_RAIL.length >= NAV_RAIL_MAX){
+        cb.checked = false;
+        toast('אפשר עד '+NAV_RAIL_MAX+' קטגוריות ברצועה — הסר אחת קודם', true);
+        return;
+      }
+      B63_RAIL.push(name);
+    }
+  } else if(i > -1) B63_RAIL.splice(i, 1);
+  var h = el('set_nav_rail'); if(h) h.value = B63_RAIL.join(',');
+  b63RailState();
+}
+function b63RailState(){
+  var box = el('b63RailState'); if(!box) return;
+  box.textContent = B63_RAIL.length
+    ? 'נבחרו ' + B63_RAIL.length + ': ' + B63_RAIL.join(' · ') + ' — נשמר בלחיצה על "שמור הכל"'
+    : 'לא נבחרה קטגוריה — רצועת הצד תוסתר, וכל הניווט יהיה מהתפריט העליון.';
 }
 /* ================= B53/N1: בחירת קיצורי הדרך בשורה העליונה =================
    ההגדרה נשמרת כמפתח settings אחד (nav_quick) — רשימת מפתחות מופרדת בפסיקים —
@@ -9855,7 +9968,7 @@ async function saveSettings(){
   if(btn){ btn.disabled=true; btn.style.opacity='.6'; btn.textContent='שומר...'; }
   showBusy(true);
   try{
-    var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text','ui_theme','nav_quick']); // B53: nav_quick מגיע משדה מוסתר שמתמלא בסימון תיבות
+    var keys = SETTING_FIELDS.map(f=>f[0]).concat(['agreement_text','ui_theme','nav_quick','nav_rail']); // B53/B63: nav_quick ו-nav_rail משדות מוסתרים שמתמלאים בסימון תיבות
     for(var i=0;i<keys.length;i++){
       var fld = el('set_'+keys[i]);
       if(!fld) continue; // שדה שלא קיים במסך — לא מפילים את כל השמירה
