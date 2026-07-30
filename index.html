@@ -505,7 +505,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.57-B59 · 30.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.58-B60 · 30.07.2026</div>
   </div>
 </div>
 
@@ -706,6 +706,7 @@ async function enterApp(){
   el('whoLbl').textContent = USER + ' · ' + ROLE;
   applyTheme();
   render();
+  b60HistInit();   /* B60/T4: עוגן ההיסטוריה נוצר רק אחרי שהמערכת באמת מוצגת */
   refreshApprovalsCount(); // B10/E5: תג מונה בתפריט — לא חוסם את הרינדור הראשוני
   return true;
 }
@@ -730,6 +731,7 @@ async function enterOfflineIfPossible(){
   el('whoLbl').textContent = USER + ' · ' + ROLE;
   applyTheme();
   render();
+  b60HistInit();   /* B60/T4: גם מסלול הנהג האופליין מקבל היסטוריה תקינה */
   return true;
 }
 // באנר אופליין — מוצג רק לנהג וכשאין חיבור בפועל (navigator.onLine)
@@ -1698,7 +1700,112 @@ function render(){
     items:rItems,purchasing:rPurchasing,scan:rScan,barcodes:rBarcodes,reports:rReports,bi:rBi,approvals:rApprovals,audit:rAudit,assets:rAssets,
     staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings,warehouses:rWarehouses,shelves:rShelves,fleet:rFleet,returns:rReturns,notes:rNotes,floor:rFloor,superadmin:rSuperAdmin})[VIEW]();
 }
-function go(v){ VIEW=v; closeNavPanel(); NAV_DD=''; /* B47: החלונית העליונה נסגרת עם המעבר */ try{ sessionStorage.setItem('mn_view', v); }catch(e){} var g=navGroupOf(v); if(g && g!=='לוח בקרה') NAV_OPEN=g; render(); window.scrollTo(0,0); } // NC4: רענון דפדפן מחזיר לאותו מסך
+/* ================= B60 / T3 — הכלל האחיד למצב מסך =================
+   הבאג שנפתח את הפריט: REPORT_ID הוא משתנה מצב ברמת המודול. repBack() איפס
+   אותו, go() לא — ולכן לחיצה חוזרת על "דוחות" רינדרה שוב את אותו דוח ולא
+   את הקטלוג. תיקון נקודתי ב-reports היה משאיר את אותה מלכודת בכל מסך אחר,
+   ולכן נקבע כאן כלל אחד לכל המערכת. שלוש מחלקות, וכל משתנה מצב שייך לאחת:
+
+   מחלקה א' — "איפה אני בתוך המסך": תת-מסך או סשן עבודה שקשור לרשומה מסוימת.
+     ⇦ מתאפס בכל כניסה למסך דרך go(), כולל לחיצה חוזרת על אותו מסך.
+     החריג היחיד: קריאה מפורשת go(view,{keep:1}) מנקודת דריל-דאון.
+     חברי המחלקה מרוכזים ב-B60_VIEW_RESET למטה — אין רשימה שנייה.
+   מחלקה ב' — העדפת תצוגה: טאב נבחר, מסנן, חודש, חיפוש.
+     ⇦ נשמרת בכוונה. המשתמש בחר אותה, היא גלויה על המסך ויש דרך לשנותה.
+     FIN_TAB · ORD_TAB · DELIV_TAB · DRV_TAB · BI_TAB · ATT_TAB · FLEET_TAB ·
+     ASSET_TAB · FLOOR_TAB · CUST_TAB · EMP_TAB · AUDIT_FILTER · B54_F ·
+     B43_RANGE · FEXP_* · ITEMS_WH · SHELF_Q · COL_MONTH · B42_CUT ·
+     B42_CUT_SCOPE · UNITS_SHOW_DEL · NOBLE_REP_DAYS · B49F_DAYS ·
+     ATT_Y/ATT_M · CAL_Y/CAL_M · BI_DATA · B51_STATS.
+   מחלקה ג' — הקשר מודל: נוצר בפתיחת המודל ומאותחל שם בכל פתיחה.
+     ⇦ go() לא נוגע בו כלל. CONFIRM_CB · MGR_DEL_CB · SIG_CTX · TAG_CTX ·
+     MENTION_CTX · PAY_CTX · COLLECT_CTX · MEET_DRAFT · B59_TASK · B34_PICKS ·
+     B44_OSCAN · B35_ST · B35_CNT · B46_PDF_WARN_NEXT.
+     ⚠ חריג מפורש: UNDO_PENDING לעולם אינו מתאפס — הוא מחזיק פעולה שממתינה
+       חמש שניות לשליחה לשרת, ואיפוסו יבטל שליחה שהמשתמש כבר אישר. */
+var B60_VIEW_RESET = {
+  reports: function(){ REPORT_ID=''; REPORT_PARAMS={}; },
+  /* רצפת ייצור: הקליטה קשורה להזמנה מסוימת ולעגלות שנבחרו לה. כניסה מחדש
+     מהתפריט = קליטה חופשית נקייה, ולא הזמנה ישנה שנשארה בזיכרון. FLOOR_TAB
+     נשאר — הוא טאב גלוי (מחלקה ב'). */
+  floor:   function(){ FLOOR_INTAKE_ORDER=''; FLOOR_INTAKE_CARTS=[]; FLOOR_BC=''; FLOOR_INFO=null; b49fReset(); },
+  /* החזרות: RET הוא תעודה פתוחה בשקילה. rReturns ממילא מרנדר גוף ריק, אבל
+     ההקשר נשאר בזיכרון והיה יכול להיכנס לפעולה הבאה. */
+  returns: function(){ RET=null; RET_CAM=false; b49fReset(); }
+};
+function b60ResetView(v){ var f = B60_VIEW_RESET[v]; if(f){ try{ f(); }catch(e){} } }
+
+/* ================= B60 / T4 — היסטוריית דפדפן =================
+   עד היום לא הייתה שום אינטגרציה עם ההיסטוריה: go() שמר את המסך ב-
+   sessionStorage בלבד, ולכן "הקודם" יצא מהאתר. כאן נבנה המנגנון.
+   ⚠ ארבעה גבולות שנשמרים בקפידה:
+   1. הכתובת עצמה לא משתנה לעולם — pushState מקבל location.href כמו שהוא.
+      זה מה ששומר על ?kiosk=1 / ?portal=1 / ?shop=1 ועל history.replaceState
+      של הקיוסק, שמנקה את הטוקן מהכתובת (B52). אין לו שום התנגשות איתנו.
+   2. המנגנון פעיל אך ורק בהקשר צוות ורק כשהמערכת פתוחה בפועל. פורטל, חנות,
+      קיוסק ומסך הכניסה — b60HistCtx מחזיר false ושום מאזין לא עושה דבר.
+   3. נעילת B7 (idleLock) מסתירה את #app ולכן מכבה את המנגנון מיד. אין כאן
+      שום נגיעה ב-IDLE_LIMIT_MS ואין החלשה של הנעילה.
+   4. closeModal לא שונה ולא נקרא ל-history.back() בשום מקום מלבד עוגן הבסיס.
+      חמישים אתרי הקריאה מהדפוס closeModal();go('x') ממשיכים לעבוד כמו שהם. */
+function b60HistCtx(){
+  try{
+    if(typeof kioskOn==='function' && kioskOn()) return false;
+    var q = location.search || '';
+    if(q.indexOf('portal=1')>-1 || q.indexOf('shop=1')>-1) return false;
+  }catch(e){ return false; }
+  if(!TOKEN || !DB) return false;
+  var a = el('app');
+  return !!(a && a.style.display === 'block');
+}
+function b60ModalOpen(){ var b = el('modalBg'); return !!(b && b.style.display === 'flex'); }
+/* force=true (דריל-דאון או סגירת מודל) יוצר רשומה חדשה גם כשהמסך זהה.
+   בלעדיו, לחיצה חוזרת על אותו מסך מחליפה את הרשומה ולא מנפחת את ההיסטוריה. */
+function b60HistPush(v, force){
+  if(!b60HistCtx()) return;
+  var st = { mn:1, v:String(v||VIEW) };
+  try{
+    var cur = history.state;
+    if(!force && cur && cur.mn && cur.v === st.v) history.replaceState(st, '', location.href);
+    else history.pushState(st, '', location.href);
+  }catch(e){}
+}
+/* עוגן בסיס + רשומת המסך הראשון. העוגן הוא שמאפשר ל"הקודם" לסגור מודל
+   שנפתח לפני שהמשתמש ניווט אפילו פעם אחת, בלי ליפול מהמסמך. */
+function b60HistInit(){
+  if(!b60HistCtx()) return;
+  try{
+    history.replaceState({ mn:1, base:1 }, '', location.href);
+    history.pushState({ mn:1, v:VIEW }, '', location.href);
+  }catch(e){}
+}
+window.addEventListener('popstate', function(e){
+  if(!b60HistCtx()) return;
+  if(b60ModalOpen()){ closeModal(); b60HistPush(VIEW, true); return; }   /* מודל פתוח: "הקודם" סוגר אותו ונשארים במסך */
+  var st = e.state;
+  if(st && st.mn && st.base){ try{ history.back(); }catch(err){} return; }  /* עוגן הבסיס: יציאה אמיתית מהאתר, כמו בכל אתר */
+  if(st && st.mn && st.v){
+    if(!allowedViews().some(function(x){ return x[0]===st.v; })) return;    /* מסך שאינו מותר לתפקיד — נשארים במקום */
+    go(st.v, { fromHistory:1 });
+    return;
+  }
+  try{ history.replaceState({ mn:1, v:VIEW }, '', location.href); }catch(err){}  /* מצב זר — מעגנים מחדש בלי להזיז את המשתמש */
+});
+
+/* o.keep — דריל-דאון: המצב הוגדר לפני הקריאה ואסור לאפס אותו (T3), והרשומה
+   בהיסטוריה נוספת גם כשהמסך זהה (T4).
+   o.fromHistory — הניווט הגיע מ"הקודם": מאפסים מצב מסך כרגיל, אבל לא דוחפים
+   רשומה חדשה, אחרת "הקודם" היה יוצר לולאה. שני הדגלים הם בדיוק הנקודה שבה
+   T3 ו-T4 יכלו לבטל זה את זה. */
+function go(v, o){
+  o = o || {};
+  if(!o.keep) b60ResetView(v);            /* T3 */
+  VIEW=v; closeNavPanel(); NAV_DD=''; /* B47: החלונית העליונה נסגרת עם המעבר */
+  try{ sessionStorage.setItem('mn_view', v); }catch(e){} // NC4: רענון דפדפן מחזיר לאותו מסך
+  var g=navGroupOf(v); if(g && g!=='לוח בקרה') NAV_OPEN=g;
+  render(); window.scrollTo(0,0);
+  if(!o.fromHistory) b60HistPush(VIEW, o.keep);   /* T4 — VIEW ולא v: render עשוי להפיל למסך מותר אחר */
+}
 
 /* ================= לוח בקרה ================= */
 function rDash(){
@@ -2294,7 +2401,7 @@ function b49dGoIntake(oid){
   b49fReset();   /* B49f: הזמנה חדשה = הצהרה נקייה */
   FLOOR_TAB = 'intake';
   closeModal();
-  go('floor');
+  go('floor', { keep:1 });   /* B60/T3: ההזמנה והעגלות נקבעו כאן — אסור לאפס אותן */
 }
 function b49dCanIntake(){
   return ['מנהל','משרד','מכבסה','עובד רצפה'].indexOf(ROLE)>-1 && allowedViews().some(function(v){ return v[0]==='floor'; });
@@ -4931,7 +5038,10 @@ function b43FlowHtml(){
 }
 
 // מעבר לטאב בתוך מסך כספים
-function goFin(tab){ FIN_TAB = tab; VIEW = 'finance'; render(); window.scrollTo(0,0); }
+/* B60/T3+T4: היה מציב VIEW ישירות ועוקף את go — ולכן לא נשמר ב-mn_view
+   (רענון לא החזיר לכספים) ולא נכנס להיסטוריה. FIN_TAB הוא מחלקה ב' ולכן
+   נשמר גם אחרי המעבר. */
+function goFin(tab){ FIN_TAB = tab; go('finance'); }
 function finCard(val,label,onclick,alert){
   return '<div class="kpi click'+(alert?' alert':'')+'" onclick="'+onclick+'" title="לחץ לפירוט">'+
     '<div class="v">'+val+'</div><div class="l">'+label+'</div></div>';
@@ -7124,9 +7234,11 @@ function runReport(id){
 function goReport(id, params){
   REPORT_ID = id;
   REPORT_PARAMS = params || {};
-  go('reports');
+  go('reports', { keep:1 });   /* B60/T3: המצב הוגדר כאן — go לא מאפס אותו. B60/T4: רשומת היסטוריה חדשה גם כשכבר במסך דוחות */
 }
-function repBack(){ REPORT_ID=''; REPORT_PARAMS={}; rReports(); }
+/* B60/T3: החזרה לקטלוג עוברת דרך go — אותו איפוס בדיוק כמו לחיצה על "דוחות"
+   בתפריט, ורשומת ההיסטוריה מתעדכנת במקום להישאר על הדוח שנסגר. */
+function repBack(){ go('reports'); }
 function rReports(){
   if(!REPORT_ID){
     var cats = REPORTS_CATALOG.filter(reportAllowed);
