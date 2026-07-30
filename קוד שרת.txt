@@ -424,6 +424,8 @@ var B42_OUTCOMES = { 'תוקנה': 'fixed', 'הושבתה סופית': 'dead', '
 var MANAGER_ONLY = [
   // B51: יומן הפעולות, ניקוי הסיסמאות ההיסטוריות ומדידת משקל הנתונים — מנהל בלבד
   'b51AuditPage', 'b51ScrubAudit', 'b51PayloadStats',
+  // B58: אבחון קריאה מהירה ומתג הכיבוי שלה — מנהל בלבד
+  'b58Probe', 'b58SetFast',
   'delete', 'b54ChargeCancel', 'b38FixPickups', 'b41CloseStalePickups', 'b49eBackfillShipModes', 'cancelInvoice', 'buildPayroll', 'runGlobalPayroll', 'generatePayroll', 'setBonus', 'approvePayroll', 'updateSetting',
   // B1: עדכון מספר הקצאה — מנהל בלבד
   'b1SetAllocationNumber',
@@ -601,6 +603,7 @@ function readTable(name) {
 }
 function writeTable(name, rows) {
   b54Bump();   // B54: כל כתיבה מבטלת את מטמון ספר החיובים — אפס drift
+  b58Touch(name);  // B58: רישום הטבלה שנכתבה, לצורך גרסת מטמון פר-טבלה
   var sh = ensureSheet(name); // B21: נוצר אוטומטית אם חסר
   var cols = TABLES[name];
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, cols.length).clearContent();
@@ -707,43 +710,277 @@ function b51RowYmd(r, fields) {
 // G1: בונה את מטען getAll — עותק של הטבלאות שבו שדות ארוכים קוצצו וסומנו ב-<field>_trunc
 // B51: ועליו מדיניות הקיצוץ. out._slim מתאר לממשק מה נחתך, כדי שמסכי היסטוריה
 //      יציגו "מוצגים N הימים האחרונים" ולא ייראו כאילו הנתונים נעלמו.
+// B58: הלוגיקה של טבלה אחת, מופרדת מהלולאה — כדי ששני המסלולים (מטען מלא
+// ומטען מהמטמון פר-טבלה) יריצו **בדיוק את אותו קוד** ולא ייווצר drift.
+function b58TablePayload(t, db) {
+  var pol = SLIM_POLICY[t];
+  // drop: לא נוגעים ב-db[key] בכלל — הגיליון אינו נקרא (זה החיסכון האמיתי)
+  if (pol && pol.drop) return { rows: [], slim: { mode: 'drop' } };
+  var rows = db[TMAP[t]];
+  var slim = null;
+  if (pol && pol.days) {
+    var cut = b51CutoffYmd(pol.days);
+    var before = rows.length;
+    rows = rows.filter(function (r) {
+      if (pol.keep && pol.keep(r)) return true;
+      var d = b51RowYmd(r, pol.ts);
+      return !d || d >= cut;
+    });
+    slim = { mode: 'days', days: pol.days, from: cut, sent: rows.length, total: before };
+  }
+  var fields = LONG_TEXT_FIELDS[t];
+  if (!fields) return { rows: rows, slim: slim };
+  rows = rows.map(function (r) {
+    var needs = fields.some(function (f) { return typeof r[f] === 'string' && r[f].length > LONG_TEXT_PREVIEW; });
+    if (!needs) return r;
+    var c = {};
+    for (var k in r) c[k] = r[k];
+    fields.forEach(function (f) {
+      if (typeof c[f] === 'string' && c[f].length > LONG_TEXT_PREVIEW) {
+        c[f] = c[f].substring(0, LONG_TEXT_PREVIEW);
+        c[f + '_trunc'] = 1;
+      }
+    });
+    return c;
+  });
+  return { rows: rows, slim: slim };
+}
+
 function getAllPayload(db) {
+  b58PrefetchForPayload(db);   // B58: קריאה אחת לכל הגיליונות במקום 55 נסיעות
   var out = {};
   var slimInfo = {};
   Object.keys(TMAP).forEach(function (t) {
-    var key = TMAP[t];
-    var pol = SLIM_POLICY[t];
-    // drop: לא נוגעים ב-db[key] בכלל — הגיליון אינו נקרא (זה החיסכון האמיתי)
-    if (pol && pol.drop) { out[key] = []; slimInfo[t] = { mode: 'drop' }; return; }
-    var rows = db[key];
-    if (pol && pol.days) {
-      var cut = b51CutoffYmd(pol.days);
-      var before = rows.length;
-      rows = rows.filter(function (r) {
-        if (pol.keep && pol.keep(r)) return true;
-        var d = b51RowYmd(r, pol.ts);
-        return !d || d >= cut;
-      });
-      slimInfo[t] = { mode: 'days', days: pol.days, from: cut, sent: rows.length, total: before };
-    }
-    var fields = LONG_TEXT_FIELDS[t];
-    if (!fields) { out[key] = rows; return; }
-    out[key] = rows.map(function (r) {
-      var needs = fields.some(function (f) { return typeof r[f] === 'string' && r[f].length > LONG_TEXT_PREVIEW; });
-      if (!needs) return r;
-      var c = {};
-      for (var k in r) c[k] = r[k];
-      fields.forEach(function (f) {
-        if (typeof c[f] === 'string' && c[f].length > LONG_TEXT_PREVIEW) {
-          c[f] = c[f].substring(0, LONG_TEXT_PREVIEW);
-          c[f + '_trunc'] = 1;
-        }
-      });
-      return c;
-    });
+    var r = b58TablePayload(t, db);
+    out[TMAP[t]] = r.rows;
+    if (r.slim) slimInfo[t] = r.slim;
   });
   out._slim = slimInfo;
   return out;
+}
+
+// ============================================================================
+// B58 (PERF-02) — תיקון האיטיות. שתי תשתיות, ואפס שינוי חוזה כלפי שאר הקוד.
+// ----------------------------------------------------------------------------
+// המדידה של B57 (29.07.2026) הוכיחה: הצוואר אינו נפח הנתונים (40.7 KB בסך הכול)
+// ואינו הרינדור (6 מ״ש). הצוואר הוא **מספר הנסיעות לשרתי Google**: כל readTable
+// הוא getRange().getValues() נפרד — 55 נסיעות × ~215 מ״ש = 11.9 שניות.
+// ההוכחה בשורה אחת: invoices — 3 שורות, 1.3 KB, 1.1 שניות.
+//
+// ① b58Prefetch — Sheets.Spreadsheets.Values.batchGet קורא את כל הטווחים
+//    בקריאת HTTP אחת. readTable ו-loadDb נשארים כפי שהם כלפי כל שאר הקוד;
+//    ה-prefetch רק ממלא מראש את מטמון הטעינה העצלה. db.orders מתנהג זהה.
+// ② גרסת מטמון לכל טבלה — כתיבה להזמנות לא מוחקת עוד את settings ואת employees.
+//
+// ⚠ נפילה חיננית: כל כשל (שירות Sheets כבוי · חריגה · אי-התאמה) מחזיר null
+//   וכל הזרימה ממשיכה ב-readTable הקיים, בלי לשבור דבר.
+// ⚠ אימות עצמי על נתוני אמת: בפעם הראשונה בכל חלון של 6 שעות המערכת מריצה
+//   **את שני המסלולים** ומשווה JSON טבלה-טבלה. אי-התאמה = כיבוי אוטומטי של
+//   המסלול המהיר + דיווח למסך האבחון. זו הבדיקה שאי אפשר להריץ מכאן על
+//   הגיליון של אבי, ולכן היא רצה אצלו.
+// ============================================================================
+var B58_TOUCHED = {};                       // טבלאות שנכתבו בהרצת הסקריפט הנוכחית
+var B58_TVER_KEY = 'b58_table_versions';    // מפת גרסאות פר-טבלה ב-ScriptCache
+var B58_VERIFIED_KEY = 'b58_verified';      // דגל "המסלול המהיר אומת מול readTable"
+var B58_MISMATCH_KEY = 'b58_mismatch';      // דוח אי-התאמה אחרון (לתצוגה באבחון)
+var B58_FAST_PROP = 'B58_FAST_READ';        // 'off' = כיבוי ידני/אוטומטי של המסלול המהיר
+var B58_VERIFY_TTL = 21600;                 // 6 שעות בין אימות לאימות
+var B58_MAX_CACHE_VAL = 90000;              // תקרת ערך בטוחה ב-CacheService (~100KB)
+
+function b58Touch(name) { if (name) B58_TOUCHED[name] = 1; }
+
+function b58TableVersions() {
+  try {
+    var raw = CacheService.getScriptCache().get(B58_TVER_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+
+function b58FastReadEnabled() {
+  try { return PropertiesService.getScriptProperties().getProperty(B58_FAST_PROP) !== 'off'; }
+  catch (e) { return true; }
+}
+function b58SetFastRead(on) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (on) props.deleteProperty(B58_FAST_PROP); else props.setProperty(B58_FAST_PROP, 'off');
+    if (on) CacheService.getScriptCache().remove(B58_VERIFIED_KEY);   // הפעלה מחדש = אימות מחדש
+  } catch (e) { /* לא קריטי */ }
+}
+// שירות Sheets המתקדם אינו מופעל בכל פרויקט — לכן בדיקה, לא הנחה.
+function b58SheetsAvailable() {
+  try {
+    return (typeof Sheets !== 'undefined') && !!Sheets && !!Sheets.Spreadsheets &&
+      !!Sheets.Spreadsheets.Values && typeof Sheets.Spreadsheets.Values.batchGet === 'function';
+  } catch (e) { return false; }
+}
+function b58ColLetter(n) {
+  var s = '';
+  while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+// המרה זהה לזו של readTable, שורה-שורה. batchGet מחזיר שורות קצוצות בסופן
+// (תאים ריקים בסוף מושמטים) — לכן undefined מתורגם ל-'' בדיוק כמו getValues.
+function b58RowsFromValues(name, vals) {
+  var cols = TABLES[name];
+  var out = [];
+  for (var i = 0; i < vals.length; i++) {
+    var r = vals[i] || [];
+    var first = (r.length ? r[0] : '');
+    if (first === '' || first === undefined || first === null) continue;   // כמו readTable
+    var o = {};
+    for (var j = 0; j < cols.length; j++) {
+      var v = (j < r.length && r[j] !== undefined) ? r[j] : '';
+      if (v instanceof Date) v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      o[cols[j]] = v;
+    }
+    out.push(o);
+  }
+  return out;
+}
+
+// הליבה: קריאה אחת לכל הטבלאות המבוקשות. מחזיר מפה name→rows, או null בכשל.
+function b58BatchRead(names) {
+  if (!names || !names.length) return null;
+  if (!b58SheetsAvailable()) return null;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var have = {};
+  ss.getSheets().forEach(function (sh) { have[sh.getName()] = 1; });
+  // טווח שמפנה לגיליון שאינו קיים מפיל את כל ה-batchGet — לכן סינון מוקדם.
+  var want = names.filter(function (n) { return TABLES[n] && have[n]; });
+  var missing = names.filter(function (n) { return TABLES[n] && !have[n]; });
+  if (!want.length) {
+    var empty = {};
+    missing.forEach(function (n) { empty[n] = []; });
+    return missing.length ? empty : null;
+  }
+  var ranges = want.map(function (n) {
+    return "'" + String(n).replace(/'/g, "''") + "'!A2:" + b58ColLetter(TABLES[n].length);
+  });
+  var res;
+  try {
+    res = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
+      ranges: ranges,
+      majorDimension: 'ROWS',
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING'
+    });
+  } catch (e) {
+    try { CacheService.getScriptCache().put('b58_last_err', String(e).substring(0, 300), B58_VERIFY_TTL); } catch (e2) { }
+    return null;
+  }
+  var vr = (res && res.valueRanges) || [];
+  if (vr.length !== want.length) return null;   // תשובה לא צפויה — נפילה חיננית
+  var out = {};
+  for (var i = 0; i < want.length; i++) out[want[i]] = b58RowsFromValues(want[i], vr[i].values || []);
+  missing.forEach(function (n) { out[n] = []; });   // גיליון שאינו קיים — כמו readTable
+  return out;
+}
+
+// אימות עצמי מול readTable על הנתונים האמיתיים. רץ פעם אחת ב-6 שעות.
+// אי-התאמה = כיבוי אוטומטי של המסלול המהיר. עלות: קריאה איטית אחת ב-6 שעות.
+function b58VerifyAgainstReadTable(fast, names) {
+  var bad = [];
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i];
+    var slow, a, b;
+    try { slow = readTable(n); } catch (e) { continue; }
+    try { a = JSON.stringify(fast[n] || []); b = JSON.stringify(slow); } catch (e) { continue; }
+    if (a !== b) bad.push(n);
+  }
+  var c = CacheService.getScriptCache();
+  if (bad.length) {
+    try {
+      c.put(B58_MISMATCH_KEY, JSON.stringify({ ts: nowTs(), tables: bad.slice(0, 20) }), B58_VERIFY_TTL);
+    } catch (e) { }
+    b58SetFastRead(false);   // כיבוי אוטומטי — הקוד ממשיך לרוץ על readTable
+    return false;
+  }
+  try {
+    c.remove(B58_MISMATCH_KEY);
+    c.put(B58_VERIFIED_KEY, nowTs(), B58_VERIFY_TTL);
+  } catch (e) { }
+  return true;
+}
+
+// ממלא מראש את מטמון הטעינה העצלה של db. לעולם לא דורס טבלה שכבר נטענה.
+function b58Prefetch(db, names) {
+  if (!db || !names || !names.length) return null;
+  if (!b58FastReadEnabled()) return null;
+  var loaded = db._loaded || {};
+  var need = names.filter(function (n) { return TABLES[n] && !(TMAP[n] in loaded); });
+  if (!need.length) return null;
+  var fast = b58BatchRead(need);
+  if (!fast) return null;
+  var verified = false;
+  try { verified = !!CacheService.getScriptCache().get(B58_VERIFIED_KEY); } catch (e) { verified = false; }
+  if (!verified && !b58VerifyAgainstReadTable(fast, need)) return null;   // נפילה חזרה ל-readTable
+  need.forEach(function (n) { db[TMAP[n]] = fast[n] || []; });
+  return need.length;
+}
+
+function b58PrefetchForPayload(db) {
+  try {
+    var names = Object.keys(TMAP).filter(function (t) {
+      var pol = SLIM_POLICY[t];
+      return !(pol && pol.drop);   // טבלה שאינה נשלחת — לא נקראת כלל
+    });
+    return b58Prefetch(db, names);
+  } catch (e) { return null; }
+}
+
+// ============================================================================
+// B58 ② — מטמון פר-טבלה. מחליף את החישוב המלא כשרק חלק מהטבלאות השתנו.
+// המטען המוחזר זהה ביט-אחר-ביט ל-getAllPayload: אותו סדר מפתחות (TMAP ואז
+// _slim), אותה לוגיקה (b58TablePayload), ורק המקור שונה.
+// ============================================================================
+function b58PayloadCached(db) {
+  var c;
+  try { c = CacheService.getScriptCache(); } catch (e) { return getAllPayload(db); }
+  var tv = b58TableVersions();
+  var names = Object.keys(TMAP);
+  var keyOf = {}, keys = [];
+  names.forEach(function (t) { var k = 'b58t_' + t + '_' + (tv[t] || '0'); keyOf[t] = k; keys.push(k); });
+  var got = {};
+  try { got = c.getAll(keys) || {}; } catch (e) { got = {}; }
+  var parsed = {}, missing = [];
+  names.forEach(function (t) {
+    var raw = got[keyOf[t]];
+    if (raw) { try { parsed[t] = JSON.parse(raw); return; } catch (e) { /* פגום — נחשב מחדש */ } }
+    missing.push(t);
+  });
+  if (missing.length) {
+    var need = missing.filter(function (t) { var p = SLIM_POLICY[t]; return !(p && p.drop); });
+    try { b58Prefetch(db, need); } catch (e) { /* נפילה חיננית — readTable */ }
+    var shortPut = {}, longPut = {};
+    missing.forEach(function (t) {
+      var r = b58TablePayload(t, db);
+      parsed[t] = { r: r.rows, s: r.slim || null };
+      var js = null;
+      try { js = JSON.stringify(parsed[t]); } catch (e) { js = null; }
+      if (js && js.length < B58_MAX_CACHE_VAL) {
+        // טבלה עם חיתוך לפי ימים — TTL קצר, כי גבול החיתוך זז עם התאריך
+        if (SLIM_POLICY[t] && SLIM_POLICY[t].days) shortPut[keyOf[t]] = js; else longPut[keyOf[t]] = js;
+      }
+    });
+    try { if (Object.keys(shortPut).length) c.putAll(shortPut, 3600); } catch (e) { }
+    try { if (Object.keys(longPut).length) c.putAll(longPut, 21600); } catch (e) { }
+  }
+  var out = {}, slimInfo = {};
+  names.forEach(function (t) {
+    var p = parsed[t] || { r: [], s: null };
+    out[TMAP[t]] = p.r || [];
+    if (p.s) slimInfo[t] = p.s;
+  });
+  out._slim = slimInfo;
+  return out;
+}
+
+// B58 ④ — שליפה חלקית: אותו מטען בדיוק, מוגבל לטבלאות שהשתנו.
+// b38ScrubEmployees מוסיף תמיד מפתח employees — ולכן כאן הוא מופעל רק כשהוא
+// באמת נדרש, אחרת שליפה חלקית הייתה מוחקת את העובדים מהזיכרון של הממשק.
+function b58ScrubIfNeeded(out, role) {
+  return (out && Object.prototype.hasOwnProperty.call(out, 'employees')) ? b38ScrubEmployees(out, role) : out;
 }
 
 // ============================================================================
@@ -1126,10 +1363,15 @@ function loadDb() {
       set: function (v) { cache[key] = v; }
     });
   });
+  // B58: חשיפת מטמון הטעינה העצלה עצמו (לא-enumerable — אינו משנה JSON.stringify(db)
+  // ואינו מופיע ב-Object.keys). ה-prefetch משתמש בו כדי לדעת אילו טבלאות כבר
+  // נטענו/שונו בזיכרון, ולעולם לא לדרוס אותן.
+  Object.defineProperty(db, '_loaded', { enumerable: false, configurable: true, get: function () { return cache; } });
   return db;
 }
 // F1: הוספת שורה בודדת לגליון (במקום שכתוב כל הטבלה) — אותה סריאליזציה כמו writeTable
 function appendRowToTable(name, o) {
+  b58Touch(name);  // B58: רישום הטבלה שנכתבה, לצורך גרסת מטמון פר-טבלה
   var sh = ensureSheet(name); // B21: נוצר אוטומטית אם חסר
   var cols = TABLES[name];
   var rowNum = sh.getLastRow() + 1;
@@ -1225,8 +1467,21 @@ function isSuperAdmin(employeeId) {
 
 // B7: חותמת "משהו השתנה" — מתעדכנת בכל פעולת כתיבה מוצלחת. הממשק בודק אותה כל 30 שניות
 // (checkVersion, קריאה בלבד) ומושך getAll מלא רק כשהערך השתנה — חוסך עומס במקום polling מלא.
+// B58 (PERF-02): הסמנטיקה כלפי הממשק לא משתנה — data_version ממשיך להתעדכן
+// בכל כתיבה, ו-checkVersion ממשיך להחזיר בדיוק את אותו ערך. בנוסף נשמרת מפה
+// של גרסה **לכל טבלה בנפרד**, כדי שכתיבה להזמנות לא תמחק את המטמון של settings.
 function bumpDataVersion() {
-  try { CacheService.getScriptCache().put('data_version', String(Date.now()), 21600); } catch (e) { /* לא קריטי */ }
+  var stamp = String(Date.now());
+  try { CacheService.getScriptCache().put('data_version', stamp, 21600); } catch (e) { /* לא קריטי */ }
+  try {
+    var map = b58TableVersions();
+    var names = Object.keys(B58_TOUCHED);
+    // כתיבה שלא עברה ב-writeTable/appendRowToTable — ברירת המחדל הבטוחה היא
+    // לסמן את כל הטבלאות כמשתנות, כדי שנתון לעולם לא ייתקע ישן במסך אחר.
+    if (!names.length) names = Object.keys(TMAP);
+    names.forEach(function (n) { if (TMAP[n]) map[n] = stamp; });
+    CacheService.getScriptCache().put(B58_TVER_KEY, JSON.stringify(map), 21600);
+  } catch (e) { /* לא קריטי — נפילה חזרה לרענון מלא */ }
 }
 
 // ============================================================
@@ -1392,7 +1647,10 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   // b52KioskClock, b52RegisterKiosk ו-b52RevokeKiosk בכוונה **אינן** כאן — כולן כותבות.
   'b52KioskStatus',
   // B57: אבחון ביצועים — קריאה בלבד. אינה כותבת לשום גיליון; רק מוני ScriptCache.
-  'b57PerfProbe'];
+  'b57PerfProbe',
+  // B58: שליפה חלקית ואבחון הקריאה המהירה — קריאה בלבד.
+  // b58SetFast בכוונה **אינה** כאן: היא כותבת ל-ScriptProperties ולכן חייבת נעילה ורישום ביומן.
+  'b58Tables', 'b58Probe'];
 
 function route(action, p, user) {
   b54Bump();   // B54: ספר חיובים נקי לכל בקשה
@@ -1404,7 +1662,7 @@ function route(action, p, user) {
   }
   try {
     // הרשאות: פעולות מנהל דורשות עובד בתפקיד מנהל (אם קיימים עובדים)
-    var READ_ACTIONS = ['getAll', 'getFullTexts', 'availability', 'scan', 'reports', 'ordersReport', 'login', 'clock', 'portalGetData', 'portalCreateOrder'];
+    var READ_ACTIONS = ['getAll', 'getFullTexts', 'availability', 'scan', 'reports', 'ordersReport', 'login', 'clock', 'portalGetData', 'portalCreateOrder', 'b58Tables'];
     if (READ_ACTIONS.indexOf(action) === -1 && db.employees.length && user && user !== 'פורטל') {
       var actor = db.employees.find(function (x) { return x.name === user && x.active !== 'לא'; });
       if (actor && actor.can_edit === 'לא') return { ok: false, error: 'למשתמש זה הרשאת צפייה בלבד' };
@@ -1436,7 +1694,9 @@ function getAllCached(db) {
     if (hit) { b57Mark('hit'); return JSON.parse(hit); }   // B57: מדידה בלבד
   } catch (e) { /* מטמון פגום — ממשיכים לחישוב רגיל */ }
   b57Mark('miss');                                          // B57: מדידה בלבד
-  var payload = getAllPayload(db);
+  // B58: החטאה במפתח הגלובלי כבר אינה מחייבת בנייה מאפס — כל טבלה שלא השתנתה
+  // נלקחת ממטמון פר-טבלה, והנותרות נקראות בקריאת batchGet אחת.
+  var payload = b58PayloadCached(db);
   try {
     var js = JSON.stringify(payload);
     b57Note('bytes', js.length);                            // B57: משקל המטען בפועל
@@ -1501,6 +1761,32 @@ function handle(action, p, db, user) {
       }
       // B38: המטמון משותף לכל התפקידים — לכן הסינון נעשה אחריו, על עותק, ולא נכנס למטמון
       return { ok: true, db: b38ScrubEmployees(getAllCached(db), p._verified_role) };
+    }
+
+    // B58 ④: שליפה חלקית — רק הטבלאות שגרסתן השתנתה. מחליפה getAll מלא ב-polling.
+    // ⚠ נהג אינו נתמך כאן בכוונה: המטען שלו נבנה ומסונן פר-משתמש (B17) ואינו
+    //   עובר במטמון המשותף. הממשק מזהה זאת ומושך getAll מלא לנהג.
+    case 'b58Tables': {
+      if (String(p._verified_role || '') === 'נהג') return { ok: false, error: 'שליפה חלקית אינה נתמכת לנהג' };
+      var wantT = (p.tables || []).map(String).filter(function (t) { return !!TMAP[t]; });
+      if (!wantT.length) return { ok: true, db: {}, _slim: {}, tables: [] };
+      var fullT = b58PayloadCached(db);
+      var outT = {}, slimT = {};
+      wantT.forEach(function (t) {
+        outT[TMAP[t]] = fullT[TMAP[t]] || [];
+        if (fullT._slim && fullT._slim[t]) slimT[t] = fullT._slim[t];
+      });
+      return { ok: true, db: b58ScrubIfNeeded(outT, p._verified_role), _slim: slimT, tables: wantT };
+    }
+
+    // B58: אבחון — מוכיח על הנתונים האמיתיים שהמסלול המהיר מחזיר מטען זהה,
+    // ומודד את שני המסלולים זה מול זה. READ_ONLY, מנהל בלבד.
+    case 'b58Probe': return b58Probe(p);
+
+    // B58: מתג כיבוי/הפעלה למסלול המהיר. כותב ל-ScriptProperties בלבד (לא לגיליון).
+    case 'b58SetFast': {
+      b58SetFastRead(p.on === true || String(p.on) === '1');
+      return { ok: true, fast: b58FastReadEnabled(), auditNote: 'B58 · מסלול קריאה מהיר: ' + (b58FastReadEnabled() ? 'פעיל' : 'כבוי') };
     }
 
     // G1: שליפת הטקסט המלא של רשומות ספציפיות (רק שדות הטקסט המוגדרים — לא רשומה שלמה)
@@ -2953,6 +3239,7 @@ function handle(action, p, db, user) {
         });
         prng.setNumberFormat('@');
         prng.setValues(pvals);
+        b58Touch('payroll');   // B58: כתיבה ישירה שאינה עוברת ב-writeTable
       }
       return { ok: true, fixedAttendance: fixedAtt, fixedPayrollMonths: fixedPay };
     }
@@ -3839,7 +4126,9 @@ function handle(action, p, db, user) {
     // B7: בדיקת עדכון קלה — הממשק שולח כל 30 שניות, ומושך getAll מלא רק אם הערך השתנה
     case 'checkVersion': {
       var dv = CacheService.getScriptCache().get('data_version');
-      return { ok: true, version: dv || '0' };
+      // B58: שדה נוסף בלבד. version נשאר בדיוק כפי שהיה — הקיוסק והממשק
+      // הישן ממשיכים לעבוד ללא שינוי. tables מאפשר לממשק למשוך רק מה שהשתנה.
+      return { ok: true, version: dv || '0', tables: b58TableVersions() };
     }
 
     // ===== NC1: מודול רצפת ייצור NOBLE — קליטה, שלבים, שקילה, משלוח =====
@@ -9115,7 +9404,7 @@ function b51ScrubAudit(p) {
       vals[i][0] = after;
     }
   }
-  if (changed && !preview) rng.setValues(vals);
+  if (changed && !preview) { rng.setValues(vals); b58Touch('audit_log'); }   // B58: כתיבה ישירה שאינה עוברת ב-writeTable
   return {
     ok: true, scrubbed: n, scanned: count, total: total,
     more: (startRow + count - 1) < last, next_offset: offset + count,
@@ -9360,4 +9649,80 @@ function b57PerfProbe(p) {
     writes: rhythm,
     tables: tables
   };
+}
+
+// ============================================================================
+// B58 — אבחון הקריאה המהירה. READ_ONLY, מנהל בלבד.
+// שתי שאלות, שתיהן נמדדות על הנתונים האמיתיים של אבי ולא מנוחשות מכאן:
+//   1. האם batchGet מחזיר **בדיוק** את מה ש-readTable מחזיר? (טבלה-טבלה)
+//   2. כמה זמן חוסכת הקריאה האחת מול 55 הנסיעות?
+// p.force = 1 מאלץ אימות מחדש (מוחק את דגל האימות).
+// ============================================================================
+function b58Probe(p) {
+  p = p || {};
+  var c = CacheService.getScriptCache();
+  if (p.force) { try { c.remove(B58_VERIFIED_KEY); } catch (e) { } }
+
+  var names = Object.keys(TMAP).filter(function (t) {
+    var pol = SLIM_POLICY[t];
+    return !(pol && pol.drop);
+  });
+
+  var avail = b58SheetsAvailable();
+  var enabled = b58FastReadEnabled();
+  var lastErr = '';
+  try { lastErr = c.get('b58_last_err') || ''; } catch (e) { lastErr = ''; }
+  var mismatch = null;
+  try { var mr = c.get(B58_MISMATCH_KEY); if (mr) mismatch = JSON.parse(mr); } catch (e) { mismatch = null; }
+
+  var res = {
+    ok: true, ts: nowTs(),
+    sheets_service: avail, fast_enabled: enabled,
+    verified_at: (function () { try { return c.get(B58_VERIFIED_KEY) || ''; } catch (e) { return ''; } })(),
+    tables_checked: 0, identical: 0, mismatched: [], mismatch_last: mismatch,
+    batch_ms: null, readtable_ms: null, last_error: lastErr,
+    table_versions: Object.keys(b58TableVersions()).length
+  };
+  if (!avail) {
+    res.note = 'שירות Sheets המתקדם אינו מופעל בעורך Apps Script — המערכת עובדת במסלול הרגיל (readTable).';
+    return res;
+  }
+
+  // ① המסלול המהיר — קריאה אחת
+  var t0 = Date.now();
+  var fast = b58BatchRead(names);
+  res.batch_ms = Date.now() - t0;
+  if (!fast) {
+    res.note = 'קריאת batchGet נכשלה — המערכת נופלת חזרה ל-readTable, בלי שבירה.';
+    return res;
+  }
+
+  // ② המסלול הרגיל — 55 נסיעות, לצורך ההשוואה בלבד
+  var t1 = Date.now();
+  var slow = {};
+  names.forEach(function (n) { try { slow[n] = readTable(n); } catch (e) { slow[n] = null; } });
+  res.readtable_ms = Date.now() - t1;
+
+  var bad = [];
+  names.forEach(function (n) {
+    if (slow[n] === null) return;
+    res.tables_checked++;
+    var a = '', b = '';
+    try { a = JSON.stringify(fast[n] || []); b = JSON.stringify(slow[n]); } catch (e) { return; }
+    if (a === b) res.identical++;
+    else bad.push({ table: n, fast_rows: (fast[n] || []).length, slow_rows: slow[n].length });
+  });
+  res.mismatched = bad;
+
+  if (!bad.length) {
+    try { c.remove(B58_MISMATCH_KEY); c.put(B58_VERIFIED_KEY, nowTs(), B58_VERIFY_TTL); } catch (e) { }
+    res.verified_at = nowTs();
+    res.note = 'זהות מלאה: ' + res.identical + ' מתוך ' + res.tables_checked + ' טבלאות זהות ביט-אחר-ביט.';
+  } else {
+    try { c.put(B58_MISMATCH_KEY, JSON.stringify({ ts: nowTs(), tables: bad.map(function (x) { return x.table; }) }), B58_VERIFY_TTL); } catch (e) { }
+    b58SetFastRead(false);
+    res.fast_enabled = false;
+    res.note = 'נמצאה אי-התאמה ב-' + bad.length + ' טבלאות — המסלול המהיר כובה אוטומטית. המערכת עובדת כרגיל.';
+  }
+  return res;
 }
