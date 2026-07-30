@@ -505,7 +505,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.58-B60 · 30.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.59-B60a · 30.07.2026</div>
   </div>
 </div>
 
@@ -1746,8 +1746,10 @@ function b60ResetView(v){ var f = B60_VIEW_RESET[v]; if(f){ try{ f(); }catch(e){
       קיוסק ומסך הכניסה — b60HistCtx מחזיר false ושום מאזין לא עושה דבר.
    3. נעילת B7 (idleLock) מסתירה את #app ולכן מכבה את המנגנון מיד. אין כאן
       שום נגיעה ב-IDLE_LIMIT_MS ואין החלשה של הנעילה.
-   4. closeModal לא שונה ולא נקרא ל-history.back() בשום מקום מלבד עוגן הבסיס.
-      חמישים אתרי הקריאה מהדפוס closeModal();go('x') ממשיכים לעבוד כמו שהם. */
+   4. closeModal לא שונה. חמישים אתרי הקריאה מהדפוס closeModal();go('x')
+      ממשיכים לעבוד כמו שהם.
+   5. B60a: **אין בקוד הזה שום קריאה שמזיזה את ההיסטוריה אחורה.** לא
+      history.back, לא history.go. המנגנון מגיב ל"הקודם" ולעולם אינו יוזם אותו. */
 function b60HistCtx(){
   try{
     if(typeof kioskOn==='function' && kioskOn()) return false;
@@ -1759,37 +1761,67 @@ function b60HistCtx(){
   return !!(a && a.style.display === 'block');
 }
 function b60ModalOpen(){ var b = el('modalBg'); return !!(b && b.style.display === 'flex'); }
+/* ===== B60a / R11 — יומן אבחון היסטוריה. קריאה בלבד. =====
+   הכלל החדש R11 אוסר לתקן על סמך השערה. B60 נכשל אצל אבי אחרי ש-60 בדיקות
+   ב-jsdom עברו — כלומר סביבת הבדיקה לא הייתה זהה לייצור, ולכן היא לא אימתה.
+   היומן הזה הוא הכלי שמאמת בדפדפן האמיתי של אבי:
+   · נרשם ב-sessionStorage בלבד. לא נשלח לשרת, לא נוגע בגיליון, אין פעולת שרת.
+   · שורד יציאה מהאתר וחזרה באותה לשונית — ולכן הוא נקרא גם אחרי כשלון.
+   · מוצג במסך "יומן פעולות" ליד שאר כרטיסי האבחון. */
+var B60_LOG_MAX = 40;
+function b60Log(ev, v, lenBefore){
+  try{
+    var a = JSON.parse(sessionStorage.getItem('mn_b60log') || '[]');
+    var d = new Date(), p2 = function(n){ return ('0'+n).slice(-2); };
+    a.push({ t: p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
+             e: String(ev), v: String(v==null?'':v),
+             n: (lenBefore==null ? String(history.length) : lenBefore+' ← '+history.length) });
+    if(a.length > B60_LOG_MAX) a = a.slice(-B60_LOG_MAX);
+    sessionStorage.setItem('mn_b60log', JSON.stringify(a));
+  }catch(e){}
+}
+function b60LogRows(){ try{ return JSON.parse(sessionStorage.getItem('mn_b60log') || '[]'); }catch(e){ return []; } }
+function b60LogClear(){ try{ sessionStorage.removeItem('mn_b60log'); }catch(e){} if(VIEW==='audit') rAudit(); }
 /* force=true (דריל-דאון או סגירת מודל) יוצר רשומה חדשה גם כשהמסך זהה.
    בלעדיו, לחיצה חוזרת על אותו מסך מחליפה את הרשומה ולא מנפחת את ההיסטוריה. */
 function b60HistPush(v, force){
   if(!b60HistCtx()) return;
   var st = { mn:1, v:String(v||VIEW) };
   try{
-    var cur = history.state;
-    if(!force && cur && cur.mn && cur.v === st.v) history.replaceState(st, '', location.href);
-    else history.pushState(st, '', location.href);
+    var cur = history.state, n0 = history.length;
+    if(!force && cur && cur.mn && cur.v === st.v){ history.replaceState(st, '', location.href); b60Log('החלפה', st.v, n0); }
+    else { history.pushState(st, '', location.href); b60Log('רשומה חדשה', st.v, n0); }
   }catch(e){}
 }
-/* עוגן בסיס + רשומת המסך הראשון. העוגן הוא שמאפשר ל"הקודם" לסגור מודל
-   שנפתח לפני שהמשתמש ניווט אפילו פעם אחת, בלי ליפול מהמסמך. */
+/* B60a — עוגן בלבד, בלי דחיפת רשומה.
+   ✅ אומת ב-grep על הקוד החי: הגרסה הראשונה של B60 דחפה כאן רשומה בזמן טעינת
+   הדף, כלומר **בלי מחוות משתמש**. אבי דיווח שיציאה מהאתר קרתה אחרי שתי לחיצות.
+   ⚠ לא אומת: האם Chrome סימן את הרשומה הזו כרשומה שיש לדלג עליה. זו הייתה
+   השערה, ולפי R11 אסור לתקן על סמכה. לכן התיקון אינו נשען עליה:
+   הרשומה בוטלה כי **אין לה תפקיד** — replaceState לבדו מסמן את נקודת הכניסה. */
 function b60HistInit(){
   if(!b60HistCtx()) return;
   try{
-    history.replaceState({ mn:1, base:1 }, '', location.href);
-    history.pushState({ mn:1, v:VIEW }, '', location.href);
+    history.replaceState({ mn:1, v:VIEW, root:1 }, '', location.href);
+    b60Log('עוגן כניסה', VIEW);
   }catch(e){}
 }
+/* ⚠⚠ B60a — כלל ברזל שנוסף אחרי הכשלון: **בקוד הזה אין ולא יהיה
+   history.back(), history.go() או כל קריאה אחרת שמזיזה את ההיסטוריה אחורה.**
+   ✅ אומת ב-grep: בגרסה הראשונה זה היה המסלול היחיד שבו הקוד עצמו הוציא את
+   אבי מהאתר, והוא נמחק. המנגנון מגיב ל"הקודם" — הוא לעולם אינו יוזם אותו. */
 window.addEventListener('popstate', function(e){
-  if(!b60HistCtx()) return;
-  if(b60ModalOpen()){ closeModal(); b60HistPush(VIEW, true); return; }   /* מודל פתוח: "הקודם" סוגר אותו ונשארים במסך */
+  if(!b60HistCtx()){ b60Log('הקודם — המנגנון מכובה', ''); return; }
   var st = e.state;
-  if(st && st.mn && st.base){ try{ history.back(); }catch(err){} return; }  /* עוגן הבסיס: יציאה אמיתית מהאתר, כמו בכל אתר */
+  b60Log('הקודם', (st && st.mn && st.v) ? st.v + (st.root?' (שורש)':'') : '(אין state)');
+  if(b60ModalOpen()){ closeModal(); b60HistPush(VIEW, true); return; }   /* מודל פתוח: "הקודם" סוגר אותו ונשארים במסך */
   if(st && st.mn && st.v){
-    if(!allowedViews().some(function(x){ return x[0]===st.v; })) return;    /* מסך שאינו מותר לתפקיד — נשארים במקום */
+    if(!allowedViews().some(function(x){ return x[0]===st.v; })){ b60Log('מסך אסור — נשארים', st.v); return; }
     go(st.v, { fromHistory:1 });
     return;
   }
-  try{ history.replaceState({ mn:1, v:VIEW }, '', location.href); }catch(err){}  /* מצב זר — מעגנים מחדש בלי להזיז את המשתמש */
+  /* מצב זר או רשומה שאינה שלנו — נשארים במקום ומעגנים מחדש. */
+  b60HistPush(VIEW, true);
 });
 
 /* o.keep — דריל-דאון: המצב הוגדר לפני הקריאה ואסור לאפס אותו (T3), והרשומה
@@ -6680,6 +6712,7 @@ function auditShell(){
     '</div>'+
     b4NotificationsWidget()+
     b51ToolsCard()+
+    b60Card()+
     b57Card()+
     b58Card()+
     '<div id="au_box">'+auditTableHtml()+'</div>';
@@ -6858,6 +6891,33 @@ function b58OutHtml(){
 
 var B57 = null;
 
+/* B60a: כרטיס אבחון היסטוריה — קריאה בלבד, אין פעולת שרת ואין כתיבה לגיליון. */
+function b60Card(){
+  var a = b60LogRows();
+  return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">'+
+    '<h3 class="grow">אבחון היסטוריית דפדפן (B60a · T4)</h3>'+
+    '<button class="btn ghost sm" onclick="rAudit()">↻ רענן</button> '+
+    '<button class="btn ghost sm" onclick="b60LogClear()">נקה יומן</button></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">קריאה בלבד. נרשם בדפדפן שלך בלבד — '+
+    'לא נשלח לשרת, לא נשמר בגיליון, ואינו מופיע ביומן הפעולות. '+
+    '<b>שורד גם אם יצאת מהאתר וחזרת באותה לשונית</b>, ולכן אפשר לקרוא אותו אחרי תקלה. '+
+    'איך משתמשים: נווט בין 3–4 מסכים, לחץ "הקודם" כמה פעמים, וחזור לכאן לראות מה קרה.</div>'+
+    (a.length
+      ? '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'+
+        '<thead><tr style="text-align:right">'+
+        '<th style="padding:5px 8px;border-bottom:1px solid var(--line)">שעה</th>'+
+        '<th style="padding:5px 8px;border-bottom:1px solid var(--line)">אירוע</th>'+
+        '<th style="padding:5px 8px;border-bottom:1px solid var(--line)">מסך</th>'+
+        '<th style="padding:5px 8px;border-bottom:1px solid var(--line)">אורך היסטוריה</th></tr></thead><tbody>'+
+        a.slice().reverse().map(function(x){
+          return '<tr><td style="padding:4px 8px;border-bottom:1px solid var(--line)">'+esc(x.t)+'</td>'+
+            '<td style="padding:4px 8px;border-bottom:1px solid var(--line)">'+esc(x.e)+'</td>'+
+            '<td style="padding:4px 8px;border-bottom:1px solid var(--line)">'+esc(x.v)+'</td>'+
+            '<td style="padding:4px 8px;border-bottom:1px solid var(--line)">'+esc(x.n)+'</td></tr>';
+        }).join('')+'</tbody></table></div>'
+      : '<div class="empty">אין רשומות עדיין. נווט בין מסכים, לחץ "הקודם", וחזור לכאן.</div>')+
+    '</div>';
+}
 function b57Card(){
   if(ROLE!=='מנהל') return '';
   return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">'+
