@@ -377,34 +377,16 @@ nav .nitem.on{color:#fff}
       background:var(--sb);border-inline-end:1px solid rgba(0,0,0,.18)}
   body:not(.driver-mode) main{flex:1;min-width:0;max-width:none;margin:0;
       padding:26px 28px;padding-bottom:52px}
-  /* ===== B62/T2 · N3א — קטגוריה נפתחת ונעצרת. אין אקורדיון ואין חצים =====
-     הכלל: קטגוריה פתוחה אם היא **נעוצה** או אם המסך הנוכחי נמצא בתוכה.
-     לחיצה על שורת הכותרת נועצת/משחררת, והמצב נשמר ב-localStorage — כלומר
-     שורד מעבר בין מסכים, רענון, וגם סגירת הדפדפן. אפס בקשות שרת (R10).
-     ⚠ הפתיחה מונפשת דרך grid-template-rows ולא דרך רינדור מחדש: b62NavPin
-     מחליף מחלקה על האלמנט החי, ולכן המעבר רך ואין קפיצת פריסה. */
-  #rail .ngrp.side{display:block;position:static;padding:0;margin:0;border:none}
-  #rail .gcap{display:flex;align-items:center;gap:8px;width:100%;text-align:right;
-      background:none;border:none;border-radius:0;box-shadow:none;min-height:0;
-      font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--sb-mut);
-      padding:9px 12px 4px 10px;white-space:nowrap;cursor:pointer}
-  #rail .gcap:hover{color:#C8D2DC}
-  #rail .gcap svg{flex:none;width:15px;height:15px}
-  #rail .gcap .gtxt{flex:1;overflow:hidden;text-overflow:ellipsis;text-align:right}
-  /* מונה מסכים — מופיע רק כשהקטגוריה סגורה, כדי ששום מידע לא ייעלם */
-  #rail .gcap .gcnt{flex:none;font-size:10.5px;font-weight:600;letter-spacing:0;opacity:.7}
-  #rail .ngrp.side.open .gcap .gcnt{display:none}
-  /* הסיכה גלויה תמיד ולא רק בריחוף — במכשיר מגע אין ריחוף */
-  #rail .gcap .gpin{flex:none;display:inline-flex;width:15px;height:15px;opacity:.32;
-      transition:opacity .15s,color .15s}
-  #rail .gcap:hover .gpin{opacity:.7}
-  #rail .ngrp.side.pin .gcap .gpin{opacity:1;color:var(--teal)}
-  #rail .gbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows .18s ease}
-  #rail .ngrp.side.open>.gbody{grid-template-rows:1fr}
-  #rail .gbody>div{overflow:hidden;min-height:0}
+  /* B63a — כותרת קטגוריה = תווית לא-לחיצה, וכל המסכים גלויים תמיד.
+     זהו בדיוק הדפוס שהיה לפני B62; מנגנון הנעיצה והקיפול הוסר בהוראת
+     אבי, כי ברצועה של 2–3 קטגוריות אין לו תפקיד. */
+  #rail .ngrp.side{display:block;position:static;padding:0;margin:0 0 2px;border:none}
+  #rail .gcap{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:600;
+      letter-spacing:.08em;color:var(--sb-mut);padding:13px 16px 5px;white-space:nowrap}
+  #rail .gcap svg{flex:none;width:16px;height:16px}
   #rail .ngrp.side .nitem{display:block;width:100%;text-align:right;background:none;
-      font-size:13.5px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
-      padding:5px 30px 5px 14px;margin:0;border:none;border-right:3px solid transparent;
+      font-size:14px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
+      padding:8px 30px 8px 14px;margin:0;border:none;border-right:3px solid transparent;
       border-radius:0;box-shadow:none;min-height:0;overflow:hidden;text-overflow:ellipsis}
   #rail .ngrp.side .nitem:hover{background:var(--sb-hi);color:#fff}
   #rail .ngrp.side .nitem.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
@@ -423,8 +405,8 @@ nav .nitem.on{color:#fff}
 @media(min-width:1100px) and (max-width:1279px){
   body:not(.driver-mode) #rail{width:182px}
   body:not(.driver-mode) main{padding:22px 18px;padding-bottom:52px}
-  #rail .ngrp.side .nitem{padding:5px 26px 5px 12px;font-size:13px}
-  #rail .gcap{padding:8px 10px 4px 8px}
+  #rail .ngrp.side .nitem{padding:8px 26px 8px 12px;font-size:13.5px}
+  #rail .gcap{padding:12px 13px 5px}
   #rail .nitem.lone.side{padding:7px 13px;font-size:13px}
 }
 /* הדגשת תרשומת שמנווטים אליה — רקע שדוהה לאורך ~10 שניות */
@@ -560,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.62-B63 · 31.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.63-B63a · 31.07.2026</div>
   </div>
 </div>
 
@@ -1589,33 +1571,6 @@ function allowedViews(){
   return base;
 }
 function navGroupOf(key){ var g = NAV_GROUPS.find(x=>x[2].includes(key)); return g? g[1] : ''; }
-/* ================= B62/T2 · N3א — נעיצת קטגוריות בסרגל הצד =================
-   ההכרעה: 29 מסכים אינם נכנסים ב-596px גובה, ולכן קטגוריה שאינה בשימוש
-   מכווצת. הכלל היחיד: **פתוחה אם נעוצה או אם המסך הנוכחי בתוכה.**
-   אין מצב שני, אין אקורדיון ואין חצים. NAV_OPEN ו-toggleNavPanel נשארים
-   של המובייל בלבד ואינם נוגעים לכאן (R4).
-   הנעיצה נשמרת ב-localStorage ולא בהגדרות השרת — היא העדפת מכשיר, לא
-   נתון עסקי, ואסור שתעלה בקשת רשת אחת (R10). */
-var B62_PINS_KEY = 'mn_nav_pins';
-var B62_PINS = null;
-function b62NavPins(){
-  if(B62_PINS) return B62_PINS;
-  var a = null;
-  try{
-    var raw = localStorage.getItem(B62_PINS_KEY);
-    if(raw){ var j = JSON.parse(raw); if(Array.isArray(j)) a = j.filter(function(x){ return typeof x === 'string'; }); }
-  }catch(e){ a = null; }   /* localStorage חסום/פגום — הרצועה עובדת בלי זיכרון, לא נשברת */
-  /* B63: מעולם לא נשמר דבר ⇦ ברירת המחדל היא **כל הקטגוריות שברצועה פתוחות**.
-     ברצועה יש 2–3 קטגוריות בלבד, וכולן נכנסות בנוחות לגובה המסך; להציג
-     אותן מכווצות היה הופך מסלול מהיר למסלול של שתי לחיצות. */
-  if(a === null) a = b63RailGroups();
-  B62_PINS = a; return a;
-}
-function b62NavPinsSave(a){
-  B62_PINS = a || [];
-  try{ localStorage.setItem(B62_PINS_KEY, JSON.stringify(B62_PINS)); }catch(e){}
-}
-function b62NavPinned(name){ return b62NavPins().indexOf(name) > -1; }
 /* ================= B63 — אילו קטגוריות יושבות ברצועת הצד =================
    ההגדרה נשמרת כמפתח settings אחד (`nav_rail`) — שמות קטגוריות מופרדים
    בפסיקים — ואבי בוחר אותן בסימון תיבות בעברית במסך ההגדרות.
@@ -1635,22 +1590,6 @@ function b63RailGroups(){
     if(x && valid[x] && !seen[x]){ seen[x] = 1; out.push(x); }   /* שם קטגוריה שהוסר מהקוד — מסונן בשקט */
   });
   return out.slice(0, NAV_RAIL_MAX);
-}
-var B62_PIN_SVG = '<svg class="gpin" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 3h6l-1 7 3 3v2H7v-2l3-3z"/></svg>';
-/* לחיצה על שורת הכותרת נועצת/משחררת. **בלי renderNav** — מחליפים מחלקה
-   על האלמנט החי, וכך המעבר מונפש ואין קפיצת פריסה (תנאי ב' של N3א). */
-function b62NavPin(btn){
-  var grp = btn && btn.parentNode;
-  while(grp && !(grp.classList && grp.classList.contains('ngrp'))) grp = grp.parentNode;
-  if(!grp) return;
-  var name = grp.getAttribute('data-g'); if(!name) return;
-  var pins = b62NavPins().slice(), i = pins.indexOf(name);
-  if(i > -1) pins.splice(i, 1); else pins.push(name);
-  b62NavPinsSave(pins);
-  var on = pins.indexOf(name) > -1;
-  grp.classList.toggle('pin', on);
-  /* הקטגוריה של המסך הנוכחי נשארת פתוחה תמיד — שחרור סיכה לא סוגר אותה */
-  if(!grp.classList.contains('cur')) grp.classList.toggle('open', on);
 }
 /* B18: אייקוני סרגל הטאבים התחתון של הנהג — מסלול | נוכחות | שכר | משימות */
 var DRIVER_TAB_ORDER = ['deliveries','attendance','payroll','tasks'];
@@ -1715,8 +1654,8 @@ function renderNav(views){
   renderRail(views);
 }
 /* ================= B63 — רצועת הצד =================
-   מסלול מהיר בלבד: 2–3 קטגוריות שאבי בוחר בהגדרות, בדיוק בדפוס הקיפול
-   והנעיצה של B62 (b62NavPin — אותו קוד, אותו localStorage, אותה הנפשה).
+   מסלול מהיר בלבד: 2–3 קטגוריות שאבי בוחר בהגדרות, פתוחות תמיד.
+   ⚠ B63a — אין כאן קיפול, אין נעיצה ואין אחסון מקומי. הכותרת היא תווית.
    ⚠ שום מסך אינו בלעדי לרצועה. היא נגזרת מ-allowedViews כמו התפריט העליון,
    ולכן אינה יכולה להציג מסך אסור ואינה יכולה להסתיר מסך מותר. */
 function renderRail(views){
@@ -1730,20 +1669,15 @@ function renderRail(views){
     if(!g) return '';
     var items = g[2].filter(function(k){ return allowed[k] !== undefined; });
     if(!items.length) return '';   /* כל מסכי הקטגוריה אסורים לתפקיד — לא מוצגת */
-    var cur  = items.indexOf(VIEW) > -1;
-    var pin  = b62NavPinned(g[1]);
-    var open = cur || pin;
     var grpBadge = (items.indexOf('approvals')>-1 && APPROVALS_COUNT>0) ? '<span class="navbadge">'+APPROVALS_COUNT+'</span>' : '';
-    var tip = cur ? 'הקטגוריה של המסך הנוכחי — פתוחה תמיד'
-                  : (pin ? 'לחיצה תכווץ את הקטגוריה' : 'לחיצה תפתח את הקטגוריה ותשאיר אותה פתוחה');
-    return '<div class="ngrp side'+(open?' open':'')+(pin?' pin':'')+(cur?' cur':'')+'" data-g="'+esc(g[1])+'">'+
-      '<button class="gcap" onclick="b62NavPin(this)" title="'+esc(tip)+'" aria-expanded="'+(open?'true':'false')+'">'+
-        g[0]+'<span class="gtxt">'+esc(g[1])+'</span>'+grpBadge+
-        '<span class="gcnt">'+items.length+'</span>'+B62_PIN_SVG+'</button>'+
-      '<div class="gbody"><div>'+
-        items.map(function(k){ return '<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
-          (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>'; }).join('')+
-      '</div></div>'+
+    /* B63a — בהוראת אבי: הרצועה חזרה בדיוק לדפוס שלפני הנעיצות (B53/N2).
+       כותרת הקטגוריה היא **תווית, לא כפתור**, וכל המסכים גלויים תמיד.
+       מנגנון הנעיצה והקיפול של B62 הוסר מהקוד לחלוטין — הוא נבנה כדי
+       להכניס 29 מסכים ל-596px, וברצועה של 2–3 קטגוריות אין לו תפקיד. */
+    return '<div class="ngrp side" data-g="'+esc(g[1])+'">'+
+      '<div class="gcap">'+g[0]+'<span class="gtxt">'+esc(g[1])+'</span>'+grpBadge+'</div>'+
+      items.map(function(k){ return '<button class="nitem'+(VIEW===k?' on':'')+'" onclick="go(\''+k+'\')">'+allowed[k]+
+        (k==='approvals'&&APPROVALS_COUNT>0?' <span class="navbadge">'+APPROVALS_COUNT+'</span>':'')+'</button>'; }).join('')+
       '</div>';
   }).join('');
   box.innerHTML = html;
@@ -7131,7 +7065,7 @@ function b60Card(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.62-B63';
+var B61_CANARY = 'v4.63-B63a';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -7377,24 +7311,6 @@ function b61Tests(){ return [
             (over > 2 ? ' · ⚠ חסרים ' + over + 'px — כווץ קטגוריה או הסר אחת' : ' · נכנס') };
 } },
 
-{ g:'פריסה ותצוגה', n:'קיפול קטגוריות ברצועה נשמר ונקרא חזרה', f:function(){
-    var before = null, ok = false, note = '';
-    try{ before = localStorage.getItem(B62_PINS_KEY); }catch(e){}
-    try{
-      var probe = ['__b62_probe__'];
-      b62NavPinsSave(probe);
-      B62_PINS = null;                      /* מאלץ קריאה אמיתית מהאחסון */
-      ok = b62NavPinned('__b62_probe__');
-      note = ok ? 'כתיבה וקריאה עברו — הנעיצה תשרוד רענון וסגירת דפדפן'
-                : 'localStorage חסום — הסרגל יעבוד, אבל הנעיצה לא תישמר';
-    } catch(e){ note = 'שגיאה: ' + e.message; }
-    finally{
-      try{ if(before === null) localStorage.removeItem(B62_PINS_KEY); else localStorage.setItem(B62_PINS_KEY, before); }catch(e){}
-      B62_PINS = null;
-    }
-    var live = b62NavPins();
-    return { ok: ok, note: note + ' · נעוצות כרגע: ' + (live.length ? live.join(' · ') : 'אף אחת') };
-} },
 
 { g:'פריסה ותצוגה', n:'גרירת הקיצורים תעבוד במכשיר הזה (BLD-04)', f:function(){
     var hasPE = (typeof window.PointerEvent === 'function');
