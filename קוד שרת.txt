@@ -1324,22 +1324,25 @@ var B38_OPEN_DELIV = ['מתוכנן', 'בדרך'];
 // עצמו ביצע אותם מהחשבון שלו**. צילום או סריקה של ההנהלה — מחייבים סיבה.
 // רשומה ותיקה שאין בה photo_by/scan_by נחשבת "לא מתועדת" — הכיוון הבטוח.
 function b41DriverHandled(d) {
-  var drv = String(d.driver || '').trim();
+  /* B64a: זהה ל-b41DriverHandled בממשק. רווח כפול או תו כיווניות בשם הנהג
+     ניתק את ההתאמה מול scan_by/photo_by, והמערכת "שכחה" שהנהג תיעד. */
+  var drv = sVal(d.driver);
   if (!drv) return false;
-  var scanned = String(d.scan_status || '') === 'נסרק' && String(d.scan_by || '').trim() === drv;
-  var shot = String(d.photo_url || '').trim() !== '' && String(d.photo_by || '').trim() === drv;
+  var scanned = sVal(d.scan_status) === 'נסרק' && sVal(d.scan_by) === drv;
+  var shot = sVal(d.photo_url) !== '' && sVal(d.photo_by) === drv;
   return scanned || shot;
 }
 function b41Pickups(db, orderId) {
   return (db.deliveries || []).filter(function (d) {
-    return d.order_id === orderId && String(d.kind) === 'איסוף';
+    return d.order_id === orderId && sVal(d.kind) === 'איסוף';
   });
 }
 function b41IntakeState(db, orderId) {
   var o = (db.orders || []).find(function (x) { return x.id === orderId; }) || {};
-  var expects = b38PlannedDeliveries(o).some(function (pl) { return pl.kind === 'איסוף'; });
+  /* B64a: אותה הגדרה בדיוק כמו b41IntakeState בממשק — שני הצדדים לא יתפצלו. */
+  var expects = b38PlannedDeliveries(o).some(function (pl) { return sVal(pl.kind) === 'איסוף'; });
   var picks = b41Pickups(db, orderId);
-  var open = picks.filter(function (d) { return B5_OPEN_STATUSES.indexOf(String(d.status)) > -1; });
+  var open = picks.filter(function (d) { return B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1; });
   var anyHandled = picks.some(b41DriverHandled);
   return {
     expects: expects, picks: picks, open: open, anyHandled: anyHandled,
@@ -4489,6 +4492,28 @@ function linePrice(db, customerId, itemId, orderType) {
 var STAGES = ['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'מוכן'];
 var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
 
+/* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
+   ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
+   רווח כפול, רווח קשיח (\u00A0) או תו כיווניות RTL בלתי נראה
+   (\u200E/\u200F). כל אחד מהם שובר השוואת מחרוזת מדויקת, **והכשל שקט**.
+   בממשק זה גרם למודל שלא נפתח בכלל; כאן זה גורם לשגיאה מטעה.
+   ⛔ נורמליזציה **להשוואה בלבד** — הערך הנשמר בגיליון אינו משתנה.
+   ⛔ אסור להשתמש בזה על מספרים או על כסף (שם ההשוואה מספרית).
+   ⛔ חייב להישאר זהה ל-sVal/sPick ב-index.html — שני הצדדים לא יתפצלו. */
+function sVal(v) {
+  return String(v == null ? '' : v)
+    .replace(/[\u200E\u200F\u200B\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+/* מחזיר את הערך הקנוני מתוך arr, או '' אם באמת אין התאמה */
+function sPick(v, arr) {
+  var n = sVal(v);
+  for (var i = 0; i < arr.length; i++) { if (sVal(arr[i]) === n) return arr[i]; }
+  return '';
+}
+
 // B27: סך התשלומים שבוצעו כנגד הוצאה עתידית מסוימת
 function expensePaidSum(db, fexpId) {
   return Math.round((db.expensePayments || []).filter(function (x) { return x.fexp_id === fexpId; })
@@ -4560,7 +4585,7 @@ function reservedQty(db, itemId, start, end, excludeOrderId, wh) {
 // שלה קודם לתאריך ההתחלה המבוקש לא מפריעה ולא נספרת. בלי הפרמטר — התנהגות קיימת (מצב נוכחי).
 function inLaundryQty(db, itemId, wh, forStart) {
   return db.laundryTasks.filter(function (t) {
-    if (t.item_id !== itemId || t.stage === 'מוכן') return false;
+    if (t.item_id !== itemId || sVal(t.stage) === 'מוכן') return false;
     if (wh !== undefined && String(t.warehouse_id || '') !== String(wh || '')) return false;
     if (forStart && t.target_date && String(t.target_date) < String(forStart)) return false;
     return true;
@@ -4746,16 +4771,22 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   genIdFn = genIdFn || function (p) { return p + '-' + Math.random().toString(36).slice(2, 8); };
   var t = db.laundryTasks.find(function (x) { return x.id === taskId; });
   if (!t) return { ok: false, error: 'משימה לא נמצאה' };
-  var idx = STAGES.indexOf(t.stage);
-  if (idx === -1 || idx === STAGES.length - 1) return { ok: false, error: 'המשימה כבר בשלב מוכן' };
-  var fromStage = t.stage, toStage = STAGES[idx + 1];
+  /* ⭐ B64a: השלב מהגיליון מנורמל, וההודעה מבחינה בין שני מקרים שונים
+     לגמרי — שלב לא מוכר מול משימה שבאמת הסתיימה. קודם שניהם החזירו
+     "המשימה כבר בשלב מוכן", וזה שלח את המשתמש לחפש במקום הלא נכון. */
+  var b64aCur = sPick(t.stage, STAGES);
+  if (!b64aCur) return { ok: false, error: 'שלב לא מוכר בגיליון: "' + String(t.stage || '(ריק)') +
+    '" במשימה ' + taskId + '. הערכים המותרים: ' + STAGES.join(' · ') + '. תקן את עמודת stage.' };
+  var idx = STAGES.indexOf(b64aCur);
+  if (idx === STAGES.length - 1) return { ok: false, error: 'המשימה כבר בשלב מוכן' };
+  var fromStage = b64aCur, toStage = STAGES[idx + 1];
   /* ⭐ B59 (T5 — הכרעת אבי 30.07.2026): שלב היעד נקבע לפי הבחירה,
      לא לפי הסדר. בהעדר to_stage — התנהגות זהה לחלוטין לקודם (R4).
      מותר: דילוג קדימה וחזרה אחורה (כביסה חוזרת).
      אסור: שלב שאינו ב-STAGES, חזרה ל"התקבל", ובחירת השלב הנוכחי.
      ⚠ אין שינוי סכימה — הערכים הנשמרים הם אותם ערכי STAGES. */
   if (opts.to_stage !== undefined && opts.to_stage !== null && String(opts.to_stage).trim() !== '') {
-    var b59Want = String(opts.to_stage).trim();
+    var b59Want = sPick(opts.to_stage, STAGES) || sVal(opts.to_stage);
     var b59Wi = STAGES.indexOf(b59Want);
     if (b59Wi === -1) return { ok: false, error: 'שלב יעד לא מוכר: ' + b59Want };
     if (b59Want === 'התקבל') return { ok: false, error: 'אין להחזיר משימה לשלב "התקבל"' };
@@ -4832,7 +4863,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
 function b40SplitLaundry(db, p, todayStr, genIdFn, user) {
   var t = db.laundryTasks.find(function (x) { return x.id === p.task_id; });
   if (!t) return { ok: false, error: 'משימה לא נמצאה' };
-  if (t.stage === 'מוכן') return { ok: false, error: 'משימה שהסתיימה אינה ניתנת לפיצול' };
+  if (sVal(t.stage) === 'מוכן') return { ok: false, error: 'משימה שהסתיימה אינה ניתנת לפיצול' };
   var q = Math.round(Number(p.qty) || 0);
   if (!(q > 0)) return { ok: false, error: 'כמות לפיצול חייבת להיות גדולה מאפס' };
   if (q >= Number(t.qty)) return { ok: false, error: 'הכמות לפיצול חייבת להיות קטנה מהכמות במשימה (' + t.qty + ')' };
@@ -8075,7 +8106,7 @@ function b5CanTouch(db, dlv, user) {
 var B5_OPEN_STATUSES = ['מתוכנן', 'בדרך'];
 function b5DriverOpenDeliveries(db, driverName) {
   return db.deliveries.filter(function (d) {
-    return d.driver === driverName && B5_OPEN_STATUSES.indexOf(d.status) > -1;
+    return sVal(d.driver) === sVal(driverName) && B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1;
   }).sort(function (a, b) {
     var ra = Number(a.route_order) || 999999, rb = Number(b.route_order) || 999999;
     if (ra !== rb) return ra - rb;
