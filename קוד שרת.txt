@@ -1279,7 +1279,7 @@ function b49eClosePickupsAfterReturn(db, orderId, user, declared) {
    ============================================================ */
 function b56CloseLaundryReturnLeg(db, order, user) {
   var empty = { done: 0, cancelled: 0, confirmed: 0, skipped: '' };
-  if (!order || String(order.type) !== 'כביסה') return empty;
+  if (!order || sVal(order.type) !== 'כביסה') return empty;   // B66: B64a — שורש BLD-01
   if (b49eShipMode(order, 'חזור') !== B49E_SHIP) { empty.skipped = 'איסוף עצמי'; return empty; }
   return b49fCloseLegs(db, order.id, b49eLegKind(order, 'חזור'), user, B49F_YES, 'במסירת הכביסה הנקייה');
 }
@@ -1290,18 +1290,33 @@ function b56CloseLaundryReturnLeg(db, order, user) {
    ⚠ מכוון: אין כאן נגיעה בכסף. B54_SKIP_ORDER מחריג רק
    'בוטלה'/'טיוטה'/'הצעת מחיר', ולכן 'מאושרת' ו'הושלמה' נספרות
    זהה בספר החיובים — המעבר בין שני הסטטוסים לא מזיז יתרה באגורה. */
-var B56_OPEN_INTAKE = ['התקבל', 'בעבודה', 'מוכן', 'במשלוח'];
+/* ⛔ B66 — תיקון באג ייצור. "קליטה סגורה" מוגדרת בערך **אחד**: 'נמסר'.
+   כל שאר הסטטוסים פתוחים, בבדיקה שלילית.
+
+   מה היה: `B56_OPEN_INTAKE = ['התקבל','בעבודה','מוכן','במשלוח']` — רשימה
+   ידנית של סטטוסים פתוחים. ✅ אומת ב-grep על הקוד החי שהיא שגויה בשתי דרכים:
+     1. הערך 'בעבודה' **אינו נכתב בשום מקום במערכת.** שלוש התוצאות היחידות
+        שלו בקובץ הן ההגדרה הזו, הערה, וטקסט שגיאה — אף אחת אינה השמה.
+     2. חסרים בה ארבעת שלבי העבודה בפועל: 'בכביסה' · 'בייבוש' ·
+        'בגיהוץ וקיפול' · 'באריזה' (NOBLE_STAGES / NOBLE_MACHINE_STAGES).
+   התוצאה בשטח: הזמנת כביסה עברה ל'הושלמה' **בזמן שהכביסה במכונה**.
+
+   למה בדיקה שלילית ולא רשימה מתוקנת: רשימה של פתוחים מתיישנת בכל פעם
+   שנוסף שלב ל-NOBLE_STAGES, והכשל שלה שקט. 'נמסר' הוא סוף המסלול היחיד
+   (nobleDeliver), ולכן ההגדרה ההפוכה אינה יכולה להתיישן.
+   ⛔ B64a: הסטטוס נקרא מהגיליון ולכן עובר sVal. */
+var B56_CLOSED_INTAKE = 'נמסר';
+function b56IntakeOpen(ik) { return sVal(ik && ik.status) !== B56_CLOSED_INTAKE; }
 function b56CloseLaundryOrder(db, order) {
-  if (!order || String(order.type) !== 'כביסה') return false;
-  if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(String(order.status)) === -1) return false;
+  if (!order || sVal(order.type) !== 'כביסה') return false;
+  if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(sVal(order.status)) === -1) return false;
   var openIntake = (db.laundryIntakes || []).some(function (ik) {
-    return String(ik.order_id || '') === String(order.id) &&
-      B56_OPEN_INTAKE.indexOf(String(ik.status)) > -1;
+    return String(ik.order_id || '') === String(order.id) && b56IntakeOpen(ik);
   });
   if (openIntake) return false;
   var openLeg = (db.deliveries || []).some(function (d) {
     return String(d.order_id || '') === String(order.id) &&
-      B5_OPEN_STATUSES.indexOf(String(d.status)) > -1;
+      B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1;
   });
   if (openLeg) return false;
   order.status = 'הושלמה';
@@ -1351,7 +1366,7 @@ function bld01Candidates(db) {
     if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(st) === -1) return;
 
     var mine = intakes.filter(function (ik) { return String(ik.order_id || '') === String(o.id); });
-    var openIntake = mine.some(function (ik) { return B56_OPEN_INTAKE.indexOf(sVal(ik.status)) > -1; });
+    var openIntake = mine.some(b56IntakeOpen);   // B66: אותה הגדרה בדיוק כמו b56CloseLaundryOrder
     if (openIntake) return;                                   // עדיין בעבודה — לא היסטורית
     var delivered = mine.filter(function (ik) { return sVal(ik.status) === 'נמסר'; });
     if (!delivered.length) return;                            // מעולם לא נמסרה — אין מה לרפא
@@ -1654,7 +1669,22 @@ function bumpDataVersion() {
 //     טוקן בטקסט גלוי, לא בגיליון ולא בקוד).
 // K4: זיהוי כניסה/יציאה אוטומטי — בדיוק אותה ליבה של שעון הנוכחות הרגיל.
 // ============================================================
+/* ⛔ B66 / BLD-03 — קיוסק לשני טאבלטים ומעלה.
+   עד כאן היה מפתח יחיד, ולכן רישום שני **דרס** את הראשון בשקט: המתחם קיבל
+   טאבלט שני, והראשון הפסיק להחתים בלי שאיש ידע.
+
+   ⛔ מרחיבים, לא מחליפים (R4). B52_TOKEN_KEY נשאר בדיוק כפי שהיה, וטאבלט
+   שנרשם לפני האצווה הזו ממשיך לעבוד **בלי רישום מחדש**. הוא מופיע ברשימה
+   כמכשיר מספר 0. ביטול הרישום שלו מוחק את המפתח הישן ומכאן והלאה
+   כל הרישומים ממוספרים.
+
+   ⛔ נשמר hash בלבד, בדיוק כמו קודם — אין טוקן בטקסט גלוי בשום מקום,
+   ולעולם לא מוחזר hash ללקוח. השם הידידותי אינו סוד ואינו משמש לאימות.
+   ⛔ אין שינוי סכימה: ScriptProperties, לא גיליון. */
 var B52_TOKEN_KEY = 'kiosk_token_hash';
+var B52_DEV_PREFIX = 'kiosk_token_hash_';
+var B52_MAX_DEVICES = 10;
+var B52_NAME_MAX = 30;
 // רשימה סגורה ומפורשת — לא התאמת קידומת. כל פעולה שנוספת כאן נפתחת
 // למי שמחזיק בטוקן המכשיר, ולכן התוספת חייבת להיות מודעת.
 // checkVersion נמצאת כאן כ**בדיקת קישוריות** לפני רענון עצמי של הטאבלט
@@ -1669,15 +1699,76 @@ function b52NewToken() {
   return out;
 }
 
+/* BLD-03: רשימת הטאבלטים הרשומים. קריאה אחת ל-ScriptProperties, לא אחת
+   לכל מכשיר. המכשיר הישן (מפתח יחיד) מוצג ראשון כמספר 0.
+   ⛔ hash לעולם לא יוצא מכאן ללקוח — b52KioskStatus מסנן אותו. */
+function b52Devices() {
+  var out = [], props = {};
+  try { props = PropertiesService.getScriptProperties().getProperties() || {}; } catch (e) { return out; }
+  var legacy = props[B52_TOKEN_KEY];
+  if (legacy) out.push({ n: 0, key: B52_TOKEN_KEY, hash: String(legacy), name: 'טאבלט (רישום קודם)', created: '' });
+  Object.keys(props).forEach(function (k) {
+    if (k.indexOf(B52_DEV_PREFIX) !== 0) return;
+    var n = Number(k.substring(B52_DEV_PREFIX.length));
+    if (!(n > 0)) return;
+    var v = null;
+    try { v = JSON.parse(props[k]); } catch (e2) { v = null; }
+    if (!v || !v.h) return;   // רשומה פגומה אינה מאמתת אף אחד ואינה מפילה את הרשימה
+    out.push({ n: n, key: k, hash: String(v.h), name: String(v.name || ('טאבלט ' + n)), created: String(v.ts || '') });
+  });
+  out.sort(function (a, b) { return a.n - b.n; });
+  return out;
+}
+
+// המספר הפנוי הבא. 0 = אין מקום.
+function b52NextDeviceN(devs) {
+  var used = {};
+  (devs || []).forEach(function (d) { used[d.n] = 1; });
+  for (var i = 1; i <= B52_MAX_DEVICES; i++) if (!used[i]) return i;
+  return 0;
+}
+
+/* ⛔ הרישום והביטול יושבים כאן ולא בתוך ה-switch, כדי שיהיו ניתנים לבדיקה
+   ישירה. route() טוענת גיליון אמיתי ולכן אינה נגישה לרתמת הבדיקות. */
+function b52RegisterDevice(name) {
+  var devs = b52Devices();
+  var n = b52NextDeviceN(devs);
+  if (!n) return {
+    ok: false,
+    error: 'רשומים כבר ' + B52_MAX_DEVICES + ' טאבלטים — המספר המרבי. בטל רישום של טאבלט שאינו בשימוש ונסה שוב'
+  };
+  var nm = sVal(name).substring(0, B52_NAME_MAX);
+  if (!nm) nm = 'טאבלט ' + n;
+  var tok = b52NewToken();
+  PropertiesService.getScriptProperties().setProperty(
+    B52_DEV_PREFIX + n,
+    JSON.stringify({ h: sha256Hex(tok), name: nm, ts: nowTs() })
+  );
+  return { ok: true, kiosk_token: tok, device_n: n, device_name: nm,
+           auditNote: 'הונפק טוקן לטאבלט קיוסק: ' + nm };
+}
+
+/* ⛔ ביטול דורש מזהה מכשיר מפורש. בלעדיו לא מבטלים כלום — ביטול גורף
+   היה מוריד את כל המתחם מהחתמה בלחיצה אחת. */
+function b52RevokeDevice(deviceN) {
+  var want = sVal(deviceN);
+  if (want === '') return { ok: false, error: 'לא נבחר טאבלט לביטול' };
+  var devs = b52Devices(), hit = null;
+  for (var i = 0; i < devs.length; i++) if (String(devs[i].n) === want) { hit = devs[i]; break; }
+  if (!hit) return { ok: false, error: 'הטאבלט לא נמצא — ייתכן שהרישום כבר בוטל' };
+  try { PropertiesService.getScriptProperties().deleteProperty(hit.key); } catch (e) { }
+  return { ok: true, auditNote: 'בוטל רישום טאבלט קיוסק: ' + hit.name };
+}
+
 // מחזיר את ה-hash כשהטוקן תקף, אחרת מחרוזת ריקה. אין השוואת טוקנים גלויים.
+// BLD-03: נבדק מול **כל** המכשירים הרשומים, ולא מול מפתח יחיד.
 function b52VerifyKioskToken(token) {
   var t = String(token == null ? '' : token).trim();
   if (!t) return '';
-  var stored = '';
-  try { stored = PropertiesService.getScriptProperties().getProperty(B52_TOKEN_KEY) || ''; } catch (e) { return ''; }
-  if (!stored) return '';
   var h = sha256Hex(t);
-  return h === String(stored) ? h : '';
+  var devs = b52Devices();
+  for (var i = 0; i < devs.length; i++) if (devs[i].hash === h) return h;
+  return '';
 }
 
 // מזהה מכשיר להגבלת קצב — נגזר מה-hash, לעולם לא מהטוקן עצמו
@@ -2920,21 +3011,16 @@ function handle(action, p, db, user) {
 
     // ---- B52: קיוסק ----
     // הנפקת טוקן מכשיר. מוצג פעם אחת בלבד; בשרת נשמר hash בלבד.
-    // מכשיר יחיד בשלב ההרצה — רישום חדש דורס את הקודם (K1).
-    case 'b52RegisterKiosk': {
-      var kTok = b52NewToken();
-      PropertiesService.getScriptProperties().setProperty(B52_TOKEN_KEY, sha256Hex(kTok));
-      return { ok: true, kiosk_token: kTok, auditNote: 'הונפק טוקן לטאבלט קיוסק (הרישום הקודם בוטל)' };
-    }
-    case 'b52RevokeKiosk': {
-      try { PropertiesService.getScriptProperties().deleteProperty(B52_TOKEN_KEY); } catch (eRV) { }
-      return { ok: true, auditNote: 'בוטל רישום טאבלט הקיוסק' };
-    }
+    // ⭐ B66/BLD-03: רישום **מוסיף** מכשיר ואינו דורס. כל טאבלט מקבל שם
+    //    ידידותי כדי שביטול רישום יהיה פעולה מודעת ולא ניחוש.
+    case 'b52RegisterKiosk': return b52RegisterDevice(p.name);
+    case 'b52RevokeKiosk': return b52RevokeDevice(p.device_n);
     // אבחון READ_ONLY למסך ההגדרות (כלל R1 — אבי רואה על המסך, בלי ייצוא):
     // האם יש מכשיר רשום, כמה עובדים פעילים יכולים בכלל להחתים, ומי משוכפל.
     case 'b52KioskStatus': {
-      var regKS = false;
-      try { regKS = !!PropertiesService.getScriptProperties().getProperty(B52_TOKEN_KEY); } catch (eKS) { }
+      // BLD-03: רשימת מכשירים במקום דגל בודד. ⛔ ה-hash מסונן ואינו יוצא ללקוח.
+      var devKS = b52Devices();
+      var regKS = devKS.length > 0;
       var idxKS = b52PinIndex(db);
       var activeKS = (db.employees || []).filter(function (e) { return e.active !== 'לא'; });
       var dupKS = [];
@@ -2946,7 +3032,11 @@ function handle(action, p, db, user) {
       return {
         ok: true, registered: regKS, active: activeKS.length,
         with_pin: activeKS.length - noPinKS.length,
-        no_pin: noPinKS.slice(0, 25), no_pin_total: noPinKS.length, dup_pins: dupKS
+        no_pin: noPinKS.slice(0, 25), no_pin_total: noPinKS.length, dup_pins: dupKS,
+        devices: devKS.map(function (d) {
+          return { n: d.n, name: d.name, created: d.created, legacy: d.n === 0 ? 1 : 0 };
+        }),
+        max_devices: B52_MAX_DEVICES
       };
     }
     // ההחתמה עצמה. הגיעה לכאן רק אחרי אימות טוקן המכשיר ב-doPost.
@@ -4614,6 +4704,10 @@ function linePrice(db, customerId, itemId, orderType) {
 //  ליבה עסקית — עברה בדיקות רגרסיה. לא לערוך ידנית.
 // ============================================================
 var STAGES = ['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'מוכן'];
+/* B66 / BLD-15: סוגי ההזמנה. ⛔ חייב להישאר זהה ל-B65_TYPES ב-index.html —
+   יש בדיקה שמשווה את שתי הרשימות. הסוג נקרא מהגיליון ולכן כל השוואה
+   מולו עוברת sPick (כלל B64a): ' כביסה ' חייב להיתפס כ'כביסה'. */
+var ORDER_TYPES = ['השכרה', 'כביסה'];
 var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
 
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
@@ -4768,9 +4862,20 @@ function approveOrder(db, orderId) {
   // המוצא למשרד/מנהל: גביית תשלום במסך התשלום, או סימון "תשלום בהמשך" (b2MarkPayLater).
   if (['ממתין לתשלום', 'ממתין לתשלום הפרש', 'ממתין לאישור חריגה'].indexOf(String(o.payment_status || '')) > -1)
     return { ok: false, error: 'ההזמנה טרם עברה תשלום/מסגרת אשראי. גבה תשלום במסך התשלום או סמן "תשלום בהמשך" (מנהל/משרד)' };
-  if (!db.orderLines.some(function (l) { return l.order_id === orderId; })) return { ok: false, error: 'אין פריטים בהזמנה' };
+  /* B66 / BLD-15 (הכרעת אבי 02.08.2026): שורות בהזמנת כביסה הן **אומדן כמותי
+     ואינן חובה**. C5 בספר החיובים מצהיר מפורשות ששורות הזמנת כביסה "אינן כסף
+     ואינן נספרות" — החיוב מגיע מהשקילה בקליטה (C8, b54RawOrderTotalAg). כלומר
+     התנאי הקודם דרש נתון שהמערכת עצמה מתעלמת ממנו, והכריח לבחור פריט מקטלוג
+     ההשכרה רק כדי לאשר הזמנת כביסה.
+     ⛔ הזמנת השכרה בלי שורות נשארת חסומה — שם השורות הן הכסף.
+     ⛔ שורות נשארות אפשריות בכביסה: לא חובה, ולא מוסתרות.
+     ⛔ B64a: הסוג נקרא מהגיליון ולכן עובר sPick. סוג לא מוכר או ריק מקבל את
+     ההתנהגות המחמירה (שורות נדרשות) — בדיוק כמו היום. */
+  var oType = sPick(o.type, ORDER_TYPES);
+  if (oType !== 'כביסה' && !db.orderLines.some(function (l) { return l.order_id === orderId; }))
+    return { ok: false, error: 'אין פריטים בהזמנה' };
   var problems = [];
-  if (o.type === 'השכרה') {
+  if (oType === 'השכרה') {
     db.orderLines.filter(function (l) { return l.order_id === orderId; }).forEach(function (l) {
       var useWh = db.warehouses.length > 0;
       var avail = availableQty(db, l.item_id, o.start_date, o.end_date, orderId, useWh ? (o.warehouse_id || '') : undefined);
