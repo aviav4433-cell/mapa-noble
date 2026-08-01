@@ -1094,7 +1094,10 @@ function b49eLegDate(o, leg) { return leg === 'הלוך' ? o.start_date : o.end_
 
 // אופן המסירה של רגל. ערך מפורש גובר תמיד; ריק = גזירה חד-פעמית לתאימות לאחור.
 function b49eShipMode(o, leg) {
-  var v = String((leg === 'הלוך' ? o.ship_out : o.ship_back) || '').trim();
+  /* B65: היה כאן trim() בלבד. trim אינו מסיר רווח קשיח ותווי כיווניות,
+     ולכן ship_back עם רווח קשיח בגיליון נפל לגזירה מ-delivery_fee בלי
+     שום שגיאה — מחלקת הכשל השקט של B64a. sPick מחזיר ערך קנוני. */
+  var v = sPick(leg === 'הלוך' ? o.ship_out : o.ship_back, [B49E_SHIP, B49E_SELF]);
   if (v === B49E_SHIP || v === B49E_SELF) return v;
   if (String(o.type) === 'כביסה') return Number(o.delivery_fee || 0) > 0 ? B49E_SHIP : B49E_SELF;
   return B49E_SHIP;   // השכרה ותיקה — עד B49e תמיד נוצרו לה שתי נסיעות
@@ -1304,6 +1307,120 @@ function b56CloseLaundryOrder(db, order) {
   order.status = 'הושלמה';
   return true;
 }
+
+/* ============================================================
+   B65 / BLD-01 — ריפוי הזמנות כביסה היסטוריות
+   ------------------------------------------------------------
+   הרקע: עד B56 מסירת הכביסה הנקייה סגרה רק את רשומת המשלוח הפנימית
+   של המכבסה, ולא את רגל החזור של ההזמנה. B56 תיקן את זה — אבל
+   **מכאן והלאה בלבד**. הזמנות שנמסרו לפני 29.07.2026 נשארו עם
+   נסיעת 'אספקה' בסטטוס 'מתוכנן' לנצח, ולכן ממשיכות להופיע כפתוחות
+   ביומן, במשלוחים ובמסך ההזמנות.
+
+   ⛔ כלל R1 — אבי אינו מייצא בסיס נתונים. המסלול כאן הוא:
+        bld01Diagnose (READ_ONLY, אפס כתיבה)
+        ← תצוגה מקדימה על המסך
+        ← bld01Heal (כתיבה, מנהל/משרד בלבד)
+
+   ⛔ אידמפוטנטיות: הריפוי אינו מכיל לוגיקה משלו. הוא קורא לאותן שתי
+   פונקציות של B56 — b56CloseLaundryReturnLeg ו-b56CloseLaundryOrder —
+   ושתיהן בודקות סטטוס לפני שהן נוגעות בכלום. הרצה שנייה תמצא רשימה
+   ריקה ולא תכתוב דבר. אין כאן מסלול תיקון שני שיכול להתפצל מ-B56.
+
+   ⚠ B64a: כל השוואה לערך מהגיליון עוברת sVal. הזמנה עם ' כביסה '
+   או סטטוס עם רווח קשיח הייתה "לא נמצאת" ומדווחת כתקינה — כשל שקט.
+
+   ⚠ b56CloseLaundryReturnLeg מצהיר declared='כן'. ההנמקה של B56
+   תקפה גם רטרואקטיבית: הקליטה הגיעה ל'נמסר' דרך nobleDeliver, שחוסם
+   מסירה בלי חתימת לקוח או צילום (B19d/L6). כלומר המסירה הוכחה בפועל,
+   והנסיעה נסגרת כ'בוצע' ולא מבוטלת. לכן גם ההרשאה כאן היא מנהל/משרד
+   בלבד — בדיוק כמו b49fDeclareGate.
+   ============================================================ */
+
+/* הזמנה מועמדת לריפוי אם, וכל התנאים יחד:
+   1. סוג 'כביסה' וסטטוס פעיל (לא בוטלה/טיוטה/הצעת מחיר/הושלמה סופית)
+   2. אין לה קליטה פתוחה — כלומר אין עוד עבודה במכבסה
+   3. יש לה לפחות קליטה אחת שנמסרה — כלומר היא באמת הסתיימה
+   4. ובכל זאת נשארה לה רגל חזור פתוחה, או שהסטטוס לא 'הושלמה' */
+function bld01Candidates(db) {
+  var orders = db.orders || [], intakes = db.laundryIntakes || [], delivs = db.deliveries || [];
+  var out = [];
+  orders.forEach(function (o) {
+    if (sVal(o.type) !== 'כביסה') return;
+    var st = sVal(o.status);
+    if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(st) === -1) return;
+
+    var mine = intakes.filter(function (ik) { return String(ik.order_id || '') === String(o.id); });
+    var openIntake = mine.some(function (ik) { return B56_OPEN_INTAKE.indexOf(sVal(ik.status)) > -1; });
+    if (openIntake) return;                                   // עדיין בעבודה — לא היסטורית
+    var delivered = mine.filter(function (ik) { return sVal(ik.status) === 'נמסר'; });
+    if (!delivered.length) return;                            // מעולם לא נמסרה — אין מה לרפא
+
+    var kind = b49eLegKind(o, 'חזור');
+    var mode = b49eShipMode(o, 'חזור');
+    var openLegs = delivs.filter(function (d) {
+      return String(d.order_id || '') === String(o.id) && sVal(d.kind) === kind &&
+        B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1;
+    });
+    var needLeg = mode === B49E_SHIP && openLegs.length > 0;
+    var needStatus = st !== 'הושלמה';
+    if (!needLeg && !needStatus) return;
+
+    var last = delivered.slice().sort(function (a, b) {
+      return String(a.delivered_ts || '').localeCompare(String(b.delivered_ts || ''));
+    })[delivered.length - 1];
+
+    out.push({
+      order_id: o.id, order_number: o.order_number || '', customer_id: o.customer_id,
+      status: st, end_date: o.end_date || '', ship_back: mode,
+      intakes: mine.length, delivered_ts: (last && last.delivered_ts) || '',
+      open_legs: openLegs.map(function (d) { return { id: d.id, date: d.date || '', status: sVal(d.status), driver: d.driver || '' }; }),
+      will_close_leg: needLeg ? 1 : 0, will_close_order: needStatus ? 1 : 0
+    });
+  });
+  out.sort(function (a, b) { return String(a.delivered_ts).localeCompare(String(b.delivered_ts)); });
+  return out;
+}
+
+/* READ_ONLY — מאבחן ומחזיר. אינו כותב דבר, בשום מסלול. */
+function bld01Diagnose(db) {
+  var rows = bld01Candidates(db);
+  return {
+    ok: true, rows: rows, count: rows.length,
+    legs: rows.reduce(function (s, r) { return s + r.open_legs.length; }, 0),
+    orders_to_close: rows.filter(function (r) { return r.will_close_order; }).length,
+    scanned: (db.orders || []).filter(function (o) { return sVal(o.type) === 'כביסה'; }).length
+  };
+}
+
+/* כתיבה. מנהל/משרד בלבד — הריפוי מצהיר שנסיעה בוצעה בפועל.
+   p.order_ids אופציונלי: ריק = הכל. מאפשר לאבי לרפא רשומה בודדת. */
+function bld01Heal(db, p, user) {
+  if (!b34OfficeOk(db, user))
+    return { ok: false, error: 'רק מנהל או משרד רשאים לרפא הזמנות היסטוריות — הריפוי מצהיר שנסיעה בוצעה בפועל' };
+  var pick = (p && p.order_ids && p.order_ids.length) ? p.order_ids.map(String) : null;
+  var rows = bld01Candidates(db).filter(function (r) { return !pick || pick.indexOf(String(r.order_id)) > -1; });
+  if (!rows.length) return { ok: true, healed: 0, legs: 0, closed: 0, rows: [], note: 'לא נמצאה אף הזמנה לריפוי — כנראה כבר רופאה' };
+
+  var legs = 0, closed = 0, done = [];
+  rows.forEach(function (r) {
+    var o = (db.orders || []).find(function (x) { return String(x.id) === String(r.order_id); });
+    if (!o) return;
+    var leg = b56CloseLaundryReturnLeg(db, o, user);
+    var didLeg = (leg.done || 0) + (leg.confirmed || 0) + (leg.cancelled || 0);
+    var didOrder = b56CloseLaundryOrder(db, o) ? 1 : 0;
+    if (!didLeg && !didOrder) return;
+    legs += didLeg; closed += didOrder;
+    done.push({ order_id: o.id, order_number: o.order_number || '', legs: didLeg, closed: didOrder });
+  });
+  if (legs) writeTable('deliveries', db.deliveries);
+  if (closed) writeTable('orders', db.orders);
+  return {
+    ok: true, healed: done.length, legs: legs, closed: closed, rows: done,
+    auditNote: 'BLD-01 ריפוי היסטורי · ' + done.length + ' הזמנות · ' + legs + ' רגלי חזור · ' + closed + ' הזמנות הושלמו'
+  };
+}
+
 
 // B38 (תיקון החזרות): תאריכי ההזמנה זזו — משלוחי האספקה והאיסוף הפתוחים זזים איתם.
 // עד כה שינוי תאריך החזרה בהזמנה לא עדכן את רשומת האיסוף, ולכן ההזמנה
@@ -1683,6 +1800,9 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   'portalCheckAvail',
   // B54: אבחון נתוני החיובים — קריאה בלבד, אינה משנה דבר (כלל R1)
   'b54LedgerAudit',
+  // B65/BLD-01: אבחון הזמנות כביסה היסטוריות — קריאה בלבד.
+  // ⛔ bld01Heal בכוונה **אינה** כאן — היא כותבת ל-deliveries ול-orders.
+  'bld01Diagnose',
   // B51: עימוד יומן הפעולות ומדידת משקל הנתונים — קריאה בלבד.
   // b51ScrubAudit בכוונה **אינה** כאן — היא כותבת לגיליון.
   'b51AuditPage', 'b51PayloadStats',
@@ -4194,6 +4314,10 @@ function handle(action, p, db, user) {
     case 'b54ChargeAdd': return b54ChargeAdd(db, p, user);
     case 'b54ChargeCancel': return b54ChargeCancel(db, p, user);
     case 'b54LedgerAudit': return b54LedgerAudit(db, p);
+
+    // ===================== B65 / BLD-01 =====================
+    case 'bld01Diagnose': return bld01Diagnose(db);
+    case 'bld01Heal': return bld01Heal(db, p, user);
 
     // ===================== B51 =====================
     case 'b51AuditPage': return b51AuditPage(p);
