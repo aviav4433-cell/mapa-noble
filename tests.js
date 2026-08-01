@@ -1807,12 +1807,12 @@ SPECS.push({
 
     /* ===== canary ===== */
 
-    'canary עודכן ל-B64a בשני המקומות': (t, { H }) => {
+    'canary עודכן ל-B65 בשני המקומות': (t, { H }) => {
       const s = H.indexSrc();
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.64-B64a', 'ה-canary לא עודכן ל-B64a');
+      t.eq(inJs, 'v4.65-B65', 'ה-canary לא עודכן ל-B65');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -2388,6 +2388,437 @@ SPECS.push({
       });
     }
 
+  }
+});
+
+
+/* ============================================================================
+   t09 — B65: טופס כביסה · ריפוי BLD-01 · מד הרוחב של BLD-05
+   ----------------------------------------------------------------------------
+   שלושה דברים נבדקים כאן, וכל אחד נולד מכשל אמיתי:
+
+   1. **טופס הזמנה שמשנה צורה.** בורר "סוג" היה select בלי onchange, ולכן
+      הזמנת כביסה קיבלה את מילון ההשכרה. הבדיקות דורשות אירוע change אמיתי
+      (R7) — קריאה ישירה ל-b65ApplyType לא הייתה מוכיחה שהבורר מחובר.
+      ⛔ נבדק במפורש שהשדות עצמם **לא** השתנו: אותם id, אותם ערכים לשרת.
+
+   2. **BLD-01 — ריפוי היסטורי.** הבדיקה המרכזית היא אידמפוטנטיות: הרצה
+      שנייה חייבת לא לכתוב כלום. תיקון נתונים שאפשר להריץ פעמיים בלי נזק
+      הוא מה ש-R1 דורש, וזו הטענה שקשה לאמת בעין.
+
+   3. **מד הרוחב.** הכלי של B61 לא מסר את המספר משתי סיבות שנמצאו בקריאת
+      קוד: b61Text העתיק רק כשלים, והמדידה כיסתה מסך אחד. שתיהן נבדקות.
+   ============================================================================ */
+
+SPECS.push({
+  file: 't09-b65-wash',
+  title: 'B65 — טופס כביסה שמשנה צורה לפי הסוג',
+  needs: 'ui',
+  requires: ['newOrderForm', 'createOrder', 'b65ApplyType', 'b65OrderTypeVal',
+             'b65LegLabel', 'b65CanNewOrder', 'b65NewWashOrder', 'B65_TYPES',
+             'b49eLegLabel', 'b49eShipMode', 'sPick', 'openModal', 'closeModal',
+             'rOrders', 'rLaundry', 'go'],
+
+  tests: {
+
+    'הטופס נפתח בהשכרה כברירת מחדל ובשפת השכרה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false);
+      t.eq(w.b65OrderTypeVal(), 'השכרה', 'ברירת המחדל אינה השכרה');
+      t.eq(w.el('lb_start').textContent, 'תאריך אירוע / איסוף', 'תווית תאריך ההתחלה בהשכרה השתנתה');
+      t.has(w.el('lb_out').textContent, 'אספקה ללקוח', 'תווית רגל ההלוך בהשכרה שגויה');
+      w.closeModal();
+    },
+
+    '⭐ בחירת "כביסה" בבורר משנה את התוויות — דרך אירוע change אמיתי (R7)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false);
+      H.change(w, w.el('f_type'), 'כביסה');
+      t.eq(w.b65OrderTypeVal(), 'כביסה', 'הבורר לא עבר לכביסה');
+      t.eq(w.el('lb_start').textContent, 'תאריך מסירת הכביסה', 'תווית תאריך המסירה לא התחלפה — הבורר אינו מחובר');
+      t.eq(w.el('lb_end').textContent, 'תאריך החזרה ללקוח', 'תווית תאריך ההחזרה לא התחלפה');
+      t.has(w.el('lb_out').textContent, 'איסוף הכביסה מהלקוח', 'רגל ההלוך בכביסה לא קיבלה את השם הנכון');
+      t.has(w.el('lb_back').textContent, 'החזרת הכביסה ללקוח', 'רגל החזור בכביסה לא קיבלה את השם הנכון');
+      w.closeModal();
+    },
+
+    'חזרה להשכרה מחזירה את התוויות — ההחלפה דו-כיוונית': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false);
+      H.change(w, w.el('f_type'), 'כביסה');
+      H.change(w, w.el('f_type'), 'השכרה');
+      t.eq(w.el('lb_start').textContent, 'תאריך אירוע / איסוף', 'החזרה להשכרה לא שחזרה את התווית');
+      w.closeModal();
+    },
+
+    '⛔ החלפת סוג אינה מוחקת ערכים שכבר הוקלדו': (t, { w, srv, H }) => {
+      /* אותה מחלקת נזק שהגנת activeElement ב-b58AfterRefresh מונעת:
+         רינדור מחדש של הטופס היה מוחק את מה שהמשתמש כבר הקליד. */
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false);
+      w.el('f_start').value = '2026-08-10';
+      w.el('f_notes').value = 'הערה של המשתמש';
+      H.change(w, w.el('f_type'), 'כביסה');
+      t.eq(w.el('f_start').value, '2026-08-10', 'תאריך שהוקלד נמחק בהחלפת הסוג');
+      t.eq(w.el('f_notes').value, 'הערה של המשתמש', 'הערה שהוקלדה נמחקה בהחלפת הסוג');
+      w.closeModal();
+    },
+
+    '⛔ השדות עצמם לא השתנו — אותם id ואותם ערכים לשרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false);
+      ['f_cust', 'f_type', 'f_start', 'f_end', 'f_ofee', 'f_shipout', 'f_shipback', 'f_notes']
+        .forEach(id => t.ok(!!w.el(id), 'שדה שהיה קיים נעלם מהטופס: ' + id));
+      w.closeModal();
+    },
+
+    'presetType פותח ישר בכביסה — והפרמטר אופציונלי ובסוף': (t, { w, srv, H }) => {
+      /* כלל B64: פרמטר חדש נכנס בסוף ובאופציונלי, כדי שקריאות ישנות
+         (newOrderForm(false) · newOrderForm(false, iso)) לא יישברו. */
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false, '', 'כביסה');
+      t.eq(w.b65OrderTypeVal(), 'כביסה', 'presetType לא נבחר בבורר');
+      t.eq(w.el('lb_start').textContent, 'תאריך מסירת הכביסה', 'presetType לא החיל את התוויות');
+      w.closeModal();
+
+      w.newOrderForm(false, '2026-09-01');
+      t.eq(w.el('f_start').value, '2026-09-01', 'קריאה ישנה עם iso בלבד נשברה (T1/B64)');
+      t.eq(w.b65OrderTypeVal(), 'השכרה', 'קריאה בלי presetType לא נפלה להשכרה');
+      w.closeModal();
+    },
+
+    '⭐ יש נקודת כניסה להזמנת כביסה גם ממסך ההזמנות וגם מלוח הכביסה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.go('orders');
+      t.has(w.el('main').innerHTML, 'כביסה</button>', 'מסך ההזמנות לא קיבל כפתור כביסה');
+      w.go('laundry');
+      t.has(w.el('main').innerHTML, 'הזמנת כביסה חדשה', 'לוח הכביסה לא קיבל כפתור פתיחת הזמנה');
+    },
+
+    '⛔ לא נוסף מסך — 29 המסכים נשארו 29': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.VIEWS.length, 29, 'מספר המסכים השתנה — נמסרו ' + w.VIEWS.length);
+    },
+
+    '⛔ מי שאינו רשאי להיכנס להזמנות אינו מקבל את הכפתור': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      const allowed = w.allowedViews().some(v => v[0] === 'orders');
+      t.eq(w.b65CanNewOrder(), allowed, 'ההרשאה לכפתור אינה נגזרת מההרשאה למסך ההזמנות');
+    },
+
+    'b65LegLabel נשען על b49eLegLabel ואינו רשימת מחרוזות שנייה': (t, { w, H }) => {
+      ['השכרה', 'כביסה'].forEach(type => {
+        ['הלוך', 'חזור'].forEach(leg => {
+          t.eq(w.b65LegLabel(type, leg), w.b49eLegLabel({ type: type }, leg),
+            'התוויות התפצלו מ-b49eLegLabel — ' + type + '/' + leg);
+        });
+      });
+    },
+
+    '⛔ B64a — אופן המסירה מהגיליון עובר sPick ולא trim': (t, { w }) => {
+      /* ship_back עם רווח קשיח היה נופל לגזירה מ-delivery_fee בלי שום
+         שגיאה: איסוף עצמי הופך למשלוח או להפך, ורגל נוצרת או לא נוצרת. */
+      t.eq(w.b49eShipMode({ type: 'כביסה', ship_back: 'איסוף עצמי\u00A0' }, 'חזור'), 'איסוף עצמי',
+        'רווח קשיח ב-ship_back הפיל את אופן המסירה');
+      t.eq(w.b49eShipMode({ type: 'כביסה', ship_out: ' משלוח ' }, 'הלוך'), 'משלוח',
+        'רווחים ב-ship_out הפילו את אופן המסירה');
+      t.eq(w.b49eShipMode({ type: 'כביסה', ship_back: '', delivery_fee: 0 }, 'חזור'), 'איסוף עצמי',
+        'הגזירה לאחור להזמנה ותיקה נשברה');
+    },
+
+    '⛔ סוג ההזמנה שנשלח לשרת מנורמל': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח בדיקה', active: 'כן' }];
+      w.newOrderForm(false, '', 'כביסה');
+      t.eq(w.b65OrderTypeVal(), 'כביסה', 'הערך שנשלח לשרת אינו קנוני');
+      w.closeModal();
+      t.eq(w.sPick(' כביסה ', w.B65_TYPES), 'כביסה', 'sPick לא מנרמל סוג הזמנה');
+      t.eq(w.sPick('משהו אחר', w.B65_TYPES), '', 'sPick התאים סוג שאינו ברשימה');
+    }
+  }
+});
+
+
+SPECS.push({
+  file: 't09-bld01-heal',
+  title: 'B65 / BLD-01 — ריפוי הזמנות כביסה היסטוריות',
+  needs: 'server',
+  requires: ['bld01Candidates', 'bld01Diagnose', 'bld01Heal', 'READ_ONLY_ACTIONS',
+             'b56CloseLaundryReturnLeg', 'b56CloseLaundryOrder', 'B56_OPEN_INTAKE',
+             'B5_OPEN_STATUSES', 'b49eLegKind', 'b49eShipMode', 'sVal', 'b34OfficeOk'],
+
+  tests: {
+
+    '⛔ האבחון ב-READ_ONLY_ACTIONS והריפוי בכוונה לא': (t, { srv }) => {
+      t.ok(srv.READ_ONLY_ACTIONS.indexOf('bld01Diagnose') > -1, 'האבחון אינו מסומן כקריאה בלבד');
+      t.eq(srv.READ_ONLY_ACTIONS.indexOf('bld01Heal'), -1,
+        'bld01Heal נכנסה ל-READ_ONLY_ACTIONS — היא כותבת ל-deliveries ול-orders (R4)');
+    },
+
+    '⭐ הזמנה היסטורית עם רגל חזור פתוחה מזוהה': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה',
+                     end_date: '2026-06-01', ship_back: 'משלוח', order_number: '101' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר', delivered_ts: '2026-06-02 10:00:00' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן', date: '2026-06-01' }];
+      const r = srv.bld01Diagnose(db);
+      t.eq(r.count, 1, 'ההזמנה ההיסטורית לא זוהתה');
+      t.eq(r.legs, 1, 'רגל החזור הפתוחה לא נספרה');
+      t.eq(r.rows[0].order_id, 'O1', 'זוהתה הזמנה שגויה');
+      t.eq(r.rows[0].will_close_leg, 1, 'לא סומן שרגל החזור תיסגר');
+      t.eq(r.rows[0].will_close_order, 1, 'לא סומן שההזמנה תעבור להושלמה');
+    },
+
+    '⛔ האבחון אינו כותב דבר': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      const before = JSON.stringify(db);
+      srv.bld01Diagnose(db);
+      t.eq(JSON.stringify(db), before, 'האבחון שינה את בסיס הנתונים — הוא חייב להיות READ_ONLY (R1)');
+    },
+
+    '⛔ הזמנה שעדיין בעבודה אינה נוגעת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'מאושרת', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'בעבודה' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      t.eq(srv.bld01Diagnose(db).count, 0, 'הזמנה שעדיין במכבסה סומנה לריפוי');
+    },
+
+    '⛔ הזמנה עם שתי קליטות שאחת מהן פתוחה אינה נוגעת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' },
+                           { id: 'IK2', order_id: 'O1', status: 'במשלוח' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      t.eq(srv.bld01Diagnose(db).count, 0, 'הזמנה שקליטה שנייה שלה עדיין פתוחה סומנה לריפוי');
+    },
+
+    '⛔ הזמנה שמעולם לא נמסרה אינה נוגעת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'מאושרת', ship_back: 'משלוח' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      t.eq(srv.bld01Diagnose(db).count, 0, 'הזמנה בלי אף קליטה שנמסרה סומנה לריפוי');
+    },
+
+    '⛔ הזמנת השכרה לעולם לא נכנסת לריפוי הזה': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'השכרה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'איסוף', status: 'מתוכנן' }];
+      t.eq(srv.bld01Diagnose(db).count, 0, 'הזמנת השכרה נכנסה לריפוי של BLD-01');
+    },
+
+    '⭐ B64a — רווח בגיליון אינו מסתיר הזמנה שזקוקה לריפוי': (t, { srv, H }) => {
+      /* בלי sVal ההזמנה הזו הייתה "לא נמצאת" והרשימה הייתה חוזרת ריקה —
+         כשל שקט מהמחלקה של B64a, והפעם על נתונים היסטוריים. */
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה\u00A0', customer_id: 'C1', status: ' סופקה ', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר ' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: ' אספקה', status: 'מתוכנן\u200E' }];
+      t.eq(srv.bld01Diagnose(db).count, 1, 'רווחים בגיליון הסתירו הזמנה שזקוקה לריפוי');
+    },
+
+    '⭐ הריפוי סוגר את רגל החזור ואת ההזמנה': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'מנהלת', role: 'מנהל', active: 'כן' }];
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      const r = srv.bld01Heal(db, {}, 'מנהלת');
+      t.ok(r.ok, 'הריפוי נכשל: ' + (r.error || ''));
+      t.eq(r.healed, 1, 'לא רופאה אף הזמנה');
+      t.eq(srv.sVal(db.deliveries[0].status), 'בוצע', 'רגל החזור לא נסגרה');
+      t.eq(srv.sVal(db.orders[0].status), 'הושלמה', 'ההזמנה לא עברה להושלמה');
+    },
+
+    '⭐⭐ הריפוי אידמפוטנטי — הרצה שנייה אינה משנה כלום (R1)': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'מנהלת', role: 'מנהל', active: 'כן' }];
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      srv.bld01Heal(db, {}, 'מנהלת');
+      const after1 = JSON.stringify(db);
+      const r2 = srv.bld01Heal(db, {}, 'מנהלת');
+      t.ok(r2.ok, 'ההרצה השנייה החזירה שגיאה');
+      t.eq(r2.healed, 0, 'ההרצה השנייה "ריפאה" שוב — הפעולה אינה אידמפוטנטית');
+      t.eq(JSON.stringify(db), after1, 'ההרצה השנייה שינתה נתונים');
+      t.eq(srv.bld01Diagnose(db).count, 0, 'האבחון עדיין מציג את ההזמנה אחרי ריפוי');
+    },
+
+    '⛔ רק מנהל ומשרד רשאים לרפא': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'עובדת מכבסה', role: 'מכבסה', active: 'כן' },
+                      { id: 'E2', name: 'פקידה', role: 'משרד', active: 'כן' }];
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      const bad = srv.bld01Heal(db, {}, 'עובדת מכבסה');
+      t.no(bad.ok, 'עובדת מכבסה הצליחה לרפא — הפעולה מצהירה שנסיעה בוצעה בפועל');
+      t.eq(srv.sVal(db.deliveries[0].status), 'מתוכנן', 'הנתונים השתנו למרות שההרשאה נדחתה');
+      t.ok(srv.bld01Heal(db, {}, 'פקידה').ok, 'משרד נחסם מריפוי');
+    },
+
+    'ריפוי סלקטיבי — order_ids מגביל לרשומה אחת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'מנהלת', role: 'מנהל', active: 'כן' }];
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' },
+                   { id: 'O2', type: 'כביסה', customer_id: 'C2', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' },
+                           { id: 'IK2', order_id: 'O2', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' },
+                       { id: 'D2', order_id: 'O2', kind: 'אספקה', status: 'מתוכנן' }];
+      const r = srv.bld01Heal(db, { order_ids: ['O1'] }, 'מנהלת');
+      t.eq(r.healed, 1, 'ריפוי סלקטיבי נגע ביותר מהזמנה אחת');
+      t.eq(srv.sVal(db.deliveries[1].status), 'מתוכנן', 'הזמנה שלא נבחרה שונתה');
+    },
+
+    '⛔ איסוף עצמי ברגל החזור — אין רגל לסגור, רק הסטטוס': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'מנהלת', role: 'מנהל', active: 'כן' }];
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'איסוף עצמי' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      const r = srv.bld01Diagnose(db);
+      t.eq(r.count, 1, 'הזמנה באיסוף עצמי שנתקעה ב"סופקה" לא זוהתה');
+      t.eq(r.rows[0].will_close_leg, 0, 'סומן שתיסגר רגל למרות שאין רגל');
+      srv.bld01Heal(db, {}, 'מנהלת');
+      t.eq(srv.sVal(db.orders[0].status), 'הושלמה', 'ההזמנה לא נסגרה');
+    },
+
+    '⛔ אין כאן נגיעה בכסף': (t, { srv, H }) => {
+      /* B54_SKIP_ORDER מחריג רק בוטלה/טיוטה/הצעת מחיר, ולכן 'סופקה'
+         ו'הושלמה' נספרות זהה בספר החיובים. הריפוי אינו מזיז אגורה. */
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'מנהלת', role: 'מנהל', active: 'כן' }];
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה', ship_back: 'משלוח' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר', total_charge: 250 }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      db.invoices = []; db.payments = [];
+      srv.bld01Heal(db, {}, 'מנהלת');
+      t.eq(Number(db.laundryIntakes[0].total_charge), 250, 'הריפוי נגע בחיוב של הקליטה');
+      t.eq(db.invoices.length, 0, 'הריפוי יצר חשבונית');
+      t.eq(db.payments.length, 0, 'הריפוי יצר תשלום');
+    },
+
+    'רשימה ריקה מוחזרת בשקט ולא כשגיאה': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.employees = [{ id: 'E1', name: 'מנהלת', role: 'מנהל', active: 'כן' }];
+      const r = srv.bld01Heal(db, {}, 'מנהלת');
+      t.ok(r.ok, 'מסד ריק החזיר שגיאה');
+      t.eq(r.healed, 0, 'רופא משהו במסד ריק');
+    }
+  }
+});
+
+
+SPECS.push({
+  file: 't09-b65-width',
+  title: 'B65 — מד הרוחב שפותח את BLD-05',
+  needs: 'ui',
+  requires: ['b65MeasureNow', 'b65RecordWidth', 'b65WidthSummary', 'B65_WMAP',
+             'B65_WIDE', 'B65_WKEY', 'b61Tests', 'b61Text', 'b61Run', 'render', 'go', 'navMode'],
+
+  tests: {
+
+    'ששת המסכים הרחבים של ACT-05 הם הרשימה': (t, { w }) => {
+      ['items', 'orders', 'finance', 'payroll', 'audit', 'reports']
+        .forEach(v => t.ok(w.B65_WIDE.indexOf(v) > -1, 'מסך רחב חסר מרשימת המדידה: ' + v));
+      t.eq(w.B65_WIDE.length, 6, 'רשימת המסכים הרחבים שינתה גודל');
+    },
+
+    '⛔ המדידה מחזירה null כשאין פריסה — ואינה קורסת': (t, { w, srv, H }) => {
+      /* ב-jsdom clientWidth הוא 0. המדידה חייבת לצאת בשקט ולא להפיל
+         את render, אחרת כל המערכת מפסיקה להיצבע בסביבת הבדיקה. */
+      H.login(w, 'מנהל', srv);
+      t.eq(w.b65MeasureNow(), null, 'המדידה החזירה ערך למרות שאין פריסה');
+      w.b65RecordWidth();
+      w.go('orders');
+      t.eq(w.VIEW, 'orders', 'render נשבר בגלל המדידה');
+    },
+
+    '⭐ הסיכום מוצא את המקסימום ואת המסך שדרש אותו': (t, { w }) => {
+      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
+      w.B65_WMAP.orders  = { need: 1180, win: 1512, mode: 'side', rail: 206, over: 0 };
+      w.B65_WMAP.payroll = { need: 1340, win: 1512, mode: 'side', rail: 206, over: 0 };
+      w.B65_WMAP.audit   = { need: 990,  win: 1512, mode: 'side', rail: 206, over: 0 };
+      const sm = w.b65WidthSummary();
+      t.eq(sm.max, 1340, 'המקסימום חושב שגוי');
+      t.eq(sm.maxView, 'payroll', 'המסך הרחב ביותר זוהה שגוי');
+      t.eq(sm.wideSeen, 3, 'ספירת המסכים הרחבים שנמדדו שגויה');
+      t.eq(sm.missing.length, 3, 'רשימת המסכים החסרים שגויה');
+    },
+
+    '⭐⭐ הטענה של BLD-05 נכשלת כל עוד לא נמדדו כל ששת המסכים': (t, { w, srv, H }) => {
+      /* זו הנקודה: מספר חלקי גרוע ממספר חסר, כי הוא נראה כמו תשובה.
+         כל עוד חסר מסך אחד — הבדיקה אדומה ואבי רואה בדיוק מה חסר. */
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
+      /* ⚠ מלכודת: גם הטענה הישנה (ACT-05 · BLD-05) מכילה 'BLD-05'.
+         הבורר חייב להיות ייחודי לטענה החדשה, אחרת נבדקת הישנה. */
+      const find = () => w.b61Tests().filter(x => x.n.indexOf('רוחב מרבי') > -1)[0];
+      const test = find();
+      t.ok(!!test, 'הטענה של BLD-05 אינה קיימת בכרטיס הבדיקה העצמית');
+      t.no(test.f().ok, 'הטענה עברה למרות שלא נמדד שום מסך');
+
+      w.B65_WIDE.forEach(v => { w.B65_WMAP[v] = { need: 1100, win: 1512, mode: 'side', rail: 206, over: 0 }; });
+      const full = find().f();
+      t.ok(full.ok, 'הטענה נכשלה למרות שכל ששת המסכים נמדדו');
+      t.has(full.note, '1100', 'המספר המכריע אינו מופיע בטענה');
+    },
+
+    '⭐⭐ בלוק ההעתקה כולל את המספר גם כשהכל עבר': (t, { w, srv, H }) => {
+      /* התקלה שחסמה את BLD-05 ארבע פעמים: b61Text העתיק **רק כשלים**,
+         ולכן כשהפריסה נכנסה — והיא נכנסה — המספר לא הגיע לצ'אט מעולם. */
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
+      w.B65_WIDE.forEach(v => { w.B65_WMAP[v] = { need: 1210, win: 1512, mode: 'side', rail: 206, over: 0 }; });
+      w.B61_RES = { at: new Date(), pass: 20, fail: 0, rows: [],
+                    env: { canary: w.B61_CANARY, browser: 'x', os: 'y', vw: 1512, vh: 900, dpr: 2, touch: false, mode: 'side', tz: 'Asia/Jerusalem', role: 'מנהל' } };
+      const txt = w.b61Text();
+      t.has(txt, 'BLD-05', 'מקטע הרוחב חסר מבלוק ההעתקה');
+      t.has(txt, '1210', 'המספר המכריע אינו מועתק כשאין כשלים');
+      t.has(txt, 'payroll', 'פירוט המסכים אינו מועתק');
+    },
+
+    'מסכים שטרם נמדדו מסומנים בבלוק ההעתקה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
+      w.B65_WMAP.orders = { need: 1000, win: 1512, mode: 'side', rail: 206, over: 0 };
+      w.B61_RES = { at: new Date(), pass: 20, fail: 0, rows: [],
+                    env: { canary: w.B61_CANARY, browser: 'x', os: 'y', vw: 1512, vh: 900, dpr: 2, touch: false, mode: 'side', tz: 'Asia/Jerusalem', role: 'מנהל' } };
+      t.has(w.b61Text(), 'טרם נמדדו', 'הבלוק אינו מציין אילו מסכים חסרים');
+    },
+
+    '⛔ הטענה הישנה על המסך הנוכחי לא הוסרה (t05)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.has(names, 'המסך הנוכחי אינו גולש לרוחב', 'הטענה של ACT-05 הוסרה מהכרטיס');
+      t.has(names, 'רוחב מרבי בכל המסכים', 'הטענה החדשה של BLD-05 לא נוספה');
+    },
+
+    '⛔ אין history.back/go במנגנון המדידה': (t, { H }) => {
+      const src = H.stripComments(H.indexSrc());
+      const seg = src.slice(src.indexOf('function b65MeasureNow'), src.indexOf('function b61Browser'));
+      t.hasNot(seg, 'history.back', 'history.back חדר למנגנון המדידה');
+      t.hasNot(seg, 'history.go', 'history.go חדר למנגנון המדידה');
+    },
+
+    '⛔ המדידה אינה שולחת בקשת שרת': (t, { H }) => {
+      const src = H.stripComments(H.indexSrc());
+      const seg = src.slice(src.indexOf('function b65MeasureNow'), src.indexOf('function b61Browser'));
+      t.hasNot(seg, 'api(', 'המדידה קוראת לשרת — היא חייבת להיות מקומית לחלוטין (R10)');
+      t.hasNot(seg, 'act(', 'המדידה קוראת לפעולת שרת');
+    }
   }
 });
 
