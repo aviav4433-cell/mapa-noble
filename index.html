@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.64-B64a · 01.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.65-B65 · 01.08.2026</div>
   </div>
 </div>
 
@@ -1843,6 +1843,9 @@ function render(){
   ({dash:rDash,orders:rOrders,tasks:rTasks,calendar:rCalendar,meetings:rMeetings,laundry:rLaundry,deliveries:rDeliveries,finance:rFinance,customers:rCustomers,
     items:rItems,purchasing:rPurchasing,scan:rScan,barcodes:rBarcodes,reports:rReports,bi:rBi,approvals:rApprovals,audit:rAudit,assets:rAssets,
     staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings,warehouses:rWarehouses,shelves:rShelves,fleet:rFleet,returns:rReturns,notes:rNotes,floor:rFloor,superadmin:rSuperAdmin})[VIEW]();
+  /* B65: מדידת רוחב פסיבית. קריאה בלבד, בתוך try — מדידה שנכשלת
+     לעולם לא תמנע מהמסך להיצבע. */
+  try{ b65RecordWidth(); }catch(e){}
 }
 /* ================= B60 / T3 — הכלל האחיד למצב מסך =================
    הבאג שנפתח את הפריט: REPORT_ID הוא משתנה מצב ברמת המודול. repBack() איפס
@@ -2635,7 +2638,7 @@ function orderCard(o){
 function rOrders(){
   var tabs = [['open','פתוחות'],['closed','סגורות'],['all','הכל']];
   el('main').innerHTML =
-    '<div class="section-title"><h2>הזמנות</h2><div><button class="btn ghost" onclick="newOrderForm(true)">+ הצעת מחיר</button> <button class="btn" onclick="newOrderForm(false)">+ הזמנה</button></div></div>'+
+    '<div class="section-title"><h2>הזמנות</h2><div><button class="btn ghost" onclick="newOrderForm(true)">+ הצעת מחיר</button> <button class="btn ghost" onclick="newOrderForm(false,\'\',\'כביסה\')">🧺 + כביסה</button> <button class="btn" onclick="newOrderForm(false)">+ הזמנה</button></div></div>'+
     '<div class="tabs">'+tabs.map(t=>'<button class="'+(ORD_TAB===t[0]?'on':'')+'" onclick="ORD_TAB=\''+t[0]+'\';render()">'+t[1]+'</button>').join('')+'</div>'+
     '<div class="card"><div class="frow" style="margin-bottom:0"><label>חיפוש</label><input id="ord_q" oninput="renderOrdersList()" placeholder="מספר הזמנה או שם לקוח"></div></div>'+
     '<div id="ordList"></div>';
@@ -2653,26 +2656,74 @@ function renderOrdersList(){
   });
   box.innerHTML = list.length? list.map(orderCard).join('') : '<div class="card empty">'+(q?'לא נמצאו הזמנות תואמות לחיפוש':'אין הזמנות בטאב זה')+'</div>';
 }
-function newOrderForm(isQuote, iso){
-  /* T1 (B64): iso — תאריך האירוע/האיסוף מאוכלס מראש כשנפתח מהיומן. */
+/* ============================================================
+   B65 / טופס הזמנה שמשנה צורה לפי הסוג
+   ------------------------------------------------------------
+   מה היה שבור: בורר "סוג" היה select פשוט בלי onchange, ולכן הזמנת
+   כביסה קיבלה את מילון ההשכרה — "תאריך אירוע / איסוף", "אופן המסירה
+   — הלוך". אבי דיווח שאי אפשר לפתוח כביסה ללקוח רגיל; בפועל אפשר,
+   אבל הטופס דיבר בשפה הלא נכונה ולכן נראה כאילו הוא לא מיועד לזה.
+
+   ⚠ מה **לא** השתנה, במכוון:
+   · השדות עצמם, שמותיהם והערכים שנשלחים לשרת — זהים לחלוטין. רק
+     התוויות וטקסטי העזר מתחלפים. אין שדה חדש ואין עמודה חדשה.
+   · שתי רגלי המסירה (B49e) כבר היו עצמאיות מאז B49e — "מסירה והחזרה
+     על ידי הלקוח" נתמכת מזמן. B65 רק נותן לה את השם הנכון בכביסה.
+   · b49eLegLabel הוא מקור האמת היחיד לשמות הרגליים. אין כאן רשימה
+     שנייה של מחרוזות, כדי שלא יתפצלו.
+
+   ⛔ החלפת התוויות נעשית **בטקסט בלבד** ולא ב-innerHTML של המסגרת:
+   רינדור מחדש של הטופס היה מוחק ערכים שהמשתמש כבר הקליד — אותה
+   מחלקת נזק שהגנת activeElement ב-b58AfterRefresh מונעת.
+   ============================================================ */
+var B65_TYPES = ['השכרה','כביסה'];
+
+function b65OrderTypeVal(){
+  var e = el('f_type');
+  return e ? (sPick(e.value, B65_TYPES) || 'השכרה') : 'השכרה';
+}
+/* התווית של רגל, בשפת הסוג שנבחר — נשענת על b49eLegLabel ולא משכפלת אותו */
+function b65LegLabel(type, leg){ return b49eLegLabel({ type: type }, leg); }
+
+function b65ApplyType(){
+  var type = b65OrderTypeVal(), wash = type === 'כביסה';
+  var set = function(id, txt){ var e = el(id); if(e) e.textContent = txt; };
+  set('lb_start', wash ? 'תאריך מסירת הכביסה' : 'תאריך אירוע / איסוף');
+  set('lb_end',   wash ? 'תאריך החזרה ללקוח'  : 'תאריך החזרה');
+  set('lb_out',   'אופן המסירה — ' + b65LegLabel(type,'הלוך'));
+  set('lb_back',  'אופן המסירה — ' + b65LegLabel(type,'חזור'));
+  var h = el('f_typeHint');
+  if(h) h.innerHTML = wash
+    ? '🧺 <b>הזמנת כביסה.</b> תאריך המסירה הוא היום שבו הכביסה המלוכלכת מגיעה אלינו, ותאריך ההחזרה הוא היום שבו הנקייה חוזרת ללקוח. <b>החיוב אינו נקבע כאן</b> — הוא מחושב לפי המשקל בשקילה בקליטה. שורות הפריטים בהזמנה הן אומדן כמותי בלבד.'
+    : '🛏 <b>הזמנת השכרה.</b> תאריך האירוע הוא יום האספקה ללקוח, ותאריך ההחזרה הוא היום שבו הפריטים חוזרים אלינו. החיוב נקבע משורות ההזמנה.';
+}
+
+function newOrderForm(isQuote, iso, presetType){
+  /* T1 (B64): iso — תאריך האירוע/האיסוף מאוכלס מראש כשנפתח מהיומן.
+     B65: presetType — אופציונלי **ובסוף**, כדי שכל הקריאות הישנות
+     (כולל newOrderForm(false) ו-newOrderForm(false,iso)) לא יישברו. */
   if(!DB.customers.length) return toast('קודם צור לקוח במסך לקוחות', true);
-  openModal('<h2>'+(isQuote?'הצעת מחיר חדשה':'הזמנה חדשה')+'</h2>'+
+  var pre = sPick(presetType, B65_TYPES) || 'השכרה';
+  openModal('<h2>'+(isQuote?'הצעת מחיר חדשה':(pre==='כביסה'?'הזמנת כביסה חדשה':'הזמנה חדשה'))+'</h2>'+
     '<div class="frow"><label>לקוח</label>'+sel('f_cust',DB.customers.filter(c=>c.active!=='לא'),c=>c.name)+'</div>'+
-    '<div class="frow"><label>סוג</label><select id="f_type"><option>השכרה</option><option>כביסה</option></select></div>'+
-    '<div class="grid2"><div class="frow"><label>תאריך אירוע / איסוף</label><input id="f_start" type="date" value="'+esc(b43IsYmd(iso)?iso:'')+'"></div>'+
-    '<div class="frow"><label>תאריך החזרה</label><input id="f_end" type="date"></div></div>'+
+    '<div class="frow"><label>סוג</label><select id="f_type" onchange="b65ApplyType()">'+
+      B65_TYPES.map(function(t){ return '<option'+(t===pre?' selected':'')+'>'+t+'</option>'; }).join('')+'</select>'+
+      '<div class="muted" id="f_typeHint" style="font-size:11.5px;margin-top:4px"></div></div>'+
+    '<div class="grid2"><div class="frow"><label id="lb_start">תאריך אירוע / איסוף</label><input id="f_start" type="date" value="'+esc(b43IsYmd(iso)?iso:'')+'"></div>'+
+    '<div class="frow"><label id="lb_end">תאריך החזרה</label><input id="f_end" type="date"></div></div>'+
     '<div class="frow"><label>מחיר שינוע (₪)</label><input id="f_ofee" type="number" min="0" value="'+esc(setting('default_delivery_fee')||'')+'"><div class="muted" style="font-size:11.5px">B49e: סכום כספי בלבד. אופן המסירה נקבע בשתי הבחירות שמתחת, ואינו תלוי במחיר — משלוח יכול להיות גם בלי חיוב.</div></div>'+
     '<div class="grid2">'+
-      '<div class="frow"><label>אופן המסירה — הלוך</label><select id="f_shipout"><option>משלוח</option><option>איסוף עצמי</option></select></div>'+
-      '<div class="frow"><label>אופן המסירה — חזור</label><select id="f_shipback"><option>משלוח</option><option>איסוף עצמי</option></select></div>'+
+      '<div class="frow"><label id="lb_out">אופן המסירה — הלוך</label><select id="f_shipout"><option>משלוח</option><option>איסוף עצמי</option></select></div>'+
+      '<div class="frow"><label id="lb_back">אופן המסירה — חזור</label><select id="f_shipback"><option>משלוח</option><option>איסוף עצמי</option></select></div>'+
     '</div>'+
-    '<div class="muted" style="font-size:11.5px;margin:-4px 0 10px">רק רגל שסומנה "משלוח" מייצרת נסיעה ביומן ובמסלול הנהג. אפשר לשנות בכל שלב, לשני הכיוונים, מתוך כרטיס ההזמנה.</div>'+
+    '<div class="muted" style="font-size:11.5px;margin:-4px 0 10px">רק רגל שסומנה "משלוח" מייצרת נסיעה ביומן ובמסלול הנהג. "איסוף עצמי" = הלקוח מביא או לוקח בעצמו, ולא נוצרת נסיעה כלל. אפשר לשנות בכל שלב, לכל רגל בנפרד, מתוך כרטיס ההזמנה.</div>'+
     (DB.warehouses.length?'<div class="frow"><label>מחסן מספק (ריק = לפי הלקוח)</label><select id="f_owh"><option value="">לפי הלקוח</option>'+DB.warehouses.filter(w=>w.active!=='לא').map(w=>'<option value="'+w.id+'">'+esc(w.name)+'</option>').join('')+'</select></div>':'')+
     '<div class="frow"><label>הערות</label><input id="f_notes"></div>'+
     '<button class="btn" onclick="createOrder('+(isQuote?'true':'false')+')">להוספת פריטי הזמנה</button>');
+  b65ApplyType();
 }
 async function createOrder(isQuote){
-  var r = await act('create',{table:'orders',row:{type:el('f_type').value,customer_id:el('f_cust').value,
+  var r = await act('create',{table:'orders',row:{type:b65OrderTypeVal(),customer_id:el('f_cust').value,
     start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,ship_out:(el('f_shipout')?el('f_shipout').value:'משלוח'),ship_back:(el('f_shipback')?el('f_shipback').value:'משלוח'),warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},'נשמר — הוסף פריטים');
   if(r){ closeModal(); openOrder(r.row.id); }
 }
@@ -3077,9 +3128,17 @@ function rLaundry(){
   var pend49d = b49dPendingOrders();
   el('main').innerHTML = '<div class="section-title"><h2>לוח כביסה</h2><span class="muted">"מוכן" מציג 3 ימים אחרונים · לחיצה על כרטיס פותחת היסטוריה</span>'+
     ((pend49d.length && b49dCanIntake())?'<button class="btn sm" onclick="b49dGoIntake(\''+pend49d[0].id+'\')">🧺 כביסת לקוח לקליטה ('+pend49d.length+')</button>':'')+
+    /* B65: פתיחת הזמנת כביסה ישירות מלוח הכביסה. אין כאן מסך חדש ואין טופס
+       שני — זו קריאה ל-newOrderForm הקיים עם סוג מוגדר מראש (R8). */
+    (b65CanNewOrder()?'<button class="btn ghost sm" onclick="b65NewWashOrder()">＋ הזמנת כביסה חדשה</button>':'')+
     (allowedViews().some(function(v){ return v[0]==='reports'; })?'<button class="btn ghost sm" onclick="goReport(\'noble\')">📊 דוח ביצועי מכבסה</button>':'')+
     '</div><div class="kanban">'+cols+'</div>';
 }
+/* B65: מי רשאי לפתוח הזמנה — נגזר מההרשאה הקיימת למסך ההזמנות, בלי
+   רשימת תפקידים שנייה שתתפצל ממנה. */
+function b65CanNewOrder(){ return allowedViews().some(function(v){ return v[0]==='orders'; }); }
+function b65NewWashOrder(){ go('orders'); newOrderForm(false,'','כביסה'); }
+
 /* --- עוזרי היסטוריה --- */
 function b40Events(tid){
   return (DB.laundryTaskEvents||[]).filter(e=>String(e.task_id)===String(tid))
@@ -3572,7 +3631,11 @@ function b49eLegLabel(o,leg){
   return rental?'איסוף מהלקוח':'החזרת הכביסה ללקוח';
 }
 function b49eShipMode(o,leg){
-  var v = String((leg==='הלוך'? o.ship_out : o.ship_back)||'').trim();
+  /* B65: היה כאן trim() בלבד. trim אינו מסיר רווח קשיח ותווי כיווניות,
+     ולכן ship_back עם רווח קשיח בגיליון היה נופל לגזירה מ-delivery_fee
+     ובלי שום שגיאה — בדיוק מחלקת הכשל השקט של B64a. sPick מחזיר את
+     הערך הקנוני מהרשימה. */
+  var v = sPick(leg==='הלוך'? o.ship_out : o.ship_back, [B49E_SHIP,B49E_SELF]);
   if(v===B49E_SHIP||v===B49E_SELF) return v;
   if(String(o.type)==='כביסה') return Number(o.delivery_fee||0)>0? B49E_SHIP : B49E_SELF;
   return B49E_SHIP;
@@ -6967,6 +7030,7 @@ function auditShell(){
     b4NotificationsWidget()+
     b51ToolsCard()+
     b60Card()+
+    bld01Card()+
     b61Card()+
     b57Card()+
     b58Card()+
@@ -7173,6 +7237,77 @@ function b60Card(){
       : '<div class="empty">אין רשומות עדיין. נווט בין מסכים, לחץ "הקודם", וחזור לכאן.</div>')+
     '</div>';
 }
+
+/* ============================================================
+   B65 — מד רוחב פסיבי. הכלי שחוסם את BLD-05 נפתח כאן.
+   ------------------------------------------------------------
+   למה זה קיים: BLD-05 (הורדת נקודת השבירה ל-1024px) ירד מארבע אצוות
+   ברציפות מאותה סיבה — אין מדידה. קריאת הקוד ב-B65 הראתה **שתי
+   תקלות בכלי עצמו**, ולא אצל אבי:
+
+   1. b61Text מעתיק **רק בדיקות שנכשלו**. הפריסה נכנסת, הבדיקה עוברת,
+      והשורה עם המספר לא נכנסת לבלוק שמודבק לצ'אט. אבי הריץ והדביק —
+      והמספר פשוט לא היה שם.
+   2. הבדיקה מודדת את **המסך שפתוח**, והכרטיס יושב בתוך יומן פעולות.
+      לכן היא מדדה תמיד את יומן פעולות בלבד. המספר הדרוש הוא המקסימום
+      מששת המסכים הרחבים (ACT-05).
+
+   הפתרון: מדידה פסיבית. אחרי כל רינדור מסך נרשם כמה רוחב אותו מסך
+   באמת דרש. אבי עובד רגיל, וכשהוא פותח את הבדיקה העצמית הטבלה כבר
+   מלאה. אפס בקשות שרת, אפס כתיבה לגיליון (R10 לא רלוונטי, R1 נשמר).
+
+   ⛔ המדידה **קוראת בלבד** ולעולם אינה משנה פריסה, מחלקה או סגנון.
+   ⛔ אין כאן נקודת שבירה חדשה ואין ניחוש. B65 מוסר מספר; מי שמוריד
+      את הנקודה הוא B66, ורק אם המספר יאשר.
+   ============================================================ */
+var B65_WKEY = 'mn_b65width';
+var B65_WMAP = (function(){
+  try{ return JSON.parse(localStorage.getItem(B65_WKEY) || '{}') || {}; }catch(e){ return {}; }
+})();
+
+/* כמה רוחב המסך הנוכחי באמת צריך: התוכן הרחב ביותר + הרצועה + שוליים.
+   מוחזר null כשאין פריסה למדוד (jsdom, מסך מוסתר, רינדור אסינכרוני שטרם צויר). */
+function b65MeasureNow(){
+  var m = document.querySelector('main');
+  if(!m || !m.clientWidth) return null;
+  var widest = m.scrollWidth, what = 'התוכן';
+  var boxes = document.querySelectorAll('main table, main .card');
+  for(var i=0;i<boxes.length;i++){
+    if(boxes[i].scrollWidth > boxes[i].clientWidth + 2 && boxes[i].scrollWidth > widest){
+      widest = boxes[i].scrollWidth; what = 'טבלה';
+    }
+  }
+  var rail = el('rail');
+  var navW = (rail && navMode()==='side') ? rail.getBoundingClientRect().width : 0;
+  return {
+    need: Math.round(widest + navW + 56),
+    over: widest - m.clientWidth,
+    what: what, win: window.innerWidth, mode: navMode(), rail: Math.round(navW)
+  };
+}
+
+/* נרשם המקסימום בלבד: מסך שנפתח פעם אחת ברוחב גדול לא "נמחק" ע"י
+   פתיחה מאוחרת בחלון צר. ts נשמר כדי שאפשר יהיה לדעת מתי נמדד. */
+function b65RecordWidth(){
+  var r = b65MeasureNow(); if(!r) return;
+  var v = VIEW || '?';
+  var cur = B65_WMAP[v];
+  if(cur && Number(cur.need) >= r.need) return;
+  B65_WMAP[v] = { need:r.need, over:r.over, what:r.what, win:r.win, mode:r.mode, rail:r.rail, ts:Date.now() };
+  try{ localStorage.setItem(B65_WKEY, JSON.stringify(B65_WMAP)); }catch(e){}
+}
+
+/* ששת המסכים הרחבים של ACT-05 — הם שמכריעים את נקודת השבירה. */
+var B65_WIDE = ['items','orders','finance','payroll','audit','reports'];
+function b65WidthSummary(){
+  var keys = Object.keys(B65_WMAP);
+  var wide = B65_WIDE.filter(function(v){ return B65_WMAP[v]; });
+  var maxV = '', maxN = 0;
+  keys.forEach(function(v){ if(Number(B65_WMAP[v].need) > maxN){ maxN = Number(B65_WMAP[v].need); maxV = v; } });
+  return { seen:keys.length, wideSeen:wide.length, wideTotal:B65_WIDE.length,
+           max:maxN, maxView:maxV, missing:B65_WIDE.filter(function(v){ return !B65_WMAP[v]; }) };
+}
+
 /* ================= B61 / BLD-08 — בדיקה עצמית בדפדפן =================
    למה זה קיים: B60 עבר 60 בדיקות אוטומטיות ב-jsdom ונכשל אצל אבי בלחיצה
    השנייה. המסקנה שנרשמה כ-R11: **סביבת בדיקה שאינה זהה לייצור אינה אימות.**
@@ -7193,7 +7328,7 @@ function b60Card(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.64-B64a';
+var B61_CANARY = 'v4.65-B65';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -7468,24 +7603,27 @@ function b61Tests(){ return [
 } },
 
 { g:'פריסה ותצוגה', n:'המסך הנוכחי אינו גולש לרוחב (ACT-05 · BLD-05)', f:function(){
-    /* המספר שמכריע אם אפשר להוריד את נקודת השבירה ל-1024px: כמה רוחב
-       התוכן באמת צריך, ועוד רוחב הסרגל. נמדד על המסך שפתוח כרגע. */
-    var m = document.querySelector('main');
-    if(!m || !m.clientWidth) return { ok:true, note:'אין פריסה למדוד' };
-    var widest = m.scrollWidth, what = 'התוכן';
-    var boxes = document.querySelectorAll('main table, main .card');
-    for(var i=0;i<boxes.length;i++){
-      if(boxes[i].scrollWidth > boxes[i].clientWidth + 2 && boxes[i].scrollWidth > widest){
-        widest = boxes[i].scrollWidth; what = 'טבלה';
-      }
-    }
-    var over = widest - m.clientWidth;
-    var rail = el('rail');
-    var navW = (rail && navMode()==='side') ? rail.getBoundingClientRect().width : 0;
-    var need = Math.round(widest + navW + 56);
-    return { ok: over <= 2,
-      note: 'מסך "' + VIEW + '" · רוחב חלון ' + window.innerWidth + 'px · דרוש למערכת ~' + need + 'px' +
-            (over > 2 ? ' · ⚠ ' + what + ' גולש ב-' + over + 'px' : ' · נכנס') };
+    b65RecordWidth();
+    var r = b65MeasureNow();
+    if(!r) return { ok:true, note:'אין פריסה למדוד' };
+    return { ok: r.over <= 2,
+      note: 'מסך "' + VIEW + '" · רוחב חלון ' + r.win + 'px · דרוש למערכת ~' + r.need + 'px' +
+            (r.over > 2 ? ' · ⚠ ' + r.what + ' גולש ב-' + r.over + 'px' : ' · נכנס') };
+} },
+
+/* B65: הטענה שמכריעה את BLD-05. היא נשענת על המדידה הפסיבית שנצברה
+   בכל מסך שאבי פתח, ולא על המסך שבו הכרטיס יושב. היא **נכשלת בכוונה**
+   כל עוד לא נראו כל ששת המסכים הרחבים — כי מספר חלקי גרוע ממספר חסר:
+   הוא נראה כמו תשובה. */
+{ g:'פריסה ותצוגה', n:'רוחב מרבי בכל המסכים שנפתחו (BLD-05 — המספר המכריע)', f:function(){
+    var sm = b65WidthSummary();
+    if(!sm.seen) return { ok:false, note:'טרם נמדד שום מסך — פתח מסך אחד וחזור לכאן' };
+    var names = { items:'פריטים', orders:'הזמנות', finance:'כספים', payroll:'שכר', audit:'יומן פעולות', reports:'דוחות' };
+    var miss = sm.missing.map(function(v){ return names[v] || v; }).join(', ');
+    return { ok: sm.wideSeen >= sm.wideTotal,
+      note: 'דרוש למערכת ~' + sm.max + 'px (הכי רחב: ' + (names[sm.maxView] || sm.maxView) + ')' +
+            ' · נמדדו ' + sm.wideSeen + ' מתוך ' + sm.wideTotal + ' מסכים רחבים' +
+            (miss ? ' · ⚠ חסרים: ' + miss : ' · הרשימה מלאה') };
 } }
 
 ]; }
@@ -7522,6 +7660,19 @@ function b61Text(){
   L.push(e.browser + ' · ' + e.os + ' · מסך ' + e.vw + '×' + e.vh + ' (x' + e.dpr + ') · מגע: ' + (e.touch?'כן':'לא'));
   L.push('ניווט: ' + e.mode + ' · אזור זמן: ' + (e.tz||'?') + ' · תפקיד: ' + (e.role||'?'));
   L.push('עברו ' + r.pass + ' · נכשלו ' + r.fail);
+  /* B65: המדידה נכנסת לבלוק **תמיד**, גם כשהבדיקה עברה. עד כאן הועתקו
+     רק כשלים, ולכן המספר שחוסם את BLD-05 מעולם לא הגיע לצ'אט. */
+  var sm = b65WidthSummary();
+  if(sm.seen){
+    L.push('');
+    L.push('--- רוחב (BLD-05) ---');
+    L.push('דרוש מרבי: ~' + sm.max + 'px · מסך: ' + sm.maxView +
+           ' · נמדדו ' + sm.wideSeen + '/' + sm.wideTotal + ' מסכים רחבים');
+    Object.keys(B65_WMAP).sort(function(a,b){ return B65_WMAP[b].need - B65_WMAP[a].need; })
+      .forEach(function(v){ var x = B65_WMAP[v];
+        L.push('  ' + v + ': ~' + x.need + 'px (חלון ' + x.win + ' · ' + x.mode + ' · רצועה ' + x.rail + ')'); });
+    if(sm.missing.length) L.push('  ⚠ טרם נמדדו: ' + sm.missing.join(', '));
+  }
   if(r.fail){
     L.push('');
     r.rows.filter(function(x){ return !x.ok; }).forEach(function(x){
@@ -7603,6 +7754,79 @@ function b61Card(){
     'התנהגות של היסטוריה, הדפסה, מצלמה, מגע ואזור זמן. <b>הכרטיס הזה בודק אותן במכשיר שלך.</b> ' +
     'הרץ אחרי כל עדכון גרסה: אם הכל ירוק — אין מה לעשות; אם יש אדום — "העתק תוצאה" והדבק בצ׳אט הבא.</div>' +
     '<div id="b61Out">' + b61OutHtml() + '</div></div>';
+}
+
+
+/* ============================================================
+   B65 / BLD-01 — כרטיס ריפוי הזמנות כביסה היסטוריות
+   ------------------------------------------------------------
+   ⛔ R1: אבי אינו מייצא בסיס נתונים. הרשימה נבנית בשרת בפעולת
+   READ_ONLY ומוצגת כאן על המסך. הריפוי נעול מאחורי תצוגה מקדימה —
+   אין כפתור שמתקן בלי שראו קודם מה עומד להשתנות.
+   ⛔ הריפוי אידמפוטנטי: הרצה שנייה תמצא רשימה ריקה ולא תכתוב דבר.
+   מנהל ומשרד בלבד — הפעולה מצהירה שנסיעה בוצעה בפועל.
+   ============================================================ */
+var BLD01 = null;
+
+function bld01Can(){ return ['מנהל','משרד'].indexOf(ROLE) > -1; }
+
+function bld01Card(){
+  if(!bld01Can()) return '';
+  return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">'+
+    '<h3 class="grow">ריפוי הזמנות כביסה היסטוריות (B65 · BLD-01)</h3>'+
+    '<button class="btn ghost sm" onclick="bld01Run()">🔍 אבחן</button></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">'+
+    'עד 29.07.2026 מסירת הכביסה הנקייה לא סגרה את רגל החזור של ההזמנה. הזמנות שנמסרו לפני התאריך הזה '+
+    'ממשיכות להופיע כפתוחות ביומן, במשלוחים ובמסך ההזמנות — למרות שהן הסתיימו בפועל. '+
+    '<b>האבחון קורא בלבד ואינו משנה דבר.</b> הריפוי מוצג לאישור רק אחרי שתראה את הרשימה, '+
+    'ואפשר להריץ אותו שוב בלי נזק.</div>'+
+    '<div id="bld01Out">'+bld01Html()+'</div></div>';
+}
+function bld01Paint(){ var b = el('bld01Out'); if(b) b.innerHTML = bld01Html(); }
+
+async function bld01Run(){
+  BLD01 = { loading:1 }; bld01Paint();
+  var r = await api('bld01Diagnose', {});
+  BLD01 = (r && r.ok) ? r : { error:(r && r.error) || 'האבחון נכשל' };
+  bld01Paint();
+}
+function bld01HealAsk(){
+  if(!BLD01 || !BLD01.count) return;
+  confirmModal('לרפא '+BLD01.count+' הזמנות כביסה? '+BLD01.legs+' רגלי חזור ייסגרו כ"בוצע", '+
+    BLD01.orders_to_close+' הזמנות יעברו ל"הושלמה". אין כאן נגיעה בכסף — יתרת החוב של הלקוח אינה זזה באגורה.',
+    'רפא', bld01HealGo);
+}
+async function bld01HealGo(){
+  var r = await act('bld01Heal', {}, 'הריפוי הושלם');
+  if(!r) return;
+  BLD01 = { healed:r.healed, legs:r.legs, closed:r.closed, note:r.note, done:1 };
+  bld01Paint();
+  await refresh();
+}
+function bld01Html(){
+  if(!BLD01) return '<div class="empty">טרם הורץ. לחץ "אבחן" — קריאה בלבד.</div>';
+  if(BLD01.loading) return '<div class="empty">סורק הזמנות כביסה...</div>';
+  if(BLD01.error) return '<div class="empty" style="color:var(--danger)">'+esc(BLD01.error)+'</div>';
+  if(BLD01.done) return '<div class="card" style="background:var(--bg2,#f6f8fa)">'+
+    (BLD01.healed? '✅ רופאו <b>'+BLD01.healed+'</b> הזמנות · '+BLD01.legs+' רגלי חזור נסגרו · '+BLD01.closed+' הזמנות הושלמו'
+                 : '✅ '+esc(BLD01.note||'לא נמצא מה לרפא'))+
+    '<div class="muted" style="font-size:12px;margin-top:4px">אפשר ללחוץ "אבחן" שוב כדי לוודא שהרשימה ריקה.</div></div>';
+  if(!BLD01.count) return '<div class="empty">✅ נסרקו '+(BLD01.scanned||0)+' הזמנות כביסה — אף אחת אינה זקוקה לריפוי.</div>';
+
+  var rows = (BLD01.rows||[]).map(function(r){
+    var legs = (r.open_legs||[]).map(function(d){ return esc(d.id)+(d.date?' · '+esc(d.date):'')+' · '+esc(d.status); }).join('<br>') || '<span class="muted">—</span>';
+    return '<tr><td>'+esc(r.order_number? '#'+r.order_number : r.order_id)+'</td>'+
+      '<td>'+esc(cust(r.customer_id))+'</td>'+
+      '<td>'+esc(r.status)+'</td>'+
+      '<td>'+esc(String(r.delivered_ts||'').slice(0,10)||'—')+'</td>'+
+      '<td>'+esc(r.ship_back)+'</td>'+
+      '<td style="font-size:11.5px">'+legs+'</td>'+
+      '<td>'+(r.will_close_leg?'רגל חזור ':'')+(r.will_close_order?'סטטוס ':'')+'</td></tr>';
+  }).join('');
+  return '<div class="row" style="margin-bottom:8px;gap:8px;flex-wrap:wrap;align-items:center">'+
+    '<b>'+BLD01.count+' הזמנות לריפוי</b> <span class="muted" style="font-size:12px">מתוך '+(BLD01.scanned||0)+' הזמנות כביסה · '+BLD01.legs+' רגלי חזור פתוחות</span>'+
+    '<button class="btn sm" onclick="bld01HealAsk()">רפא '+BLD01.count+' הזמנות</button></div>'+
+    '<div class="tw"><table><tr><th>הזמנה</th><th>לקוח</th><th>סטטוס</th><th>נמסרה</th><th>רגל חזור</th><th>נסיעות פתוחות</th><th>ישתנה</th></tr>'+rows+'</table></div>';
 }
 
 function b57Card(){
