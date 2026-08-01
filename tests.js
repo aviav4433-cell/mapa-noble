@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.65-B65', 'ה-canary לא עודכן ל-B65');
+      t.eq(inJs, 'v4.66-B66', 'ה-canary לא עודכן ל-B66');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -2551,7 +2551,7 @@ SPECS.push({
   title: 'B65 / BLD-01 — ריפוי הזמנות כביסה היסטוריות',
   needs: 'server',
   requires: ['bld01Candidates', 'bld01Diagnose', 'bld01Heal', 'READ_ONLY_ACTIONS',
-             'b56CloseLaundryReturnLeg', 'b56CloseLaundryOrder', 'B56_OPEN_INTAKE',
+             'b56CloseLaundryReturnLeg', 'b56CloseLaundryOrder', 'B56_CLOSED_INTAKE', 'b56IntakeOpen',
              'B5_OPEN_STATUSES', 'b49eLegKind', 'b49eShipMode', 'sVal', 'b34OfficeOk'],
 
   tests: {
@@ -2821,6 +2821,456 @@ SPECS.push({
     }
   }
 });
+
+
+SPECS.push({
+  file: 't10-b66-server',
+  title: 'B66 — שורות אומדן · סגירת הזמנת כביסה · קיוסק רב-טאבלטי',
+  needs: 'server',
+  requires: ['approveOrder', 'ORDER_TYPES', 'sVal', 'sPick',
+             'b56CloseLaundryOrder', 'b56IntakeOpen', 'B56_CLOSED_INTAKE',
+             'NOBLE_STAGES', 'NOBLE_MACHINE_STAGES', 'B5_OPEN_STATUSES',
+             'b52Devices', 'b52NextDeviceN', 'b52VerifyKioskToken', 'b52DeviceKey',
+             'b52RegisterDevice', 'b52RevokeDevice', 'B52_TOKEN_KEY', 'B52_DEV_PREFIX',
+             'B52_MAX_DEVICES', 'B52_NAME_MAX', 'B52_KIOSK_ACTIONS', 'READ_ONLY_ACTIONS',
+             'b54RawOrderTotalAg', 'sha256Hex', 'PropertiesService'],
+
+  tests: {
+
+    /* ---------- BLD-15 — שורות בהזמנת כביסה הן אומדן ולא חובה ---------- */
+
+    '⭐ BLD-15 — הזמנת כביסה בלי שורות מאושרת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'טיוטה' }];
+      const r = srv.approveOrder(db, 'O1');
+      t.ok(r.ok, 'הזמנת כביסה בלי שורות נחסמה: ' + (r.error || ''));
+      t.eq(db.orders[0].status, 'מאושרת', 'הסטטוס לא עבר למאושרת');
+    },
+
+    '⛔ הזמנת השכרה בלי שורות נשארת חסומה': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'השכרה', customer_id: 'C1', status: 'טיוטה' }];
+      const r = srv.approveOrder(db, 'O1');
+      t.no(r.ok, 'הזמנת השכרה בלי שורות אושרה — שם השורות הן הכסף');
+      t.has(r.error, 'אין פריטים', 'הודעת השגיאה של השכרה השתנתה');
+      t.eq(db.orders[0].status, 'טיוטה', 'הסטטוס השתנה למרות הכישלון');
+    },
+
+    '⭐⭐ B64a — סוג עם רווח קשיח ותו כיווניות עדיין נתפס ככביסה': (t, { srv, H }) => {
+      /* בדיוק הכשל השקט של B64a: השוואה מדויקת הייתה מחזירה "השכרה בלי שורות"
+         והמשתמש היה נחסם בלי להבין למה. */
+      ['כביסה ', ' כביסה', 'כביסה\u00A0', '\u200Fכביסה\u200E'].forEach(ty => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: ty, customer_id: 'C1', status: 'טיוטה' }];
+        const r = srv.approveOrder(db, 'O1');
+        t.ok(r.ok, 'סוג ' + JSON.stringify(ty) + ' לא נתפס ככביסה: ' + (r.error || ''));
+      });
+    },
+
+    '⛔ סוג לא מוכר או ריק — שורות עדיין נדרשות (ברירת המחדל המחמירה)': (t, { srv, H }) => {
+      ['', 'משהו אחר', null, undefined].forEach(ty => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: ty, customer_id: 'C1', status: 'טיוטה' }];
+        const r = srv.approveOrder(db, 'O1');
+        t.no(r.ok, 'סוג ' + JSON.stringify(ty) + ' קיבל את הפטור של כביסה');
+      });
+    },
+
+    '⛔ בדיקת המלאי בהשכרה לא נפגעה — ורצה גם כשהסוג עם רווח': (t, { srv, H }) => {
+      ['השכרה', 'השכרה ', '\u00A0השכרה'].forEach(ty => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: ty, customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03' }];
+        db.orderLines = [{ id: 'L1', order_id: 'O1', item_id: 'I1', qty: 5, unit_price: 10 }];
+        db.items = [{ id: 'I1', name: 'מפה לבנה', qty: 2, type: 'השכרה' }];
+        const r = srv.approveOrder(db, 'O1');
+        t.no(r.ok, 'סוג ' + JSON.stringify(ty) + ' דילג על בדיקת המלאי — כשל B64a');
+        t.has(r.error, 'אין מספיק מלאי', 'הודעת המלאי השתנתה');
+      });
+    },
+
+    '⛔ הזמנת כביסה אינה עוברת בדיקת מלאי גם כשיש לה שורות אומדן': (t, { srv, H }) => {
+      /* השורות בכביסה אינן שריון — availableQty פטור נכון (type==='השכרה' בלבד). */
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                     start_date: '2026-09-01', end_date: '2026-09-03' }];
+      db.orderLines = [{ id: 'L1', order_id: 'O1', item_id: 'I1', qty: 999, unit_price: 0 }];
+      db.items = [{ id: 'I1', name: 'מגבת', qty: 1, type: 'השכרה' }];
+      const r = srv.approveOrder(db, 'O1');
+      t.ok(r.ok, 'אומדן כמותי בכביסה נחסם על מלאי: ' + (r.error || ''));
+    },
+
+    '⛔ שאר החסימות של approveOrder לא נגעו': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'מאושרת' }];
+      t.no(srv.approveOrder(db, 'O1').ok, 'הזמנה שאינה טיוטה אושרה שוב');
+      t.no(srv.approveOrder(db, 'NOPE').ok, 'הזמנה שאינה קיימת אושרה');
+
+      const db2 = H.emptyDb(srv);
+      db2.orders = [{ id: 'O2', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                      payment_status: 'ממתין לתשלום' }];
+      const r2 = srv.approveOrder(db2, 'O2');
+      t.no(r2.ok, 'B2/D2 — הזמנה שטרם עברה תשלום אושרה. BLD-15 פתח פרצה');
+      t.has(r2.error, 'תשלום', 'הודעת חסימת התשלום השתנתה');
+    },
+
+    '⭐ החשבונית עוברת: כביסה בלי שורות עם קליטה ששוקלה מייצרת סכום': (t, { srv, H }) => {
+      /* C8 — b54RawOrderTotalAg סופר את חיוב הקליטה, ולכן sub > 0 בלי אף שורה. */
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'מאושרת' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', customer_id: 'C1', internal: '',
+                             status: 'נמסר', total_charge: 120, net_weight_kg: 10, price_per_kg: 12 }];
+      t.ok(typeof srv.b54RawOrderTotalAg === 'function', 'b54RawOrderTotalAg נעלמה');
+      t.ok(srv.b54RawOrderTotalAg(db, db.orders[0]) > 0,
+        'הזמנת כביסה בלי שורות יצאה בסכום אפס — החשבונית תיחסם');
+    },
+
+    /* ---------- #2 — הזמנת כביסה לא נסגרת בזמן שהכביסה במכונה ---------- */
+
+    '⭐⭐ באג הייצור: הזמנה עם קליטה בכל אחד משלבי העבודה אינה נסגרת': (t, { srv, H }) => {
+      srv.NOBLE_STAGES.filter(s => s !== 'נמסר').forEach(stage => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה' }];
+        db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: stage }];
+        t.no(srv.b56CloseLaundryOrder(db, db.orders[0]),
+          'הזמנה נסגרה בזמן שהקליטה בסטטוס ' + stage);
+        t.eq(db.orders[0].status, 'סופקה', 'הסטטוס שונה למרות שהקליטה פתוחה (' + stage + ')');
+      });
+    },
+
+    '⛔ ארבעת שלבי המכונה — אלה שהרשימה הישנה החסירה': (t, { srv, H }) => {
+      srv.NOBLE_MACHINE_STAGES.forEach(stage => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה' }];
+        db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: stage }];
+        t.no(srv.b56CloseLaundryOrder(db, db.orders[0]),
+          'שלב המכונה ' + stage + ' לא נחשב "קליטה פתוחה" — זה הבאג המקורי');
+      });
+    },
+
+    '⭐ הבדיקה המחייבת: שתי קליטות, אחת בייבוש ואחת נמסרה — לא נסגרת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'בייבוש' },
+                           { id: 'IK2', order_id: 'O1', status: 'נמסר' }];
+      t.no(srv.b56CloseLaundryOrder(db, db.orders[0]),
+        'ההזמנה נסגרה על הקליטה שנמסרה בזמן שהשנייה במייבש');
+      t.eq(db.orders[0].status, 'סופקה', 'הסטטוס עבר להושלמה');
+    },
+
+    '⭐ כשכל הקליטות נמסרו ואין רגל פתוחה — ההזמנה כן נסגרת': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' },
+                           { id: 'IK2', order_id: 'O1', status: 'נמסר' }];
+      t.ok(srv.b56CloseLaundryOrder(db, db.orders[0]), 'הזמנה שהסתיימה במלואה לא נסגרה');
+      t.eq(db.orders[0].status, 'הושלמה', 'הסטטוס לא עבר להושלמה');
+    },
+
+    '⛔ B64a — סטטוס נמסר עם רווח קשיח נספר כסגור': (t, { srv, H }) => {
+      ['נמסר ', ' נמסר', 'נמסר\u00A0', '\u200Eנמסר'].forEach(st => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה' }];
+        db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: st }];
+        t.ok(srv.b56CloseLaundryOrder(db, db.orders[0]),
+          'סטטוס ' + JSON.stringify(st) + ' לא זוהה כ"נמסר" — ההזמנה תישאר פתוחה לנצח');
+      });
+    },
+
+    '⛔ B64a — סוג הזמנה עם רווח נתפס גם כאן (שורש BLD-01)': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: ' כביסה ', customer_id: 'C1', status: 'סופקה' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      t.ok(srv.b56CloseLaundryOrder(db, db.orders[0]),
+        'הזמנת כביסה עם רווח בסוג לא נסגרה — זה בדיוק מה שיצר את BLD-01');
+    },
+
+    '⛔ הזמנת השכרה לעולם לא נסגרת במסלול הזה': (t, { srv, H }) => {
+      ['השכרה', ' השכרה '].forEach(ty => {
+        const db = H.emptyDb(srv);
+        db.orders = [{ id: 'O1', type: ty, customer_id: 'C1', status: 'סופקה' }];
+        db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+        t.no(srv.b56CloseLaundryOrder(db, db.orders[0]), 'הזמנת השכרה נסגרה במסלול הכביסה');
+      });
+    },
+
+    '⛔ רגל משלוח פתוחה עדיין מונעת סגירה': (t, { srv, H }) => {
+      const db = H.emptyDb(srv);
+      db.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'סופקה' }];
+      db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר' }];
+      db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: 'מתוכנן' }];
+      t.no(srv.b56CloseLaundryOrder(db, db.orders[0]), 'ההזמנה נסגרה עם נסיעה פתוחה');
+    },
+
+    '⛔ ההגדרה היא ערך אחד ולא רשימה — כדי שלא תתיישן שוב': (t, { srv }) => {
+      t.eq(srv.B56_CLOSED_INTAKE, 'נמסר', 'ערך הסגירה השתנה');
+      t.eq(typeof srv.b56IntakeOpen, 'function', 'b56IntakeOpen נעלמה');
+      t.no(srv.b56IntakeOpen({ status: 'נמסר' }), 'נמסר סווג כפתוח');
+      t.ok(srv.b56IntakeOpen({ status: 'התקבל' }), 'התקבל סווג כסגור');
+      t.ok(srv.b56IntakeOpen({}), 'קליטה בלי סטטוס סווגה כסגורה — הכיוון המסוכן');
+      t.ok(srv.b56IntakeOpen(null), 'קליטה ריקה סווגה כסגורה');
+    },
+
+    /* ---------- BLD-03 — קיוסק לשני טאבלטים ומעלה ---------- */
+
+    '⭐⭐ שני רישומים = שני מכשירים, ושניהם מאמתים': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      const r1 = srv.b52RegisterDevice('כניסה ראשית');
+      const r2 = srv.b52RegisterDevice('מחסן');
+      t.ok(r1.ok && r2.ok, 'רישום נכשל');
+      t.ne(r1.kiosk_token, r2.kiosk_token, 'שני הטאבלטים קיבלו את אותו טוקן');
+      t.eq(srv.b52Devices().length, 2, 'הרישום השני דרס את הראשון — זה הבאג של BLD-03');
+      t.ok(!!srv.b52VerifyKioskToken(r1.kiosk_token), 'הטאבלט הראשון הפסיק לאמת');
+      t.ok(!!srv.b52VerifyKioskToken(r2.kiosk_token), 'הטאבלט השני אינו מאמת');
+      t.ne(srv.b52DeviceKey(srv.b52VerifyKioskToken(r1.kiosk_token)),
+           srv.b52DeviceKey(srv.b52VerifyKioskToken(r2.kiosk_token)),
+           'שני המכשירים חולקים מזהה להגבלת קצב — נעילה של אחד תנעל את השני');
+    },
+
+    '⛔ R4 — הרישום הישן (מפתח יחיד) ממשיך לעבוד בלי רישום מחדש': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      const oldTok = 'TOKEN-OF-EXISTING-TABLET';
+      P.setProperty(srv.B52_TOKEN_KEY, srv.sha256Hex(oldTok));
+      t.ok(!!srv.b52VerifyKioskToken(oldTok), 'הטאבלט שכבר רשום אצל אבי הפסיק להחתים');
+      const devs = srv.b52Devices();
+      t.eq(devs.length, 1, 'הרישום הישן לא נספר');
+      t.eq(devs[0].n, 0, 'הרישום הישן לא קיבל מספר 0');
+      const r = srv.b52RegisterDevice('טאבלט שני');
+      t.ok(r.ok, 'רישום נוסף נכשל');
+      t.ok(!!srv.b52VerifyKioskToken(oldTok), 'רישום חדש דרס את המכשיר הישן');
+      t.eq(srv.b52Devices().length, 2, 'שני המכשירים לא מופיעים יחד');
+    },
+
+    '⛔ ביטול מכשיר אחד אינו נוגע באחרים': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      const a = srv.b52RegisterDevice('א');
+      const b = srv.b52RegisterDevice('ב');
+      const rv = srv.b52RevokeDevice(a.device_n);
+      t.ok(rv.ok, 'הביטול נכשל');
+      t.eq(srv.b52VerifyKioskToken(a.kiosk_token), '', 'טוקן שבוטל עדיין מאמת');
+      t.ok(!!srv.b52VerifyKioskToken(b.kiosk_token), 'ביטול של אחד הפיל את השני');
+      t.eq(srv.b52Devices().length, 1, 'מספר המכשירים אחרי ביטול שגוי');
+    },
+
+    '⛔ ביטול בלי מזהה מכשיר אינו מוחק כלום': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      srv.b52RegisterDevice('א');
+      srv.b52RegisterDevice('ב');
+      const rv = srv.b52RevokeDevice(undefined);
+      t.no(rv.ok, 'ביטול בלי מזהה הצליח — ביטול גורף היה מוריד את כל המתחם');
+      t.eq(srv.b52Devices().length, 2, 'מכשירים נמחקו בביטול בלי מזהה');
+      const rv2 = srv.b52RevokeDevice(99);
+      t.no(rv2.ok, 'ביטול של מכשיר שאינו קיים החזיר הצלחה');
+    },
+
+    '⛔ תקרת המכשירים נאכפת, וההודעה מסבירה מה לעשות': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      for (let i = 0; i < srv.B52_MAX_DEVICES; i++)
+        t.ok(srv.b52RegisterDevice('ט' + i).ok, 'רישום ' + i + ' נכשל');
+      const over = srv.b52RegisterDevice('אחד יותר מדי');
+      t.no(over.ok, 'נרשם מכשיר מעבר לתקרה');
+      t.has(over.error, 'בטל רישום', 'ההודעה אינה אומרת מה לעשות');
+      t.eq(srv.b52Devices().length, srv.B52_MAX_DEVICES, 'מספר המכשירים חרג מהתקרה');
+    },
+
+    '⛔ מספר מכשיר מתפנה ונעשה בו שימוש חוזר': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      const a = srv.b52RegisterDevice('א');
+      const b = srv.b52RegisterDevice('ב');
+      t.eq(a.device_n, 1, 'המכשיר הראשון לא קיבל מספר 1');
+      t.eq(b.device_n, 2, 'המכשיר השני לא קיבל מספר 2');
+      srv.b52RevokeDevice(1);
+      const c = srv.b52RegisterDevice('ג');
+      t.eq(c.device_n, 1, 'המספר שהתפנה לא נוצל');
+      t.ok(!!srv.b52VerifyKioskToken(b.kiosk_token), 'המכשיר השני נפגע');
+    },
+
+    '⛔⛔ hash לעולם לא יוצא ללקוח': (t, { srv, H }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      const r1 = srv.b52RegisterDevice('כניסה');
+      const devs = srv.b52Devices();
+      t.eq(devs.length, 1, 'רשימת המכשירים לא נבנתה');
+      t.eq(devs[0].name, 'כניסה', 'השם הידידותי לא נשמר');
+      /* זו בדיוק השורה ש-b52KioskStatus מחזירה ללקוח. אם מישהו יוסיף כאן
+         שדה נוסף, ה-hash ידלוף — ולכן הבדיקה על הצורה הזו ולא על route. */
+      const wire = devs.map(d => ({ n: d.n, name: d.name, created: d.created, legacy: d.n === 0 ? 1 : 0 }));
+      const blob = JSON.stringify(wire);
+      t.hasNot(blob, srv.sha256Hex(r1.kiosk_token), 'ה-hash של הטוקן דלף ללקוח');
+      t.hasNot(blob, r1.kiosk_token, 'הטוקן עצמו דלף בסטטוס');
+      t.ok(devs[0].hash && devs[0].hash.length > 0, 'b52Devices הפסיקה להחזיר hash לשימוש פנימי');
+      /* השומר האמיתי: הקוד שמרכיב את התשובה חייב למפות ולא להחזיר את המערך כמו שהוא. */
+      const src = H.stripComments(H.serverSrc());
+      t.has(src, 'devices: devKS.map(', 'b52KioskStatus מחזיר את מערך המכשירים כפי שהוא — ה-hash ידלוף');
+    },
+
+    '⛔ שם ארוך נקצץ, שם ריק מקבל ברירת מחדל, והשם עובר sVal': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      const long = srv.b52RegisterDevice('ב'.repeat(80));
+      t.eq(long.device_name.length, srv.B52_NAME_MAX, 'השם לא נקצץ לאורך המרבי');
+      const blank = srv.b52RegisterDevice('   ');
+      t.eq(blank.device_name, 'טאבלט ' + blank.device_n, 'שם ריק לא קיבל ברירת מחדל');
+      const spaced = srv.b52RegisterDevice(' מחסן\u00A0צפון ');
+      t.eq(spaced.device_name, 'מחסן צפון', 'השם לא עבר sVal');
+    },
+
+    '⛔ טוקן ריק או שגוי אינו מאמת, ורשומה פגומה אינה מפילה את הרשימה': (t, { srv }) => {
+      const P = srv.PropertiesService.getScriptProperties();
+      Object.keys(P.getProperties()).forEach(k => P.deleteProperty(k));
+      t.eq(srv.b52VerifyKioskToken(''), '', 'טוקן ריק אומת');
+      t.eq(srv.b52VerifyKioskToken(null), '', 'טוקן null אומת');
+      t.eq(srv.b52VerifyKioskToken('לא-קיים'), '', 'טוקן שגוי אומת');
+      P.setProperty(srv.B52_DEV_PREFIX + '3', 'זה לא JSON');
+      P.setProperty(srv.B52_DEV_PREFIX + 'לא-מספר', '{"h":"x"}');
+      const good = srv.b52RegisterDevice('תקין');
+      t.ok(!!srv.b52VerifyKioskToken(good.kiosk_token), 'רשומה פגומה מנעה אימות של מכשיר תקין');
+      t.eq(srv.b52Devices().length, 1, 'רשומה פגומה נספרה כמכשיר');
+    },
+
+    '⛔ B52_KIOSK_ACTIONS לא נפתחה — הרשימה הסגורה נשארה סגורה (R4/R8)': (t, { srv }) => {
+      t.eq(srv.B52_KIOSK_ACTIONS.length, 2, 'מספר פעולות הקיוסק השתנה');
+      t.ok(srv.B52_KIOSK_ACTIONS.indexOf('b52KioskClock') > -1, 'b52KioskClock הוסרה');
+      t.ok(srv.B52_KIOSK_ACTIONS.indexOf('checkVersion') > -1, 'checkVersion הוסרה');
+      ['b52RegisterKiosk', 'b52RevokeKiosk', 'b52KioskStatus'].forEach(a => {
+        t.eq(srv.B52_KIOSK_ACTIONS.indexOf(a), -1,
+          a + ' נפתחה למי שמחזיק בטוקן מכשיר — פרצת אבטחה');
+      });
+    },
+
+    '⛔ אף פעולת קיוסק חדשה לא נכנסה ל-READ_ONLY_ACTIONS': (t, { srv }) => {
+      ['b52RegisterKiosk', 'b52RevokeKiosk'].forEach(a => {
+        t.eq(srv.READ_ONLY_ACTIONS.indexOf(a), -1, a + ' כותבת ל-ScriptProperties ואסור לה להיות READ_ONLY');
+      });
+      t.ok(srv.READ_ONLY_ACTIONS.indexOf('b52KioskStatus') > -1, 'b52KioskStatus הוצאה מ-READ_ONLY_ACTIONS');
+    }
+  }
+});
+
+
+SPECS.push({
+  file: 't10-b66-ui',
+  title: 'B66 — הממשק: שפת האומדן ופאנל הטאבלטים',
+  needs: 'ui',
+  requires: ['openOrder', 'createOrder', 'b65OrderTypeVal', 'B65_TYPES', 'sVal',
+             'b52KioskPanelHtml', 'b52LoadKioskStatus', 'b52RegisterKiosk',
+             'b52RevokeKiosk', 'B61_CANARY', 'go'],
+
+  tests: {
+
+    '⛔⛔ רשימת סוגי ההזמנה זהה בממשק ובשרת': (t, { w, srv }) => {
+      /* אם השתיים מתפצלות, השרת יפטור סוג שהממשק לא יודע ליצור — או להפך.
+         אותה משפחת כשלים של sVal/sPick ב-B64a. */
+      t.eq(JSON.stringify(w.B65_TYPES), JSON.stringify(srv.ORDER_TYPES),
+        'B65_TYPES בממשק ו-ORDER_TYPES בשרת התפצלו');
+    },
+
+    '⭐ כרטיס הזמנת כביסה אומר במפורש שהשורות אינן חובה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03' }];
+      w.openOrder('O1');
+      const html = w.el('modal').innerHTML;
+      t.has(html, 'אומדן כמותי (לא חובה)', 'הכותרת אינה אומרת שהשורות אינן חובה');
+      t.has(html, 'אפשר לאשר הזמנת כביסה גם בלי אף שורה', 'ההסבר על אישור בלי שורות חסר');
+      t.has(html, '+ הוסף פריט', '⛔ מקטע הפריטים הוסתר — אבי ביקש שיישאר אפשרי');
+      w.closeModal();
+    },
+
+    '⛔ כרטיס הזמנת השכרה לא קיבל את שפת האומדן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.orders = [{ id: 'O1', type: 'השכרה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03' }];
+      w.openOrder('O1');
+      const html = w.el('modal').innerHTML;
+      t.hasNot(html, 'אומדן כמותי (לא חובה)', 'הזמנת השכרה קיבלה שפת אומדן');
+      t.hasNot(html, 'מחיר (אומדן)', 'עמודת המחיר בהשכרה סומנה כאומדן');
+      w.closeModal();
+    },
+
+    '⛔ B64a — סוג עם רווח מקבל את אותה תווית בדיוק כמו בשרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.orders = [{ id: 'O1', type: ' כביסה\u00A0', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03' }];
+      w.openOrder('O1');
+      t.has(w.el('modal').innerHTML, 'אומדן כמותי (לא חובה)',
+        'סוג עם רווח קיבל שפת השכרה בזמן שהשרת מאשר אותו כביסה — אי-אחידות');
+      w.closeModal();
+    },
+
+    '⛔ ההודעה אחרי שמירת הזמנה אינה דורשת פריטים בכביסה': (t, { w, H }) => {
+      const src = H.stripComments(H.uiScript());
+      t.has(src, 'אפשר להוסיף אומדן כמותי (לא חובה)', 'הודעת הכביסה לא נוספה');
+      t.has(src, "'נשמר — הוסף פריטים'", 'הודעת ההשכרה נמחקה במקום להישאר לצד הודעת הכביסה');
+      t.has(src, 'act(\'create\',{table:\'orders\'', 'עוגן createOrder השתנה');
+      t.has(src, '}},b66Msg)', 'ההודעה עדיין קבועה ואינה נגזרת מהסוג');
+    },
+
+    '⭐ פאנל הקיוסק מציג רשימת טאבלטים ומאפשר רישום נוסף': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const html = w.b52KioskPanelHtml();
+      t.has(html, 'b52KDevs', 'אין מקום לרשימת הטאבלטים');
+      t.has(html, 'b52KName', 'אין שדה שם לטאבלט');
+      t.has(html, 'רישום טאבלט נוסף', 'הכפתור עדיין מדבר על רישום יחיד');
+      t.hasNot(html, 'רישום חדש מבטל את הקודם', 'הטקסט עדיין מבטיח דריסה');
+      t.has(html, 'אינו</b> מבטל את הקודמים', 'הטקסט אינו מבהיר שרישום מוסיף');
+    },
+
+    '⛔ הפאנל נשאר למנהל בלבד': (t, { w, srv, H }) => {
+      ['משרד', 'מכבסה', 'נהג', 'עובד רצפה'].forEach(role => {
+        H.login(w, role, srv);
+        t.eq(w.b52KioskPanelHtml(), '', 'פאנל הקיוסק נחשף לתפקיד ' + role);
+      });
+    },
+
+    '⛔ ביטול רישום דורש מזהה מכשיר — אין כפתור שמבטל את כולם': (t, { w, H }) => {
+      const src = H.stripComments(H.uiScript());
+      t.has(src, 'async function b52RevokeKiosk(n)', 'הביטול אינו פר-מכשיר');
+      t.hasNot(src, 'b52RevBtn', 'כפתור הביטול הגורף לא הוסר');
+      t.has(src, "device_n: n", 'הביטול אינו שולח מזהה מכשיר');
+    },
+
+    '⛔ שם טאבלט עם גרש או מרכאה אינו שובר את כפתור הביטול': (t, { w, srv, H }) => {
+      /* esc() מגן על '<' בלבד. שם עם גרש בתוך onclick היה מנתק את הכפתור
+         בשקט — בדיוק מחלקת הכשלים ה"שקטים" של B64a, רק ב-HTML. */
+      H.login(w, 'מנהל', srv);
+      w.el('modal').innerHTML = '<div id="b52KDevs"></div><div id="b52KState"></div>';
+      w.B52_DEVS = [];
+      const devs = [{ n: 1, name: "כניסה 'ראשית'", created: '', legacy: 0 },
+                    { n: 2, name: 'מחסן "צפון"', created: '', legacy: 0 }];
+      const box = w.el('b52KDevs');
+      box.innerHTML = devs.map(function (d) {
+        return '<button class="btn ghost sm" onclick="b52RevokeKiosk(' + Number(d.n) + ')">ביטול רישום</button>';
+      }).join('');
+      const btns = box.querySelectorAll('button');
+      t.eq(btns.length, 2, 'לא נוצרו שני כפתורי ביטול');
+      t.eq(btns[0].getAttribute('onclick'), 'b52RevokeKiosk(1)', 'הגרש בשם דלף לתוך onclick');
+      t.eq(btns[1].getAttribute('onclick'), 'b52RevokeKiosk(2)', 'המרכאות בשם דלפו לתוך onclick');
+      const src = H.stripComments(H.uiScript());
+      t.hasNot(src, "onclick=\"b52RevokeKiosk('+Number(d.n)+',", 'השם חזר לתוך onclick');
+      w.closeModal();
+    },
+
+    '⛔ R4 — מנגנוני B52 ו-B65 לא נפגעו': (t, { w }) => {
+      ['b52CopyKioskLink', 'kioskApi', 'kioskAutoRefresh', 'kioskClockScreen',
+       'b65ApplyType', 'b65OrderTypeVal', 'b65LegLabel', 'b65WidthSummary',
+       'b65MeasureNow', 'b65RecordWidth', 'sVal', 'sPick'].forEach(n => {
+        t.ok(typeof w[n] === 'function' || w[n] !== undefined, 'נעלם מנגנון חסין: ' + n);
+      });
+      t.eq(w.KIOSK.mode, 'clock', 'מצב הקיוסק ההתחלתי השתנה');
+    }
+  }
+});
+
 
 /* ==================== חלק 2 — המריץ ==================== */
 
