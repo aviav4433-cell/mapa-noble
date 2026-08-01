@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.63-B63a · 31.07.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.64-B64a · 01.08.2026</div>
   </div>
 </div>
 
@@ -874,7 +874,16 @@ setInterval(function(){
 var DATA_VERSION = null, TABLE_VERSIONS = null;
 function b58AfterRefresh(){
   var modalOpen = el('modalBg') && el('modalBg').style.display === 'flex';
-  if(!modalOpen) render(); // לא קוטעים עריכה פתוחה — הנתונים בזיכרון מתעדכנים בכל מקרה
+  /* ⭐ B64a: הגנה שנייה — בורר או שדה **בתוך מסך** ולא במודל.
+     כרטיס "בחר סיבה" של הנהג מוצג ישירות במסך הקליטה; רינדור מחדש באמצע
+     בחירה מחק את הרשימה הפתוחה ואת הפירוט שכבר הוקלד. הרענון רץ כל 30
+     שניות, וביום עבודה הנתונים משתנים כל הזמן.
+     ⛔ הדחייה בלבד — הנתונים בזיכרון כבר עודכנו, והמסך יתרענן ברענון הבא. */
+  var ae = document.activeElement;
+  var busy = !!(ae && ae !== document.body &&
+    /^(SELECT|INPUT|TEXTAREA)$/.test(ae.tagName||'') &&
+    !(ae.type==='button' || ae.type==='submit'));
+  if(!modalOpen && !busy) render(); // לא קוטעים עריכה פתוחה — הנתונים בזיכרון מתעדכנים בכל מקרה
   refreshApprovalsCount(); // B10/E5: תג מונה מתעדכן יחד עם שאר הנתונים
 }
 async function b58FullRefresh(){
@@ -1043,6 +1052,29 @@ function ymdLocal(d){
   return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
 }
 function ymLocal(d){ return ymdLocal(d).slice(0,7); }
+/* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
+   אותה משפחת באגים בדיוק כמו dYmd, רק בטקסט במקום בתאריך.
+   ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל, רווח כפול,
+   רווח קשיח (\u00A0 — נוצר בהדבקה מדפדפן), או תו כיווניות RTL בלתי נראה
+   (\u200E/\u200F — נוצר בהקלדת עברית). כל אחד מאלה שובר השוואת מחרוזת
+   מדויקת, **והכשל שקט**: הפונקציה יוצאת מוקדם, המודל לא נפתח, והמשתמש
+   רואה תפריט שלא מגיב בלי שום הסבר.
+   ⛔ זו נורמליזציה לצורך **השוואה בלבד**. הערך הנשמר בגיליון אינו משתנה.
+   ⛔ אסור להשתמש בזה על מספרים או על כסף — שם ההשוואה מספרית. */
+function sVal(v){
+  return String(v==null ? '' : v)
+    .replace(/[\u200E\u200F\u200B\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+/* B64a: התאמת ערך מהגיליון לרשימה מוכרת. מחזיר את הערך **הקנוני**
+   מהרשימה (לא את מה שהיה בגיליון), או '' אם באמת אין התאמה. */
+function sPick(v, arr){
+  var n = sVal(v);
+  for(var i=0;i<arr.length;i++){ if(sVal(arr[i])===n) return arr[i]; }
+  return '';
+}
 /* B38b: נרמול ערך תאריך לפני השוואה.
    שדה תאריך בגיליון עלול לחזור כמחרוזת 'yyyy-mm-dd', כאובייקט תאריך,
    כמחרוזת ISO מלאה עם שעה, או בפורמט dd/mm/yyyy. השוואת מחרוזות ישירה
@@ -1082,6 +1114,19 @@ function b45Money(net){
 /* נטו ראשי + כולל מע"מ באותה שורה */
 function b45MoneyInline(net){
   return ils(net)+' <span class="muted" style="font-size:11px">('+b45Incl(net)+')</span>';
+}
+/* ===== BLD-12 (B64): כולל מע"מ כמספר ראשי — בחנות ובפורטל בלבד =====
+   הכרעת DEC-01. ⛔ החריג חל על שני ההקשרים הפומביים האלה בלבד; כלל B45
+   (נטו כמספר ראשי) נשאר על כנו בכל שאר המערכת — R4.
+   ⛔ זו תצוגה בלבד. הסכום שנשלח לשרת נשאר נטו באגורות, בדיוק כפי שהיה.
+   שתי הצורות: Inline לשורה צרה, Stack לעמודה עם סכום מתחת. */
+function b12Gross(net){ return b45Gross(net); }
+function b12Net(net){ return 'לפני מע\u0022מ '+ils(Number(net)||0); }
+function b12PriceInline(net){
+  return '<b>'+ils(b12Gross(net))+'</b> <span class="muted" style="font-size:11px">כולל מע&quot;מ · '+b12Net(net)+'</span>';
+}
+function b12PriceStack(net){
+  return '<b>'+ils(b12Gross(net))+'</b><div class="muted" style="font-size:10.5px;font-weight:400">כולל מע&quot;מ · '+b12Net(net)+'</div>';
 }
 /* B45: מחוון "סוללה" — מיום היווצרות החוב עד מועד הפירעון, מלא לפי הימים שעברו */
 function b45Bar(startYmd, dueYmd){
@@ -2608,12 +2653,13 @@ function renderOrdersList(){
   });
   box.innerHTML = list.length? list.map(orderCard).join('') : '<div class="card empty">'+(q?'לא נמצאו הזמנות תואמות לחיפוש':'אין הזמנות בטאב זה')+'</div>';
 }
-function newOrderForm(isQuote){
+function newOrderForm(isQuote, iso){
+  /* T1 (B64): iso — תאריך האירוע/האיסוף מאוכלס מראש כשנפתח מהיומן. */
   if(!DB.customers.length) return toast('קודם צור לקוח במסך לקוחות', true);
   openModal('<h2>'+(isQuote?'הצעת מחיר חדשה':'הזמנה חדשה')+'</h2>'+
     '<div class="frow"><label>לקוח</label>'+sel('f_cust',DB.customers.filter(c=>c.active!=='לא'),c=>c.name)+'</div>'+
     '<div class="frow"><label>סוג</label><select id="f_type"><option>השכרה</option><option>כביסה</option></select></div>'+
-    '<div class="grid2"><div class="frow"><label>תאריך אירוע / איסוף</label><input id="f_start" type="date"></div>'+
+    '<div class="grid2"><div class="frow"><label>תאריך אירוע / איסוף</label><input id="f_start" type="date" value="'+esc(b43IsYmd(iso)?iso:'')+'"></div>'+
     '<div class="frow"><label>תאריך החזרה</label><input id="f_end" type="date"></div></div>'+
     '<div class="frow"><label>מחיר שינוע (₪)</label><input id="f_ofee" type="number" min="0" value="'+esc(setting('default_delivery_fee')||'')+'"><div class="muted" style="font-size:11.5px">B49e: סכום כספי בלבד. אופן המסירה נקבע בשתי הבחירות שמתחת, ואינו תלוי במחיר — משלוח יכול להיות גם בלי חיוב.</div></div>'+
     '<div class="grid2">'+
@@ -3154,22 +3200,28 @@ function b59DefaultMach(target, cur){
 var B59_TASK = null;
 function advanceForm(tid){
   var t = DB.laundryTasks.find(x=>x.id===tid); if(!t) return;
-  var idx = STAGES.indexOf(t.stage);
+  /* ⭐ B64a: השלב מהגיליון מנורמל לפני ההשוואה. רווח נגרר אחד היה מפיל
+     את indexOf ל--1, הפונקציה הייתה יוצאת כאן, והמודל **לא היה נפתח
+     בכלל** — בלי שום סימן למשתמש חוץ מהודעה שגויה. */
+  var cur = sPick(t.stage, STAGES);
+  if(!cur) return toast('שלב לא מוכן בגיליון: "'+String(t.stage||'(ריק)')+'". '+
+    'הערכים המותרים הם: '+STAGES.join(' · ')+'. תקן את עמודת stage במשימה '+tid+'.', true);
+  var idx = STAGES.indexOf(cur);
   /* B59: משימה שהגיעה ל"מוכן" נסגרה — done_date נרשם, העגלה שוחררה
      וייתכן שההזמנה נסגרה. השרת חוסם את זה, והמסך חייב להסכים איתו. */
   if(idx===STAGES.length-1) return toast('המשימה כבר בשלב מוכן', true);
-  var targets = (idx>-1)? b59Targets(t.stage) : [];
+  var targets = b59Targets(cur);
   if(!targets.length) return toast('המשימה כבר בשלב מוכן', true);
-  var def = (idx>-1 && idx<STAGES.length-1)? STAGES[idx+1] : targets[0];
+  var def = STAGES[idx+1];
   B59_TASK = t;
   openModal(
-    '<h2>קידום שלב — '+esc(t.stage)+' ← <span id="adv_head">'+esc(def)+'</span></h2>'+
+    '<h2>קידום שלב — '+esc(cur)+' ← <span id="adv_head">'+esc(def)+'</span></h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(item(t.item_id))+' × '+esc(t.qty)+' · '+
       esc(cust((DB.orders.find(o=>o.id===t.order_id)||{}).customer_id))+'</div>'+
     '<div class="frow"><label>שלב יעד <b style="color:var(--danger)">*</b></label>'+
       '<select id="adv_to" onchange="b59StageChg()">'+
       targets.map(function(s){ return '<option value="'+esc(s)+'"'+(s===def?' selected':'')+'>'+
-        esc(b59TargetLabel(t.stage,s))+'</option>'; }).join('')+'</select>'+
+        esc(b59TargetLabel(cur,s))+'</option>'; }).join('')+'</select>'+
       '<div class="muted" style="font-size:12px">אפשר לדלג על שלבים או לחזור אחורה — המעבר נרשם ביומן המשימה.</div></div>'+
     '<div id="adv_body"></div>'+
     '<div class="row" style="margin-top:6px">'+
@@ -3285,16 +3337,21 @@ function kindChip(d){
 /* B41b (הכרעת אבי): רק הנהג המשובץ עצמו, מהחשבון שלו. צילום או סריקה של
    ההנהלה אינם תיעוד איסוף. רשומה ותיקה בלי photo_by/scan_by = לא מתועדת. */
 function b41DriverHandled(d){
-  var drv = String(d.driver||'').trim(); if(!drv) return false;
-  var scanned = String(d.scan_status||'')==='נסרק' && String(d.scan_by||'').trim()===drv;
-  var shot = String(d.photo_url||'').trim()!=='' && String(d.photo_by||'').trim()===drv;
+  /* B64a: שם הנהג הושווה כאן מול scan_by/photo_by — רווח כפול או תו כיווניות
+     בשם ניתק את ההתאמה, והמערכת חשבה שהנהג לא תיעד כלום. */
+  var drv = sVal(d.driver); if(!drv) return false;
+  var scanned = sVal(d.scan_status)==='נסרק' && sVal(d.scan_by)===drv;
+  var shot = sVal(d.photo_url)!=='' && sVal(d.photo_by)===drv;
   return scanned || shot;
 }
 function b41IntakeState(oid){
   var o = (DB.orders||[]).find(x=>x.id===oid)||{};
-  var expects = b38PlannedForOrder(o).some(pl=>pl.kind==='איסוף');
-  var picks = (DB.deliveries||[]).filter(d=>d.order_id===oid && d.kind==='איסוף');
-  var open = picks.filter(d=>B5_OPEN_STATUSES.indexOf(String(d.status))>-1);
+  /* ⭐ B64a: kind ו-status נקראים מהגיליון ומושווים כאן מול ערכים קבועים.
+     רווח נגרר אחד ב-kind הפיל את picks לרשימה ריקה, needsReason יצא false,
+     וכרטיס "בחר סיבה" **פשוט לא צויר** — לכן הכפתור לידו כן עבד. */
+  var expects = b38PlannedForOrder(o).some(pl=>sVal(pl.kind)==='איסוף');
+  var picks = (DB.deliveries||[]).filter(d=>d.order_id===oid && sVal(d.kind)==='איסוף');
+  var open = picks.filter(d=>B5_OPEN_STATUSES.indexOf(sVal(d.status))>-1);
   var anyHandled = picks.some(b41DriverHandled);
   /* B49f: unhandled = נסיעות פתוחות שאיש לא תיעד — בדיוק אלה שההכרעה חלה עליהן.
      אותה הגדרה בדיוק כמו b41IntakeState בשרת, כדי ששני הצדדים לא יתפצלו. */
@@ -3305,9 +3362,11 @@ function b41IntakeState(oid){
 /* איסוף שנקלט בפועל — או שנסגר, או שההזמנה כבר הוחזרה/הושלמה.
    התנאי השני מכסה רשומות שנשארו פתוחות מלפני תיקון B39. */
 function b41PickupReceived(d){
-  if(d.status==='בוצע') return true;
+  if(sVal(d.status)==='בוצע') return true;
   var oo = (DB.orders||[]).find(x=>x.id===d.order_id);
-  return !!oo && (oo.status==='הוחזרה' || oo.status==='הושלמה');
+  if(!oo) return false;
+  var os = sVal(oo.status);
+  return os==='הוחזרה' || os==='הושלמה';
 }
 var B41_REASONS = ['הנהג לא סרק ולא צילם בשטח','הלקוח החזיר בעצמו / איסוף עצמי','תקלה במכשיר של הנהג','נאסף ע"י עובד אחר','אחר — פרט'];
 var B41_LAST_REASON = '';
@@ -3529,7 +3588,7 @@ function b38PlannedForOrder(o){
   return out;
 }
 /* B49e: נסיעה מבוטלת אינה "קיימת" — אחרת מעבר חזרה למשלוח לא היה יוצר אותה מחדש */
-function b49eLiveDeliv(d){ return ['מתוכנן','בדרך','בוצע'].indexOf(String(d.status))>-1; }
+function b49eLiveDeliv(d){ return ['מתוכנן','בדרך','בוצע'].indexOf(sVal(d.status))>-1; }
 /* B49e (P4): הוכחות המסירה של רגל — מטבלת signatures ומהתיעוד ההיסטורי על המשלוח */
 function b49eProofsOf(o,leg){
   var rows = (DB.signatures||[]).filter(function(s){
@@ -5571,7 +5630,9 @@ async function saveFexpDelete(id){
   if(r) closeModal();
 }
 
-function futureExpForm(){
+function futureExpForm(iso){
+  /* T1 (B64): "יום לתשלום" ביומן פותח בדיוק את הטופס הזה — אין ישות כספית
+     חדשה. ההוצאה נכנסת לתזרים B43 ולדוח ההוצאות כמו כל הוצאה עתידית. */
   openModal('<h2>הוצאה עתידית</h2>'+
     '<div class="frow"><label>קטגוריה</label><input id="f_fecat" placeholder="למשל: ביטוח, שכירות, ציוד"></div>'+
     '<div class="frow"><label>תיאור</label><input id="f_fedesc"></div>'+
@@ -5579,7 +5640,7 @@ function futureExpForm(){
       '<select id="f_fesup" onchange="b44FexpSupDue()"><option value="">—</option>'+
       (DB.suppliers||[]).filter(s=>s.active!=='לא').map(s=>'<option value="'+s.id+'">'+esc(s.name)+(s.payment_terms?' · '+esc(s.payment_terms):'')+'</option>').join('')+'</select></div>'+
     '<div class="grid2"><div class="frow"><label>סכום (₪)</label><input id="f_feamt" type="number" min="0"></div>'+
-    '<div class="frow"><label>תאריך תשלום משוער (חובה)</label><input id="f_fedate" type="date"></div></div>'+
+    '<div class="frow"><label>תאריך תשלום משוער (חובה)</label><input id="f_fedate" type="date" value="'+esc(b43IsYmd(iso)?iso:'')+'"></div></div>'+
     '<div id="f_fedue_hint" class="muted" style="font-size:12px;margin:-4px 0 10px"></div>'+
     '<div class="frow"><label>דחיפות</label><select id="f_feurg">'+['רגיל','דחוף','קריטי'].map(u=>'<option>'+u+'</option>').join('')+'</select></div>'+
     '<button class="btn" onclick="saveFutureExp()">שמור</button>');
@@ -6566,6 +6627,7 @@ function rPurchasing(){
     (supBalance(s.id)>0.01?'<div style="text-align:center;cursor:pointer" onclick="supBalanceCard(\''+s.id+'\')"><div class="big" style="color:var(--danger)">'+ils(supBalance(s.id))+'</div><div class="muted">יתרה לתשלום</div></div>':'')+
     contactBtns(s.phone, s.email)+notesBtn('supplier',s.id)+tagBtn('supplier',s.id)+
     (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת ספק (קוד מנהל)" onclick="delRecord(\'suppliers\',\''+s.id+'\',\'את הספק\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></span>':'')+'</div>'+linksSection('supplier',s.id)+'</div>').join(''):'<div class="card empty">אין ספקים</div>')+
+    b02ProvidersHtml()+
     '<div class="section-title"><h2>הזמנות רכש</h2><button class="btn" onclick="purForm()">+ רכש</button></div>'+
     (DB.purchases.length? DB.purchases.slice().reverse().map(function(p){
       var lines = DB.purchaseLines.filter(l=>l.purchase_id===p.id);
@@ -6576,6 +6638,58 @@ function rPurchasing(){
         (p.status==='טיוטה'?'<button class="btn ghost sm" onclick="purLineForm(\''+p.id+'\')">+ שורה</button><button class="btn sm" onclick="doReceivePur(\''+p.id+'\')">קבל למלאי</button>':'')+tagBtn('purchase',p.id)+
         '</div>'+linksSection('purchase',p.id)+'</div>';
     }).join(''):'<div class="card empty">אין הזמנות רכש</div>');
+}
+/* ===== BLD-02 (B64): השבתת ספק שירות =====
+   השדה active היה קיים בטבלה service_providers מאז B42 והשרת כבר ידע לעדכן
+   אותו (b42SaveProvider עם id). מה שחסר היה מסך וכפתור — אנשי המקצוע הופיעו
+   רק בתוך הבורר ולא היה שום מקום לנהל אותם.
+   ⛔ אין שינוי סכימה ואין פעולת שרת חדשה. b42RequireOffice בשרת כבר מגביל
+   למנהל/משרד; כאן מסתירים את הכפתור מאותם תפקידים כדי שלא ייכשל בלחיצה.
+   ⛔ השבתה אינה מחיקה: b42Providers() כבר מסנן active!=='לא', ולכן איש מקצוע
+   מושבת נעלם מכל הבוררים אבל נשאר בהיסטוריית התקלות והעלויות. */
+function b02CanProv(){ return ['מנהל','משרד'].indexOf(ROLE)>-1; }
+function b02ProvidersAll(){ return (DB.serviceProviders||[]).slice(); }
+function b02ProvidersHtml(){
+  var list = b02ProvidersAll();
+  var h = '<div class="section-title"><h2>אנשי מקצוע וחברות שירות</h2>'+
+    '<span class="muted" style="font-size:12px">'+list.filter(function(x){return x.active!=='לא';}).length+' פעילים מתוך '+list.length+'</span></div>';
+  if(!list.length) return h+'<div class="card empty">אין אנשי מקצוע. הם נוספים מתוך טופס תקלה או ביקור טכנאי.</div>';
+  return h + list.slice().sort(function(a,b){
+      var d = (a.active==='לא'?1:0)-(b.active==='לא'?1:0);
+      return d!==0? d : String(a.company||a.name||'')>String(b.company||b.name||'')?1:-1;
+    }).map(function(pv){
+    var on = pv.active!=='לא';
+    var sup = (DB.suppliers||[]).find(function(x){ return x.id===pv.supplier_id; });
+    return '<div class="card"'+(on?'':' style="opacity:.62"')+'><div class="row">'+
+      '<div class="grow"><b>'+esc(pv.company||pv.name)+'</b>'+
+        (pv.company&&pv.name&&pv.name!==pv.company?' <span class="muted">· '+esc(pv.name)+'</span>':'')+
+        '<div class="muted">'+esc(pv.domain||'ללא תחום')+(pv.phone?' · '+esc(pv.phone):'')+
+        (sup?' · ספק: '+esc(sup.name):'')+'</div></div>'+
+      contactBtns(pv.phone, pv.email)+
+      '<span class="chip" style="background:'+(on?'var(--ok)':'var(--danger)')+'">'+(on?'פעיל':'מושבת')+'</span>'+
+      (b02CanProv()?'<button class="btn '+(on?'ghost ':'')+'sm" onclick="b02ToggleProv(\''+esc(pv.id)+'\')">'+
+        (on?'השבת':'הפעל מחדש')+'</button>':'')+
+      '</div></div>';
+  }).join('');
+}
+async function b02ToggleProv(id){
+  if(!b02CanProv()) return toast('השבתת ספק שירות — מנהל ומשרד בלבד', true);
+  var pv = (DB.serviceProviders||[]).find(function(x){ return x.id===id; });
+  if(!pv) return toast('איש המקצוע לא נמצא', true);
+  var on = pv.active!=='לא';
+  var nm = pv.company||pv.name;
+  if(on && !confirm('להשבית את "'+nm+'"?\nהוא ייעלם מרשימות הבחירה בתקלות ובביקורי טכנאי, אבל ההיסטוריה והעלויות שלו נשמרות במלואן.')) return;
+  /* השרת דורש name בכל קריאה, ולכן נשלחים כל השדות הקיימים כמות שהם —
+     רק active משתנה. אין כאן עדכון חלקי שעלול לרוקן שדה. */
+  var r = await apiBusy('b42SaveProvider', {
+    id: pv.id, name: pv.name||'', company: pv.company||'', domain: pv.domain||'',
+    phone: pv.phone||'', email: pv.email||'', vat_id: pv.vat_id||'', notes: pv.notes||'',
+    active: on ? 'לא' : 'כן'
+  });
+  if(!r || !r.ok) return toast((r&&r.error)||'העדכון נכשל', true);
+  pv.active = r.provider && r.provider.active ? r.provider.active : (on?'לא':'כן');
+  toast(on ? '"'+nm+'" הושבת' : '"'+nm+'" הופעל מחדש');
+  render();
 }
 function supForm(){
   openModal('<h2>ספק חדש</h2><div class="frow"><label>שם</label><input id="f_sname"></div>'+
@@ -6747,14 +6861,27 @@ async function doScan(){
   } else if(r.kind==='unit'){
     el('scanRes').innerHTML = '<div class="card"><b>יחידה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנוי'?'var(--ok)':r.entity.status==='גרוט'?'var(--danger)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
       '<div class="muted" style="margin:6px 0">'+esc(r.item?r.item.name:'')+'</div>'+
-      (r.entity.status!=='גרוט'?'<div class="row">'+['פנוי','אצל לקוח','בכביסה'].filter(s=>s!==r.entity.status).map(s=>'<button class="btn ghost sm" onclick="doUnitStatus(\''+r.entity.id+'\',\''+s+'\')">'+s+'</button>').join('')+
-      '<button class="btn danger sm" onclick="if(confirm(\'לגרוט? נגרע מהמלאי — סופי\'))doUnitStatus(\''+r.entity.id+'\',\'גרוט\')">גרוט</button></div>':'')+'</div>';
+      /* T2ב (B64): דפוס b62OrderActions — פעולה ראשית אחת גלויה, השאר ב-⋯.
+         ⛔ אף פעולה לא נעלמה ואף הרשאה לא השתנתה. */
+      (r.entity.status!=='גרוט'? (function(){
+        var others = ['פנוי','אצל לקוח','בכביסה'].filter(function(st){ return st!==r.entity.status; });
+        var pri = '<button class="btn sm" onclick="doUnitStatus(\''+r.entity.id+'\',\''+others[0]+'\')">'+others[0]+'</button>';
+        var rest = others.slice(1).map(function(st){
+          return '<button class="btn ghost sm" onclick="closeMore();doUnitStatus(\''+r.entity.id+'\',\''+st+'\')">'+st+'</button>'; });
+        rest.push('<button class="btn danger sm" onclick="closeMore();if(confirm(\'לגרוט? נגרע מהמלאי — סופי\'))doUnitStatus(\''+r.entity.id+'\',\'גרוט\')">גרוט</button>');
+        return '<div class="actrow">'+pri+' '+moreMenu(rest)+'</div>';
+      })() : '')+'</div>';
   } else if(r.kind==='cart'){
     el('scanRes').innerHTML = '<div class="card"><b>עגלה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
-      (r.task?'<div class="muted" style="margin-top:6px">משימה עליה: '+esc(item(r.task.item_id))+' × '+r.task.qty+' · שלב: '+esc(r.task.stage)+'</div>'+
-      '<button class="btn sm" style="margin-top:8px" onclick="advanceForm(\''+r.task.id+'\')">קדם שלב ←</button>'+
-      '<button class="btn ghost sm" style="margin-top:8px" onclick="openLaundryTask(\''+r.task.id+'\')">היסטוריית הכביסה</button>':'')+
-      '<div style="margin-top:8px"><button class="btn ghost sm" onclick="openCart(\''+esc(r.entity.id)+'\')">פתח כרטיס עגלה</button></div></div>';
+      (r.task?'<div class="muted" style="margin-top:6px">משימה עליה: '+esc(item(r.task.item_id))+' × '+r.task.qty+' · שלב: '+esc(r.task.stage)+'</div>':'')+
+      /* T2ב (B64): פעולה ראשית אחת + ⋯ (דפוס b62OrderActions) */
+      '<div class="actrow" style="margin-top:8px">'+
+      (r.task
+        ? '<button class="btn sm" onclick="advanceForm(\''+r.task.id+'\')">קדם שלב ←</button> '+
+          moreMenu(['<button class="btn ghost sm" onclick="closeMore();openLaundryTask(\''+r.task.id+'\')">היסטוריית הכביסה</button>',
+                    '<button class="btn ghost sm" onclick="closeMore();openCart(\''+esc(r.entity.id)+'\')">פתח כרטיס עגלה</button>'])
+        : '<button class="btn sm" onclick="openCart(\''+esc(r.entity.id)+'\')">פתח כרטיס עגלה</button>')+
+      '</div></div>';
   } else if(r.kind==='machine'){
     /* B39: סריקת מכונה במסך הסריקה הכללי — עד כה החזירה "ברקוד לא נמצא" */
     var mSc = r.entity;
@@ -6790,8 +6917,9 @@ async function doScan(){
       (shC.length? '<table style="margin-top:8px"><tr><th>פריט</th><th>בחבילה</th><th>חבילות</th></tr>'+
         shC.map(function(c){ return '<tr><td>'+esc(c.item_name)+'</td><td>'+c.per_pkg+'</td><td><b>'+c.packages+'</b></td></tr>'; }).join('')+'</table>'
         : '<div class="empty" style="margin-top:8px">המדף ריק</div>')+
-      (b35CanWh()? '<div class="row" style="margin-top:8px;gap:6px"><button class="btn sm" onclick="b35Station(\''+esc(r.entity.code)+'\')">מידוף למדף זה</button>'+
-        '<button class="btn ghost sm" onclick="b35CountForm(\''+esc(r.entity.code)+'\')">ספירת מדף</button></div>' : '')+
+      /* T2ב (B64): מידוף הוא הפעולה הראשית; ספירה עברה ל-⋯ ולא נעלמה. */
+      (b35CanWh()? '<div class="actrow" style="margin-top:8px"><button class="btn sm" onclick="b35Station(\''+esc(r.entity.code)+'\')">מידוף למדף זה</button> '+
+        moreMenu(['<button class="btn ghost sm" onclick="closeMore();b35CountForm(\''+esc(r.entity.code)+'\')">ספירת מדף</button>'])+'</div>' : '')+
       '</div>';
   } else if(r.kind==='order'){
     el('scanRes').innerHTML = '<div class="card"><b>הזמנה #'+esc(r.entity.order_number||r.entity.id)+'</b> <span class="chip">'+esc(r.entity.status||'')+'</span>'+
@@ -7065,7 +7193,7 @@ function b60Card(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.63-B63a';
+var B61_CANARY = 'v4.64-B64a';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -8618,9 +8746,11 @@ async function loadApprovals(){
       (x.guarantee_type==='שיק'&&x.check_number?' · שיק '+esc(x.check_number)+(x.check_bank?' ('+esc(x.check_bank)+')':''):'')+
       (x.guarantee_type==='ערב'&&x.guarantor_name?' · ערב: '+esc(x.guarantor_name)+(x.guarantor_phone?' · '+esc(x.guarantor_phone):''):'')+
       '</div>'+
+      /* T2ב (B64): אישור נשאר גלוי, הדחייה עברה ל-⋯ (דפוס b62OrderActions).
+         ⛔ הפעולה לא נעלמה וההרשאה לא השתנתה. */
       (ROLE==='מנהל'?
         '<button class="btn sm" onclick="event.stopPropagation();apprApproveGuarantee(\''+x.customer_id+'\')">אשר</button> '+
-        '<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();apprRejectGuarantee(\''+x.customer_id+'\')">דחה</button>'
+        moreMenu(['<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();closeMore();apprRejectGuarantee(\''+x.customer_id+'\')">דחה</button>'])
         : '<span class="muted">אישור/דחייה — מנהל בלבד</span>')+
       '</div>';
   });
@@ -8630,7 +8760,7 @@ async function loadApprovals(){
       '<div class="muted">סכום ההזמנה '+ils(fromAg(x.total_ag))+' · יתרת מסגרת '+ils(fromAg(x.available_ag))+'</div></div>'+
       (canAct?
         '<button class="btn sm" onclick="event.stopPropagation();apprApproveException(\''+x.order_id+'\')">אשר חריגה</button> '+
-        '<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();apprRejectException(\''+x.order_id+'\')">בטל הזמנה</button>'
+        moreMenu(['<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();closeMore();apprRejectException(\''+x.order_id+'\')">בטל הזמנה</button>'])
         : '')+
       '</div>';
   });
@@ -8653,7 +8783,7 @@ async function loadApprovals(){
       '</div>'+
       (canAct?
         '<button class="btn sm" onclick="event.stopPropagation();apprConfirmDecl(\''+x.id+'\','+Number(x.amount||0)+',\''+esc(String(x.customer).replace(/\'/g,''))+'\',\''+esc(x.method||'')+'\')">אמת ואשר</button> '+
-        '<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();apprRejectDecl(\''+x.id+'\')">דחה</button>'
+        moreMenu(['<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();closeMore();apprRejectDecl(\''+x.id+'\')">דחה</button>'])
         : '<span class="muted">אישור — מנהל/משרד</span>')+
       '</div>';
   });
@@ -8666,7 +8796,7 @@ async function loadApprovals(){
       '<div class="muted" style="font-size:11px">'+esc(x.date)+'</div></div>'+
       (canAct?
         '<button class="btn sm" onclick="event.stopPropagation();apprReplyMsg(\''+x.id+'\')">השב</button> '+
-        '<button class="btn ghost sm" onclick="event.stopPropagation();apprCloseMsg(\''+x.id+'\')">סגור</button>'
+        moreMenu(['<button class="btn ghost sm" onclick="event.stopPropagation();closeMore();apprCloseMsg(\''+x.id+'\')">סגור פניה</button>'])
         : '')+
       '</div>';
   });
@@ -9923,12 +10053,13 @@ function rTasks(){
   el('main').innerHTML = '<div class="section-title"><h2>לוח משימות</h2><button class="btn" onclick="taskForm()">+ משימה</button></div>'+
     '<div class="kanban">'+cols+'</div>';
 }
-function taskForm(){
+function taskForm(iso){
+  /* T1 (B64): iso — תאריך יעד מאוכלס מראש כשנפתח מהיומן. הטופס לא שוכפל. */
   openModal('<h2>משימה חדשה</h2>'+
     '<div class="frow"><label>כותרת</label><input id="f_ttitle"></div>'+
     '<div class="frow"><label>פירוט</label><input id="f_tdetails"></div>'+
     '<div class="grid2"><div class="frow"><label>אחראי</label><select id="f_tassign"><option value="">—</option>'+DB.employees.filter(e=>e.active!=='לא').map(e=>'<option value="'+e.id+'">'+esc(e.name)+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>תאריך יעד</label><input id="f_tdue" type="date"></div>'+
+    '<div class="frow"><label>תאריך יעד</label><input id="f_tdue" type="date" value="'+esc(b43IsYmd(iso)?iso:'')+'"></div>'+
     '<div class="frow"><label>עדיפות</label><select id="f_tprio"><option>רגילה</option><option>דחופה</option><option>נמוכה</option></select></div></div>'+
     '<button class="btn" onclick="saveTask()">שמור</button>');
 }
@@ -10059,7 +10190,56 @@ function calEvents(){
     if(v.insurance_expiry) events.push({date:v.insurance_expiry, label:'ביטוח: '+(v.plate||v.id), color:'#94A3B8', click:"go('fleet')"});
     if(v.next_service_date) events.push({date:v.next_service_date, label:'טיפול רכב: '+(v.plate||v.id), color:'#94A3B8', click:"go('fleet')"});
   });
+  /* ===== T1 (B64): "יום לתשלום" ביומן =====
+     שני כיוונים, ושניהם **נגזרים ממקור קיים** — אין כאן ישות כספית חדשה:
+       כסף שיוצא → הוצאות עתידיות פתוחות (fexpOpen), אותו מקור של התזרים B43.
+       כסף שנכנס → ספר החיובים b54LedgerFE, אותו מקור של דוח גיל החובות.
+     ⛔ כסף מוצג למנהל ולמשרד בלבד — נהג ומחסן לא רואים חובות לקוח. */
+  if(b64MoneyVisible()){
+    b64FexpDue().forEach(function(f){
+      events.push({date:f.due_date, label:'לתשלום: '+f.label+' · '+ils(f.amount),
+        color:'var(--amber)', click:"fexpBreakdown('"+f.id+"')"});
+    });
+    b64RecvDue().forEach(function(r){
+      events.push({date:r.due_date, label:'פירעון לקוח: '+r.customer+' · '+ils(r.amount),
+        color:'var(--danger)', click:"openCust('"+r.customer_id+"','finance')"});
+    });
+  }
   return events;
+}
+/* T1: מי רשאי לראות מועדי תשלום ביומן. אותה הרשאה כמו מסך הכספים. */
+function b64MoneyVisible(){ return ['מנהל','משרד'].indexOf(ROLE)>-1; }
+/* T1: כסף שיוצא — הוצאות עתידיות פתוחות עם מועד תשלום.
+   נגזר מ-fexpOpen/fexpRemain, בדיוק כמו התזרים. אין חישוב חדש. */
+function b64FexpDue(){
+  if(typeof fexpOpen!=='function') return [];
+  /* ⚠ שדה תאריך מהגיליון עלול לחזור כ-ISO מלא ולא כ-yyyy-mm-dd — dYmd קודם. */
+  return fexpOpen().map(function(x){ return {row:x, d:dYmd(x.due_date)}; })
+    .filter(function(p){ return b43IsYmd(p.d) && fexpRemain(p.row)>0.009; })
+    .map(function(p){
+      return { id:p.row.id, due_date:p.d,
+        label:(p.row.description||p.row.category||'הוצאה'), amount:fexpRemain(p.row) };
+    });
+}
+/* T1: כסף שנכנס — מועדי פירעון של חובות לקוח, מקובצים לפי המסמך/ההזמנה
+   כדי שלא תיווצר שורה ליומן לכל שורת חיוב. המקור הוא b54LedgerFE בלבד. */
+function b64RecvDue(){
+  if(typeof b54LedgerFE!=='function') return [];
+  var by = {}, keys = [];
+  b54LedgerFE().forEach(function(r){
+    if(!r.open_ag || r.open_ag<=0) return;
+    if(r.pending) return;
+    var dd = dYmd(r.due_date);
+    if(!b43IsYmd(dd)) return;
+    var k = (r.entity_type||'')+':'+(r.entity_id||r.id)+':'+dd;
+    if(!by[k]){ by[k] = {due_date:dd, customer_id:r.customer_id||'', open_ag:0}; keys.push(k); }
+    by[k].open_ag += r.open_ag;
+  });
+  return keys.map(function(k){
+    var x = by[k];
+    return { due_date:x.due_date, customer_id:x.customer_id,
+      customer:cust(x.customer_id)||'ללא לקוח', amount:fromAg(x.open_ag) };
+  });
 }
 function rCalendar(){ rCalendarDraw([]); fetchHebcal(CAL_Y, CAL_M).then(function(items){ rCalendarDraw(items); }); }
 function rCalendarDraw(hebItems){
@@ -10109,7 +10289,29 @@ function openDay(iso){
   var evs = calEvents().filter(e=>e.date===iso);
   var d = new Date(iso);
   openModal('<h2>'+iso+'</h2><div class="muted" style="margin-bottom:10px">'+esc(hebFmt(d,{weekday:'long',day:'numeric',month:'long',year:'numeric'}))+'</div>'+
-    (evs.length? evs.map(e=>'<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)'+(e.click?';cursor:pointer':'')+'"'+(e.click?' onclick="closeModal();'+e.click+'"':'')+'><span class="chip" style="background:'+e.color+'">•</span><div class="grow">'+esc(e.label)+(e.click?' <span class="muted" style="font-size:11px">↗ פתח</span>':'')+'</div></div>').join(''):'<div class="muted">אין אירועים ביום זה</div>'));
+    (evs.length? evs.map(e=>'<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)'+(e.click?';cursor:pointer':'')+'"'+(e.click?' onclick="closeModal();'+e.click+'"':'')+'><span class="chip" style="background:'+e.color+'">•</span><div class="grow">'+esc(e.label)+(e.click?' <span class="muted" style="font-size:11px">↗ פתח</span>':'')+'</div></div>').join(''):'<div class="muted">אין אירועים ביום זה</div>')+
+    b64DayCreateHtml(iso));
+}
+/* ===== T1 (B64): יצירה מתוך היום שנלחץ =====
+   ⛔ אין כאן שום טופס חדש. כל כפתור פותח את הטופס הקיים של אותה ישות,
+   עם התאריך שנלחץ כבר מאוכלס. טופס שני לאותה ישות אסור.
+   ⛔ טסט · ביטוח · טיפול רכב/מכונה **אינם** כאן בהכרעת אבי: אלה שדות
+   בכרטיס הרכב/המכונה ולא רשומה חדשה. הם מוצגים ביומן ואינם ניתנים ליצירה. */
+function b64DayCreateHtml(iso){
+  var btns = [];
+  if(CAN_EDIT!==false){
+    btns.push('<button class="btn ghost sm" onclick="closeModal();newOrderForm(false,\''+iso+'\')">+ הזמנה</button>');
+    btns.push('<button class="btn ghost sm" onclick="closeModal();taskForm(\''+iso+'\')">+ משימה</button>');
+    btns.push('<button class="btn ghost sm" onclick="closeModal();meetingForm(\''+iso+'\')">+ פגישה</button>');
+    if(b64MoneyVisible())
+      btns.push('<button class="btn ghost sm" onclick="closeModal();futureExpForm(\''+iso+'\')">+ יום לתשלום</button>');
+  }
+  if(!btns.length) return '';
+  return '<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:9px">'+
+    '<div class="muted" style="font-size:12px;margin-bottom:6px">הוספה ליום הזה</div>'+
+    '<div class="row" style="gap:6px;flex-wrap:wrap">'+btns.join('')+'</div>'+
+    (b64MoneyVisible()?'<div class="muted" style="font-size:11px;margin-top:6px">"יום לתשלום" נרשם כהוצאה עתידית ונכנס לתזרים. מועדי פירעון של לקוחות נולדים מהחשבונית ומתנאי התשלום — הם מוצגים ביומן ואינם נוצרים כאן.</div>':'')+
+    '</div>';
 }
 
 /* ================= פגישות ================= */
@@ -10123,8 +10325,10 @@ function rMeetings(){
 }
 // טיוטת פגישה בזיכרון — שומרת נושא/תאריך/שעה/משתתפים שנבחרו בין פתיחות מודל (הוספת משתתף)
 var MEET_DRAFT = null;
-function meetingForm(){
+function meetingForm(iso){
   if(!MEET_DRAFT) MEET_DRAFT = {title:'',date:'',time:'',location:'',partIds:[]};
+  /* T1 (B64): פתיחה מהיומן קובעת את התאריך. הטיוטה נשמרת כרגיל. */
+  if(b43IsYmd(iso)) MEET_DRAFT.date = iso;
   drawMeetingForm();
 }
 function drawMeetingForm(){
@@ -10253,7 +10457,12 @@ function shopTotal(){
   });
   if(sub > 0) sub += SHOP.delivery_fee;
   var vat = Math.round(sub*SHOP.vat_rate*100)/100;
-  el('shopSum').innerHTML = sub>0 ? 'סה"כ: '+ils(sub)+(SHOP.delivery_fee?' (כולל שינוע '+ils(SHOP.delivery_fee)+')':'')+' + מע"מ '+ils(vat)+' = <b>'+ils(sub+vat)+'</b>' : 'בחר פריטים לצפייה במחיר';
+  /* BLD-12: המספר הראשי בסל הוא כולל מע"מ. הפירוט נטו נשאר מתחתיו. */
+  el('shopSum').innerHTML = sub>0
+    ? '<b style="font-size:18px">סה"כ לתשלום: '+ils(sub+vat)+'</b>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:3px">כולל מע"מ '+ils(vat)+
+      ' · לפני מע"מ '+ils(sub)+(SHOP.delivery_fee?' (כולל שינוע '+ils(SHOP.delivery_fee)+')':'')+'</div>'
+    : 'בחר פריטים לצפייה במחיר';
 }
 function renderShop(){
   el('login').innerHTML = '<div class="box" style="max-height:94vh;overflow-y:auto;text-align:right;width:min(520px,94vw)">'+
@@ -10261,7 +10470,7 @@ function renderShop(){
     '<p style="text-align:center">הזמנת מפות ומפיות לאירוע</p>'+
     '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="s_start" type="date"></div>'+
     '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="s_end" type="date"></div></div>'+
-    SHOP.items.map(i=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\' <span style="font-size:11px">(לפני מע"מ · '+b45Incl(i.price)+')</span></span></div>'+
+    SHOP.items.map(i=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(b12Gross(i.price))+' ליח\' <span style="font-size:11px">(כולל מע"מ · '+b12Net(i.price)+')</span></span></div>'+
       '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="sqty" style="width:70px;text-align:center" oninput="shopTotal()"></div>').join('')+
     '<div id="shopSum" style="margin:10px 0;font-size:15px;text-align:center;background:var(--linen);border-radius:8px;padding:10px">בחר פריטים לצפייה במחיר</div>'+
     '<h3 style="color:var(--navy);margin:6px 0">הפרטים שלך</h3>'+
@@ -10292,7 +10501,8 @@ async function shopSubmit(force){
   if(!r.ok){ el('loginErr').textContent = r.error; return; }
   el('login').innerHTML = '<div class="box"><div class="logo">'+esc(SHOP.business_name||'MAPA·NOBLE')+'</div>'+
     '<h3 style="color:var(--ok);margin:14px 0">✓ ההזמנה התקבלה!</h3>'+
-    '<p style="text-align:right">סה"כ: '+ils(r.subtotal)+'<br>מע"מ: '+ils(r.vat)+'<br><b>לתשלום: '+ils(r.total)+'</b></p>'+
+    '<p style="text-align:right"><b style="font-size:17px">לתשלום: '+ils(r.total)+'</b>'+
+    '<br><span class="muted" style="font-size:12px">כולל מע"מ '+ils(r.vat)+' · לפני מע"מ '+ils(r.subtotal)+'</span></p>'+
     (r.payment_link?'<a href="'+esc(r.payment_link)+'" style="display:block;background:var(--teal);color:#fff;padding:12px;border-radius:8px;margin:14px 0;text-decoration:none;font-weight:600">מעבר לתשלום</a>'
       :'<p class="muted" style="margin:10px 0">נציג יחזור אליך לאישור ותשלום.</p>')+
     '<p class="muted" style="font-size:12px">קוד הלקוח שלך להזמנות הבאות: <b>'+esc(r.portal_code)+'</b></p></div>';
@@ -10699,7 +10909,7 @@ function renderPortal(){
     '<h3 style="color:var(--navy);margin-bottom:8px">הזמנה חדשה</h3>'+
     '<div class="grid2"><div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך האירוע</label><input id="p_start" type="date"></div>'+
     '<div class="frow"><label style="display:block;font-size:13px;font-weight:600">תאריך החזרה</label><input id="p_end" type="date"></div></div>'+
-    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(i.price)+' ליח\' <span style="font-size:11px">(לפני מע"מ · '+b45Incl(i.price)+')</span></span></div>'+
+    d.items.map((i,ix)=>'<div class="row" style="border-bottom:1px solid var(--line);padding:7px 0">'+(i.image_url?'<img src="'+esc(driveThumbUrl(i.image_url))+'" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex:none">':'')+'<div class="grow" style="font-size:14px"><b>'+esc(i.name)+'</b> <span class="muted">'+esc(i.size||'')+' '+esc(i.color||'')+' · '+ils(b12Gross(i.price))+' ליח\' <span style="font-size:11px">(כולל מע"מ · '+b12Net(i.price)+')</span></span></div>'+
       '<input type="number" min="0" placeholder="0" data-item="'+i.id+'" class="pqty" style="width:70px;text-align:center"></div>').join('')+
     '<div class="frow" style="margin-top:8px"><input id="p_notes" placeholder="הערות (רשות)"></div>'+
     '<div id="pAvailWarn"></div>'+
@@ -10764,9 +10974,11 @@ function portalChargesHtml(d){
           '</div>'+
         '</div>'+
         '<div style="text-align:left;flex:none">'+
-          '<b style="color:'+(isOpen?'var(--danger)':'var(--ok)')+'">'+ils(isOpen?openAmt:r.amount)+'</b>'+
-          /* B45: נטו כמספר ראשי, כולל מע"מ בכתב קטן. הסכום לתשלום הוא payable. */
-          (isOpen && !r.has_doc? '<div class="muted" style="font-size:11px">כולל מע&quot;מ '+ils(r.payable)+'</div>' : '')+
+          /* BLD-12: בפורטל המספר הראשי הוא כולל מע"מ (DEC-01). כשאין מסמך,
+             r.payable הוא הברוטו ו-openAmt הנטו; כשיש מסמך הסכום כבר ברוטו. */
+          '<b style="color:'+(isOpen?'var(--danger)':'var(--ok)')+'">'+
+            ils(isOpen? (r.has_doc? openAmt : Number(r.payable!==undefined? r.payable : openAmt)) : r.amount)+'</b>'+
+          (isOpen && !r.has_doc? '<div class="muted" style="font-size:11px">לפני מע&quot;מ '+ils(openAmt)+'</div>' : '')+
           '<div class="muted" style="font-size:11px">'+(isOpen? (Number(r.paid||0)>0.009? 'שולם '+ils(r.paid)+' מתוך '+ils(r.amount) : 'לתשלום') : 'שולם ✓')+'</div>'+
         '</div>'+
       '</div>'+
@@ -10780,7 +10992,7 @@ function portalChargesHtml(d){
   var payable = Number(d.payable_total||0);
   h += '<div class="row" style="padding:9px;background:var(--bg2,#f6f7f9);font-size:14px">'+
     '<div class="grow"><b>סה&quot;כ לתשלום</b>'+
-      (payable-debt>0.009? '<div class="muted" style="font-size:11px">'+ils(debt)+' לפני מע&quot;מ</div>' : '')+
+      (payable-debt>0.009? '<div class="muted" style="font-size:11px">כולל מע&quot;מ · '+ils(debt)+' לפני מע&quot;מ</div>' : '')+
     '</div>'+
     '<b style="color:'+(payable>0.009?'var(--danger)':'var(--ok)')+'">'+ils(payable)+'</b></div>';
   h += '</div>';
@@ -11016,16 +11228,18 @@ async function portalDepositRefresh(){
 }
 /* NC2: כרטיס כביסה בפורטל — שלב נוכחי, זמן משוער, משקל וחיוב */
 function portalLaundryHtml(lk){
-  var idx=NOBLE_STAGES.indexOf(lk.status);
+  /* B64a: שלב מהגיליון מנורמל — בלעדיו idx=-1 וכל המחוון נראה כבוי ללקוח. */
+  var lkSt = sPick(lk.status, NOBLE_STAGES) || sVal(lk.status);
+  var idx=NOBLE_STAGES.indexOf(lkSt);
   var dots=NOBLE_STAGES.map(function(s,i){
-    var on=i<=idx, cur=i===idx&&lk.status!=='נמסר';
+    var on=i<=idx, cur=i===idx&&lkSt!=='נמסר';
     return '<div style="flex:1;text-align:center;min-width:0"><div style="height:7px;border-radius:4px;margin:0 1px;background:'+(on?(cur?'var(--amber)':'var(--teal)'):'var(--line)')+'"></div><div style="font-size:9px;color:'+(on?'var(--ink)':'var(--muted)')+';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(s)+'</div></div>';
   }).join('');
-  var eta = (lk.status!=='נמסר'&&lk.eta_min)? '<div class="muted" style="font-size:12px;margin-top:5px">זמן משוער לסיום: '+fmtMin(lk.eta_min)+'</div>' : '';
+  var eta = (lkSt!=='נמסר'&&lk.eta_min)? '<div class="muted" style="font-size:12px;margin-top:5px">זמן משוער לסיום: '+fmtMin(lk.eta_min)+'</div>' : '';
   /* B55 (P4): המשקל הוא מידע תפעולי. החיוב מוצג רק בטבלת החיובים — מקור כסף אחד. */
   var wt = lk.net? '<div class="muted" style="font-size:12px">נשקל: '+lk.net+' ק&quot;ג</div>' : '';
   return '<div style="border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:8px">'+
-    '<div class="row" style="font-size:13px"><div class="grow"><b>'+esc(String(lk.ts||'').slice(0,10))+'</b> <span class="muted">· '+esc(lk.id)+'</span></div><span class="chip" style="background:'+(lk.status==='נמסר'?'var(--ok)':'var(--teal)')+'">'+esc(lk.status)+'</span></div>'+
+    '<div class="row" style="font-size:13px"><div class="grow"><b>'+esc(String(lk.ts||'').slice(0,10))+'</b> <span class="muted">· '+esc(lk.id)+'</span></div><span class="chip" style="background:'+(lkSt==='נמסר'?'var(--ok)':'var(--teal)')+'">'+esc(lkSt)+'</span></div>'+
     '<div class="row" style="gap:0;margin-top:8px;align-items:flex-end">'+dots+'</div>'+eta+wt+'</div>';
 }
 /* B19b (L2): אזור אזהרת זמינות בפורטל/חנות — פריט חסר באדום עם הכמות הזמינה, ואפשרות לשלוח בכל זאת */
@@ -11063,13 +11277,17 @@ function portalCheckout(r){
   el('login').innerHTML = '<div class="box" style="max-height:92vh;overflow-y:auto;text-align:right;width:min(480px,94vw)">'+
     '<div class="logo" style="text-align:center">MAPA<span>·</span>NOBLE</div>'+
     '<h3 style="color:var(--navy);margin:10px 0">השלמת הזמנה — תשלום</h3>'+
-    '<div class="row" style="padding:4px 0;font-size:14px"><div class="grow">סכום ההזמנה (לפני מע"מ):</div><b>'+ils(fromAg(totalAg))+'</b></div>'+
-    (cr.used_ag>0?'<div class="row" style="padding:4px 0;font-size:14px"><div class="grow">חוב קודם:</div><b style="color:var(--danger)">'+ils(fromAg(cr.used_ag))+'</b></div>':'')+
+    /* BLD-12: סכום ההזמנה מוצג כולל מע"מ. ⛔ מסגרת האשראי והחוב הקודם
+       נשארים במספרי המנוע (נטו) — R4 — ולכן מתויגים במפורש. */
+    '<div class="row" style="padding:4px 0;font-size:14px"><div class="grow">סכום ההזמנה:</div>'+
+      '<div style="text-align:left"><b>'+ils(b12Gross(fromAg(totalAg)))+'</b>'+
+      '<div class="muted" style="font-size:11px">כולל מע"מ · '+b12Net(fromAg(totalAg))+'</div></div></div>'+
+    (cr.used_ag>0?'<div class="row" style="padding:4px 0;font-size:14px"><div class="grow">חוב קודם (לפני מע"מ):</div><b style="color:var(--danger)">'+ils(fromAg(cr.used_ag))+'</b></div>':'')+
     creditBarHtml(cr)+
     (within?
       '<button style="width:100%;background:var(--teal);color:#fff;padding:12px;border-radius:8px;font-size:16px;font-weight:600" onclick="portalPayChoice(\''+r.order_id+'\',\'credit\')">אשר הזמנה במסגרת האשראי (ללא תשלום כעת)</button>'
       :
-      '<div style="background:#FDECEA;border:1px solid var(--danger);border-radius:8px;padding:10px;margin:8px 0;font-size:13.5px">ההזמנה חורגת מיתרת האשראי ב-<b>'+ils(fromAg(totalAg-Math.max(0,cr.available_ag)))+'</b>. בחר אחת מהאפשרויות:</div>'+
+      '<div style="background:#FDECEA;border:1px solid var(--danger);border-radius:8px;padding:10px;margin:8px 0;font-size:13.5px">ההזמנה חורגת מיתרת האשראי ב-<b>'+ils(fromAg(totalAg-Math.max(0,cr.available_ag)))+'</b> (לפני מע"מ — מסגרת האשראי מנוהלת נטו). בחר אחת מהאפשרויות:</div>'+
       '<button style="width:100%;background:var(--teal);color:#fff;padding:12px;border-radius:8px;font-weight:600;margin-bottom:8px" onclick="portalPayChoice(\''+r.order_id+'\',\'partial\')">תשלום ההפרש בכסף + היתרה במסגרת</button>'+
       '<button style="width:100%;background:var(--navy);color:#fff;padding:12px;border-radius:8px;font-weight:600" onclick="portalPayChoice(\''+r.order_id+'\',\'approval\')">בקשת אישור ממרכז ההזמנות</button>')+
     '<p class="muted" style="font-size:12px;margin-top:10px">ללא השלמת שלב זה ההזמנה לא תטופל.</p>'+
@@ -12462,8 +12680,10 @@ function floorBoardRender(){
     '</div><div class="row" style="align-items:center"><div class="grow">'+internalChk('floorBoardRender')+'</div><div class="muted" style="font-size:11px">מתעדכן אוטומטית כל דקה · עודכן '+new Date().toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'})+'</div></div></div>';
   if(!r.intakes.length) h+='<div class="card empty">אין קליטות פעילות כרגע</div>';
   r.intakes.forEach(function(ik){
-    var clr = ik.status==='מוכן'||ik.status==='במשלוח'?'var(--teal)':'var(--amber)';
-    var idx = NOBLE_STAGES.indexOf(ik.status);
+    /* B64a: אותו נרמול כמו בפורטל — רצפת הייצור לא תציג פס ריק בגלל רווח. */
+    var ikSt = sPick(ik.status, NOBLE_STAGES) || sVal(ik.status);
+    var clr = ikSt==='מוכן'||ikSt==='במשלוח'?'var(--teal)':'var(--amber)';
+    var idx = NOBLE_STAGES.indexOf(ikSt);
     var strip = NOBLE_STAGES.map(function(s,i){
       var cur=i===idx, done=i<idx;
       return '<span style="flex:1;text-align:center;font-size:10.5px;padding:4px 1px;border-radius:6px;white-space:nowrap;'+
