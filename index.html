@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.65-B65 · 01.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.66-B66 · 02.08.2026</div>
   </div>
 </div>
 
@@ -2723,8 +2723,13 @@ function newOrderForm(isQuote, iso, presetType){
   b65ApplyType();
 }
 async function createOrder(isQuote){
-  var r = await act('create',{table:'orders',row:{type:b65OrderTypeVal(),customer_id:el('f_cust').value,
-    start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,ship_out:(el('f_shipout')?el('f_shipout').value:'משלוח'),ship_back:(el('f_shipback')?el('f_shipback').value:'משלוח'),warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},'נשמר — הוסף פריטים');
+  /* B66/BLD-15: ההודעה הייתה 'נשמר — הוסף פריטים' לכל סוג — שפת השכרה.
+     בכביסה השורות אינן חובה, ולכן הודעה שדורשת אותן שולחת את המשתמש
+     לחפש פריט בקטלוג ההשכרה בדיוק כמו התנאי שהוסר מהשרת. */
+  var b66T = b65OrderTypeVal();
+  var b66Msg = b66T==='כביסה' ? 'נשמר — אפשר להוסיף אומדן כמותי (לא חובה)' : 'נשמר — הוסף פריטים';
+  var r = await act('create',{table:'orders',row:{type:b66T,customer_id:el('f_cust').value,
+    start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,ship_out:(el('f_shipout')?el('f_shipout').value:'משלוח'),ship_back:(el('f_shipback')?el('f_shipback').value:'משלוח'),warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},b66Msg);
   if(r){ closeModal(); openOrder(r.row.id); }
 }
 /* ===== B49e: אופן המסירה והוכחת המסירה בכרטיס ההזמנה (P1-P4, P8) ===== */
@@ -2907,9 +2912,13 @@ function openOrder(oid){
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
     docChainHtml(oid,'order')+
     '<div class="muted" style="margin-bottom:12px">'+(o.order_number?'הזמנה #'+esc(o.order_number)+' · ':'')+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(DB.warehouses.length?' · מחסן: '+esc(whn(o.warehouse_id)):'')+(o.notes?' · '+esc(o.notes):'')+'</div>'+
-    '<h3>פריטים</h3>'+
-    (String(o.type)==='כביסה'?'<div class="muted" style="font-size:12.5px;margin-bottom:4px">⚖ <b>אומדן — החיוב לפי משקל.</b> שורות הפריטים כאן הן אומדן כמותי בלבד ואינן נספרות בחוב; החיוב בפועל מגיע מהשקילה בקליטה.</div>':'')+
-    '<table><tr><th>פריט</th><th>כמות</th><th>'+(String(o.type)==='כביסה'?'מחיר (אומדן)':'מחיר')+'</th><th>הוחזר</th></tr>'+
+    /* B66/BLD-15: בכביסה השורות הן אומדן כמותי **ואינן חובה** — approveOrder
+       כבר אינו חוסם הזמנת כביסה בלי שורות. הכותרת אומרת זאת מפורשות כדי
+       שמי שרואה מקטע ריק יבין שזו התנהגות תקינה ולא חוסר.
+       ⛔ B64a: הסוג נקרא מהגיליון ולכן עובר sVal — בדיוק כמו בשרת. */
+    '<h3>פריטים'+(sVal(o.type)==='כביסה'?' <span class="muted" style="font-size:12.5px;font-weight:400">— אומדן כמותי (לא חובה)</span>':'')+'</h3>'+
+    (sVal(o.type)==='כביסה'?'<div class="muted" style="font-size:12.5px;margin-bottom:4px">⚖ <b>אומדן — החיוב לפי משקל.</b> שורות הפריטים כאן הן אומדן כמותי בלבד, אינן חובה ואינן נספרות בחוב; החיוב בפועל מגיע מהשקילה בקליטה. אפשר לאשר הזמנת כביסה גם בלי אף שורה.</div>':'')+
+    '<table><tr><th>פריט</th><th>כמות</th><th>'+(sVal(o.type)==='כביסה'?'מחיר (אומדן)':'מחיר')+'</th><th>הוחזר</th></tr>'+
     lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
     '</table>'+
     (editable?'<div style="margin:10px 0"><button class="btn ghost sm" onclick="addLineForm(\''+oid+'\')">+ הוסף פריט</button></div>':'')+
@@ -7328,7 +7337,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.65-B65';
+var B61_CANARY = 'v4.66-B66';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -10104,6 +10113,7 @@ function b53QuickState(){
 }
 /* ================= B52: ניהול טאבלט הקיוסק — מנהל בלבד ================= */
 var B52_LINK = '';
+var B52_DEVS = [];   // B66/BLD-03: המכשירים כפי שהוחזרו בסטטוס האחרון. שם בלבד — אין כאן hash.
 function b52KioskPanelHtml(){
   if(ROLE!=='מנהל') return '';
   return '<div class="section-title"><h3>טאבלט קיוסק — שעון נוכחות</h3></div>'+
@@ -10111,11 +10121,17 @@ function b52KioskPanelHtml(){
       '<div style="font-size:13px">טאבלט משותף בכניסה למתחם: כל עובד מקיש את המספר האישי שלו ומחתים כניסה או יציאה. '+
       'הטאבלט אינו מחזיק חשבון של אף אחד, אינו טוען שום נתון עסקי, ואינו מציג דבר מלבד השעון.</div>'+
       '<div id="b52KState" class="muted" style="margin:10px 0;font-size:12.5px">בודק מצב...</div>'+
-      '<div class="row"><button class="btn" id="b52RegBtn" onclick="b52RegisterKiosk()">רישום טאבלט קיוסק</button> '+
-      '<button class="btn ghost" id="b52RevBtn" onclick="b52RevokeKiosk()">ביטול רישום</button></div>'+
+      '<div id="b52KDevs" style="margin:10px 0"></div>'+
+      /* B66/BLD-03: רישום מוסיף טאבלט ואינו דורס. השם הידידותי אינו קישוט —
+         בלעדיו ביטול רישום הופך לניחוש בין מכשירים זהים. */
+      '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'+
+        '<input id="b52KName" maxlength="30" placeholder="שם הטאבלט — למשל: כניסה ראשית" style="max-width:250px">'+
+        '<button class="btn" id="b52RegBtn" onclick="b52RegisterKiosk()">רישום טאבלט נוסף</button>'+
+      '</div>'+
       '<div id="b52KLink"></div>'+
       '<div class="muted" style="font-size:12.5px;margin-top:10px;line-height:1.7">'+
-        'הקישור מוצג <b>פעם אחת בלבד</b> — לפתוח אותו בטאבלט עצמו. רישום חדש מבטל את הקודם.<br>'+
+        'הקישור מוצג <b>פעם אחת בלבד</b> — לפתוח אותו בטאבלט עצמו. אפשר לרשום עד 10 טאבלטים; '+
+        'רישום חדש <b>אינו</b> מבטל את הקודמים.<br>'+
         'בטאבלט: להגדיר "מסך תמיד דולק" ומצב קיוסק של המכשיר (אנדרואיד: Screen pinning · iPad: Guided Access) — '+
         'המערכת אינה יכולה למנוע כיבוי מסך בעצמה.'+
       '</div>'+
@@ -10126,10 +10142,29 @@ async function b52LoadKioskStatus(){
   var r = null;
   try{ r = await api('b52KioskStatus', {}); }catch(e){}
   if(!r || !r.ok){ box.innerHTML = '<span style="color:var(--danger)">לא ניתן לקרוא את מצב הקיוסק</span>'; return; }
-  var html = r.registered
-    ? '<b style="color:var(--ok)">✓ טאבלט רשום</b> — הקיוסק פעיל.'
+  var devs = r.devices || [];
+  B52_DEVS = devs;
+  var maxD = Number(r.max_devices) || 10;
+  var html = devs.length
+    ? '<b style="color:var(--ok)">✓ ' + devs.length + ' מתוך ' + maxD + ' טאבלטים רשומים</b> — הקיוסק פעיל.'
     : '<b style="color:var(--amber)">אין טאבלט רשום</b> — הקיוסק לא יפעל עד לרישום.';
   html += '<br>' + r.with_pin + ' מתוך ' + r.active + ' עובדים פעילים יכולים להחתים (יש להם מספר אישי).';
+  /* B66/BLD-03: כל טאבלט בשורה משלו עם ביטול נפרד. ⛔ אין כאן hash ואין טוקן —
+     השרת מחזיר שם ומספר בלבד. */
+  var dbox = el('b52KDevs');
+  if(dbox) dbox.innerHTML = devs.length
+    ? devs.map(function(d){
+        return '<div class="row" style="padding:6px 0;border-top:1px solid var(--line);gap:8px;align-items:center">'+
+          '<div class="grow"><b style="font-size:13px">'+esc(d.name)+'</b>'+
+            (d.legacy?' <span class="chip" style="background:var(--amber)">רישום ישן</span>':'')+
+            (d.created?'<div class="muted" style="font-size:11.5px">נרשם '+esc(String(d.created).slice(0,16))+'</div>':'')+
+          '</div>'+
+          /* ⛔ רק המספר עובר ב-onclick. esc() מגן על '<' בלבד, ולכן שם טאבלט
+             עם גרש או מרכאה היה שובר את התכונה. השם נשלף מ-B52_DEVS. */
+          '<button class="btn ghost sm" onclick="b52RevokeKiosk('+Number(d.n)+')">ביטול רישום</button>'+
+        '</div>';
+      }).join('')
+    : '';
   if(r.no_pin_total) html += '<br><span style="color:var(--amber)">בלי מספר אישי ('+r.no_pin_total+'): '+
     esc(r.no_pin.join(', ')) + (r.no_pin_total > r.no_pin.length ? ' ...' : '') + '</span>';
   if(r.dup_pins && r.dup_pins.length) html += '<br><span style="color:var(--danger)">⚠ מספר אישי משוכפל — '+
@@ -10137,13 +10172,18 @@ async function b52LoadKioskStatus(){
   box.innerHTML = html;
 }
 async function b52RegisterKiosk(){
-  if(!confirm('להנפיק קישור חדש לטאבלט קיוסק? רישום קודם (אם קיים) יבוטל.')) return;
-  var r = await apiBusy('b52RegisterKiosk', {});
+  /* B66/BLD-03: אין כאן אזהרת דריסה — רישום מוסיף מכשיר. */
+  var nameEl = el('b52KName');
+  var kName = nameEl ? sVal(nameEl.value) : '';
+  if(!kName) return toast('תן שם לטאבלט כדי שתדע מי הוא כשתרצה לבטל אותו', true);
+  if(!confirm('להנפיק קישור לטאבלט "'+kName+'"? הטאבלטים הרשומים כבר ימשיכו לעבוד.')) return;
+  var r = await apiBusy('b52RegisterKiosk', { name: kName });
   if(!r || !r.ok) return toast((r&&r.error)||'הרישום נכשל', true);
+  if(nameEl) nameEl.value = '';
   B52_LINK = location.origin + location.pathname + '?kiosk=1&kt=' + r.kiosk_token;
   var box = el('b52KLink');
   if(box) box.innerHTML = '<div class="card" style="background:#FFF7E6;border-color:var(--amber);margin-top:10px;padding:10px">'+
-    '<b>הקישור לטאבלט — מוצג פעם אחת בלבד:</b>'+
+    '<b>הקישור לטאבלט "'+esc(r.device_name||kName)+'" — מוצג פעם אחת בלבד:</b>'+
     '<div style="word-break:break-all;direction:ltr;text-align:left;font-size:12px;margin:8px 0;background:#fff;padding:8px;border-radius:6px;border:1px solid var(--line)">'+esc(B52_LINK)+'</div>'+
     '<button class="btn sm" onclick="b52CopyKioskLink()">העתקת הקישור</button></div>';
   await b52LoadKioskStatus();
@@ -10156,9 +10196,14 @@ function b52CopyKioskLink(){
       function(){ toast('ההעתקה נכשלה — סמן והעתק ידנית', true); });
   }catch(e){ toast('ההעתקה נכשלה — סמן והעתק ידנית', true); }
 }
-async function b52RevokeKiosk(){
-  if(!confirm('לבטל את רישום הטאבלט? הקיוסק יפסיק לפעול מיד.')) return;
-  var r = await apiBusy('b52RevokeKiosk', {});
+/* B66/BLD-03: ⛔ ביטול הוא תמיד פר-מכשיר. אין כפתור שמבטל את כולם —
+   במתחם עם כמה טאבלטים לחיצה כזו הייתה מורידה את כל ההחתמה בבת אחת. */
+async function b52RevokeKiosk(n){
+  if(n===undefined || n===null || n==='') return toast('לא נבחר טאבלט', true);
+  var hit = (B52_DEVS||[]).find(function(d){ return Number(d.n)===Number(n); });
+  var name = hit ? hit.name : ('טאבלט '+n);
+  if(!confirm('לבטל את רישום "'+name+'"? הטאבלט הזה יפסיק להחתים מיד. שאר הטאבלטים לא ייפגעו.')) return;
+  var r = await apiBusy('b52RevokeKiosk', { device_n: n });
   if(!r || !r.ok) return toast((r&&r.error)||'הביטול נכשל', true);
   B52_LINK = '';
   var box = el('b52KLink'); if(box) box.innerHTML = '';
