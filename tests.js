@@ -781,7 +781,8 @@ SPECS.push({
   needs: 'ui',
   requires: ['allowedViews', 'VIEWS', 'NAV_GROUPS', 'navGroupOf', 'DRIVER_TAB_ORDER',
              'navIsTop', 'navIsSide', 'navMode', 'esc', 'ymdLocal', 'ils', 'ilsVat',
-             'VAT_RATE', 'el', 'kioskOn', 'custBalance'],
+             'VAT_RATE', 'el', 'kioskOn', 'custBalance',
+             'b45Gross', 'b45Money', 'b12Gross', 'b12Net'],
 
   tests: {
 
@@ -873,6 +874,22 @@ SPECS.push({
       t.has(w.ils(100), '100');
       t.has(w.ils(100), '₪');
       t.has(w.ilsVat(100), '118', 'ilsVat אינו מוסיף מע"מ');
+    },
+
+    'BLD-12 — שיעור המע"מ של החנות והפורטל הוא אותו שיעור של המערכת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.b12Gross(100), w.b45Gross(100),
+        'BLD-12 מחשב מע"מ בנפרד מהמערכת — שני שיעורים סותרים');
+      w.DB.settings = [{ key: 'vat_rate', value: '0.17' }];
+      t.eq(w.b12Gross(100), w.b45Gross(100),
+        'שינוי vat_rate בהגדרות אינו מגיע לחנות ולפורטל');
+    },
+
+    '⛔ BLD-12 לא שינה את כלל B45 בשאר המערכת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const m = w.b45Money(100);
+      t.ok(m.indexOf(w.ils(100)) < m.indexOf('כולל מע'),
+        'B45 התהפך — הברוטו הפך למספר הראשי מחוץ לחנות ולפורטל');
     },
 
     'custBalance על DB ריק מחזיר 0 ואינו זורק': (t, { w, srv, H }) => {
@@ -1290,7 +1307,8 @@ SPECS.push({
   file: 't06-nav-sidebar',
   title: 'ניווט — תפריט עליון, רצועת צד, קיצורים ופעולות — B63',
   needs: 'ui',
-  requires: ['renderNav', 'renderRail', 'navMode', 'navIsSide', 'navGroupOf', 'navQuickKeys',
+  requires: ['openDay', 'calEvents', 'b64DayCreateHtml', 'VIEWS',
+             'renderNav', 'renderRail', 'navMode', 'navIsSide', 'navGroupOf', 'navQuickKeys',
              'navToggle', 'NAV_DD', 'b63RailGroups', 'b63RailPanelHtml', 'b63RailToggle',
              'NAV_RAIL_DEFAULT', 'NAV_RAIL_MAX',
              'allowedViews', 'NAV_GROUPS', 'NAV_QUICK_MAX', 'NAV_QUICK_LABEL_MAX',
@@ -1730,14 +1748,71 @@ SPECS.push({
       t.no(pop.classList.contains('on'), 'לחיצה שנייה לא סגרה');
     },
 
+    /* ===== B64 — הפריטים החדשים לא נגעו בניווט ובפריסה ===== */
+
+    '⛔ B64 לא הוסיף מסך — אנשי המקצוע יושבים בתוך רכש וספקים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const keys = w.VIEWS.map(v => v[0]);
+      t.eq(keys.indexOf('providers'), -1, 'נוסף מסך providers — 29 המסכים הפכו ל-30 בלי החלטה');
+      t.ok(keys.indexOf('purchasing') > -1, 'מסך רכש וספקים נעלם מ-VIEWS');
+      t.ok(w.NAV_GROUPS.some(g => g[2].indexOf('purchasing') > -1),
+        'רכש וספקים איבד קטגוריה בתפריט העליון');
+    },
+
+    'רשימת אנשי המקצוע נגישה מהתפריט העליון בשלושת מצבי הניווט': (t, { w, srv, H }) => {
+      [1422, 1000, 700].forEach(px => {
+        H.login(w, 'מנהל', srv);
+        H.setWidth(w, px);
+        w.DB.serviceProviders = [{ id: 'P1', name: 'יוסי', company: 'קירור הצפון', active: 'כן' }];
+        w.go('purchasing');
+        t.has(w.document.getElementById('main').innerHTML, 'אנשי מקצוע וחברות שירות',
+          'ב-' + px + 'px רשימת אנשי המקצוע אינה מוצגת');
+      });
+    },
+
+    '⛔ פתיחת יום ביומן אינה משנה מסך ואינה נוגעת ברצועה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 1422);
+      w.go('calendar');
+      const railBefore = w.document.getElementById('rail').innerHTML;
+      const viewBefore = w.VIEW;
+      w.openDay('2026-08-12');
+      t.eq(w.VIEW, viewBefore, 'פתיחת יום ביומן החליפה מסך');
+      t.eq(w.document.getElementById('rail').innerHTML, railBefore,
+        'פתיחת יום ביומן צוירה מחדש את רצועת הצד');
+      t.has(w.document.getElementById('modal').innerHTML, 'הוספה ליום הזה',
+        'מודל היום נפתח בלי מסלול היצירה');
+    },
+
+    '⛔ היומן ומסלול היצירה אינם שולחים בקשה לשרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.futureExpenses = [{ id: 'FE9', category: 'ביטוח', amount: 300,
+        due_date: '2026-08-12', status: 'ממתין' }];
+      w.go('calendar');
+      const before = w.__fetches.length;
+      w.calEvents();
+      w.openDay('2026-08-12');
+      w.b64DayCreateHtml('2026-08-12');
+      t.eq(w.__fetches.length, before,
+        'היומן מייצר בקשת שרת — R10: כל שיפור הוא צמצום מספר הבקשות, לא הוספה');
+    },
+
+    'סרגלי הפעולות החדשים לא שברו את דפוס ⋯ הקיים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.moreMenu([]), '', 'moreMenu ריק חזר לייצר כפתור ⋯ מיותר');
+      const h = w.moreMenu(['<button class="btn sm">א</button>']);
+      t.has(h, 'more-wrap', 'מבנה ה-⋯ השתנה — b62OrderActions יישבר');
+      t.has(h, 'toggleMore', 'ה-⋯ אינו מחובר ל-toggleMore');
+    },
+
     /* ===== canary ===== */
 
-    'canary עודכן ל-B63a בשני המקומות': (t, { H }) => {
+    'canary עודכן ל-B64a בשני המקומות': (t, { H }) => {
       const s = H.indexSrc();
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.63-B63a', 'ה-canary לא עודכן ל-B63a');
+      t.eq(inJs, 'v4.64-B64a', 'ה-canary לא עודכן ל-B64a');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -1772,6 +1847,546 @@ SPECS.push({
       t.eq(w.document.getElementById('rail').innerHTML, before, 'הבדיקה העצמית שינתה את הרצועה');
     }
 
+
+  }
+});
+
+
+/* ============================================================================
+   t07 — B64: יצירה מהיומן (T1) · כולל מע"מ בחנות ובפורטל (BLD-12) ·
+         השבתת ספק שירות (BLD-02) · סרגלי פעולות (T2ב)
+   ----------------------------------------------------------------------------
+   ⚠ מה החלק הזה **לא** מוכיח: שהמחיר שנראה ללקוח בדפדפן האמיתי נכון.
+   הוא מוכיח שהפונקציות מחזירות את המספר הנכון ושהמחרוזות במקומן. תצוגה
+   בפועל היא שכבה 2.
+   ============================================================================ */
+
+SPECS.push({
+  file: 't07-b64',
+  title: 'B64 — יומן, מע"מ בחנות ובפורטל, ספק שירות, סרגלי פעולות',
+  needs: 'ui',
+  requires: ['calEvents', 'openDay', 'b64DayCreateHtml', 'b64MoneyVisible',
+             'b64FexpDue', 'b64RecvDue', 'taskForm', 'meetingForm', 'newOrderForm',
+             'futureExpForm', 'b12Gross', 'b12Net', 'b12PriceInline', 'b12PriceStack',
+             'b45Gross', 'b45Money', 'b02ProvidersHtml', 'b02ToggleProv', 'b02CanProv',
+             'b42Providers', 'moreMenu', 'b62OrderActions', 'dYmd', 'b43IsYmd'],
+
+  tests: {
+
+    /* ---------- T1: מה היומן מציג ---------- */
+
+    'הוצאה עתידית פתוחה הופכת לאירוע "לתשלום" ביום הפירעון': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.futureExpenses = [{ id: 'FE1', category: 'ביטוח', description: 'ביטוח משאית',
+        amount: 1000, due_date: '2026-08-12', status: 'ממתין' }];
+      const evs = w.calEvents().filter(e => e.date === '2026-08-12');
+      t.eq(evs.length, 1, 'הוצאה עתידית פתוחה אינה מופיעה ביומן');
+      t.has(evs[0].label, 'לתשלום', 'תווית האירוע אינה מזהה אותו כיום תשלום');
+      t.has(evs[0].click, 'fexpBreakdown', 'לחיצה על יום תשלום אינה מובילה לפירוט ההוצאה');
+    },
+
+    'תאריך ISO מלא מהגיליון עדיין נופל על היום הנכון (dYmd)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.futureExpenses = [{ id: 'FE2', category: 'שכירות', amount: 500,
+        due_date: '2026-08-12T00:00:00.000Z', status: 'ממתין' }];
+      const out = w.b64FexpDue();
+      t.eq(out.length, 1, 'תאריך ISO מלא הפיל את ההוצאה מהיומן');
+      t.eq(out[0].due_date, w.dYmd('2026-08-12T00:00:00.000Z'),
+        'התאריך לא נורמל — ההוצאה תיפול על יום שגוי או תיעלם');
+    },
+
+    'הוצאה ששולמה או נמחקה אינה מופיעה ביומן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.futureExpenses = [
+        { id: 'FE3', category: 'א', amount: 100, due_date: '2026-08-20', status: 'שולם' },
+        { id: 'FE4', category: 'ב', amount: 100, due_date: '2026-08-20', status: 'ממתין', deleted: 'כן' }
+      ];
+      t.eq(w.b64FexpDue().length, 0, 'הוצאה סגורה או מחוקה מזהמת את היומן');
+    },
+
+    'הוצאה בלי מועד תשלום אינה מייצרת אירוע': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.futureExpenses = [{ id: 'FE5', category: 'א', amount: 100, due_date: '', status: 'ממתין' }];
+      t.eq(w.b64FexpDue().length, 0, 'הוצאה בלי תאריך יצרה אירוע ביומן');
+    },
+
+    '⛔ נהג ומחסן אינם רואים כסף ביומן': (t, { w, srv, H }) => {
+      ['נהג', 'מחסן'].forEach(role => {
+        H.login(w, role, srv);
+        w.DB.futureExpenses = [{ id: 'FE6', category: 'ביטוח', amount: 900,
+          due_date: '2026-08-12', status: 'ממתין' }];
+        t.no(w.b64MoneyVisible(), 'תפקיד ' + role + ' מקבל גישה לכסף ביומן');
+        const evs = w.calEvents().filter(e => String(e.label).indexOf('לתשלום') > -1);
+        t.eq(evs.length, 0, 'תפקיד ' + role + ' רואה סכומי כסף ביומן');
+      });
+    },
+
+    'מנהל ומשרד כן רואים כסף ביומן': (t, { w, srv, H }) => {
+      ['מנהל', 'משרד'].forEach(role => {
+        H.login(w, role, srv);
+        t.ok(w.b64MoneyVisible(), 'תפקיד ' + role + ' חסום מראיית מועדי תשלום');
+      });
+    },
+
+    'מועדי פירעון של לקוחות נגזרים מספר החיובים בלבד': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.b64RecvDue().length, 0, 'ספר חיובים ריק ייצר אירועי פירעון יש מאין');
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/function b64RecvDue\(\)[\s\S]*?\n\}/) || [''])[0];
+      t.has(fn, 'b54LedgerFE', 'b64RecvDue אינו נשען על ספר החיובים — נוצר מקור כסף שני');
+    },
+
+    /* ---------- T1: יצירה מתוך היום ---------- */
+
+    'לחיצה על יום פותחת מסלול יצירה עם ארבע הישויות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const h = w.b64DayCreateHtml('2026-08-12');
+      ['newOrderForm', 'taskForm', 'meetingForm', 'futureExpForm'].forEach(f => {
+        t.has(h, f, 'חסר מסלול יצירה מהיומן: ' + f);
+      });
+      t.has(h, '2026-08-12', 'התאריך שנלחץ אינו מועבר לטופס');
+    },
+
+    'openDay מציג בפועל את כפתורי היצירה (R7 — DOM אמיתי)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.CAL_Y = 2026; w.CAL_M = 7;
+      w.rCalendarDraw([]);
+      const day = w.document.querySelector('.calday');
+      t.ok(day, 'לוח היומן לא צויר — אין ימים ללחוץ עליהם');
+      H.click(w, day);
+      const modal = w.document.getElementById('modal');
+      t.has(modal.innerHTML, 'הוספה ליום הזה', 'לחיצה על יום אינה פותחת מסלול יצירה');
+      t.has(modal.innerHTML, 'יום לתשלום', 'חסר "יום לתשלום" במודל היום');
+    },
+
+    'התאריך שנלחץ מגיע מאוכלס לטופס המשימה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.taskForm('2026-08-12');
+      const inp = w.document.getElementById('f_tdue');
+      t.ok(inp, 'שדה תאריך היעד נעלם מטופס המשימה');
+      t.eq(inp.value, '2026-08-12', 'תאריך היעד לא אוכלס מהיומן');
+    },
+
+    'התאריך שנלחץ מגיע מאוכלס לטופס ההוצאה העתידית': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.futureExpForm('2026-08-12');
+      const inp = w.document.getElementById('f_fedate');
+      t.ok(inp, 'שדה מועד התשלום נעלם מטופס ההוצאה העתידית');
+      t.eq(inp.value, '2026-08-12', 'מועד התשלום לא אוכלס מהיומן');
+    },
+
+    'פתיחת הטפסים בלי תאריך נשארת ריקה — הקריאות הישנות לא נשברו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.taskForm();
+      t.eq(w.document.getElementById('f_tdue').value, '', 'taskForm() ללא ארגומנט מאכלס תאריך');
+      w.futureExpForm();
+      t.eq(w.document.getElementById('f_fedate').value, '', 'futureExpForm() ללא ארגומנט מאכלס תאריך');
+    },
+
+    '⛔ לא נוצר טופס שני לאותה ישות': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      [['taskForm', /function\s+taskForm\s*\(/g], ['meetingForm', /function\s+meetingForm\s*\(/g],
+       ['futureExpForm', /function\s+futureExpForm\s*\(/g], ['newOrderForm', /function\s+newOrderForm\s*\(/g]
+      ].forEach(pair => {
+        t.eq((src.match(pair[1]) || []).length, 1,
+          'קיימות שתי הגדרות ל-' + pair[0] + ' — נוצר טופס כפול');
+      });
+    },
+
+    '⛔ טסט וביטוח מוצגים ביומן ואינם ניתנים ליצירה ממנו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.vehicles = [{ id: 'V1', plate: '11-222-33', test_date: '2026-08-05',
+        insurance_expiry: '2026-08-06', next_service_date: '2026-08-07' }];
+      const lbls = w.calEvents().map(e => e.label).join(' | ');
+      ['טסט', 'ביטוח', 'טיפול רכב'].forEach(k => {
+        t.has(lbls, k, 'מועד ' + k + ' הפסיק להופיע ביומן');
+      });
+      const h = w.b64DayCreateHtml('2026-08-05');
+      t.hasNot(h, 'טסט', 'טסט הוצע ליצירה מהיומן — הוא שדה בכרטיס הרכב');
+      t.hasNot(h, 'ביטוח', 'ביטוח הוצע ליצירה מהיומן — הוא שדה בכרטיס הרכב');
+    },
+
+    /* ---------- BLD-12 ---------- */
+
+    'b12Gross מוסיף מע"מ ו-b12Net מתייג את הנטו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(w.b12Gross(100), w.b45Gross(100), 'b12Gross אינו נשען על חישוב המע"מ הקיים');
+      t.has(w.b12Net(100), 'לפני מע', 'תווית הנטו אינה מסבירה שזה לפני מע"מ');
+    },
+
+    'בחנות ובפורטל המספר הראשי הוא כולל מע"מ': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const gross = w.ils(w.b12Gross(100));
+      const net = w.ils(100);
+      [w.b12PriceInline(100), w.b12PriceStack(100)].forEach(h => {
+        t.has(h, '<b>' + gross + '</b>', 'הסכום כולל מע"מ אינו המספר הראשי');
+        t.has(h, net, 'הסכום לפני מע"מ נעלם לגמרי מהתצוגה');
+        t.ok(h.indexOf(gross) < h.indexOf('muted'), 'הנטו מופיע לפני הברוטו');
+      });
+    },
+
+    '⛔ כלל B45 לא נגע בשאר המערכת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const h = w.b45Money(100);
+      t.has(h, '<b>' + w.ils(100) + '</b>', 'B45 נשבר — הנטו כבר אינו המספר הראשי במערכת');
+      t.has(h, 'כולל מע', 'B45 נשבר — הברוטו נעלם מהכתב הקטן');
+    },
+
+    '⛔ החריג נשאר בחנות ובפורטל בלבד': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      ['b12PriceInline', 'b12PriceStack', 'b12Gross', 'b12Net'].forEach(fn => {
+        const re = new RegExp('[^\\w]' + fn + '\\s*\\(', 'g');
+        t.ok((src.match(re) || []).length > 0, fn + ' הוגדר ואינו בשימוש בשום מקום');
+      });
+      const fin = (src.match(/function rFinance[\s\S]*?\n\}/) || [''])[0];
+      t.hasNot(fin, 'b12Price', 'עוזרי BLD-12 חלחלו למסך הכספים — כלל B45 נשבר');
+    },
+
+    'סיכום הסל בחנות מוביל בסכום לתשלום': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/function shopTotal\(\)[\s\S]*?\n\}/) || [''])[0];
+      t.has(fn, 'סה"כ לתשלום', 'סיכום הסל אינו מוביל בסכום שהלקוח משלם בפועל');
+      t.has(fn, 'לפני מע', 'הנטו נעלם לגמרי מסיכום הסל');
+    },
+
+    '⛔ הסכום שנשלח לשרת נשאר נטו — שינינו תצוגה בלבד': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      ['shopSubmit', 'portalSubmit'].forEach(name => {
+        const fn = (src.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}')) || [''])[0];
+        t.hasNot(fn, 'b12Gross', name + ' שולח סכום ברוטו לשרת — הכסף התקלקל');
+        t.hasNot(fn, 'b45Gross', name + ' שולח סכום ברוטו לשרת — הכסף התקלקל');
+      });
+    },
+
+    '⛔ מסגרת האשראי נשארה נטו ומתויגת (R4)': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/function portalCheckout\(r\)[\s\S]*?\n\}/) || [''])[0];
+      t.has(fn, 'חוב קודם (לפני מע"מ)', 'החוב הקודם אינו מתויג — הלקוח יחשוב שהוא ברוטו');
+      t.hasNot(fn, 'b12Gross(fromAg(cr.', 'מסגרת האשראי הומרה לברוטו — היא לא תתאים למנוע');
+    },
+
+    /* ---------- BLD-02 ---------- */
+
+    'רשימת אנשי המקצוע מציגה פעילים ומושבתים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.serviceProviders = [
+        { id: 'P1', name: 'יוסי', company: 'קירור הצפון', domain: 'קירור', active: 'כן' },
+        { id: 'P2', name: 'דנה', company: 'חשמל דרום', domain: 'חשמל', active: 'לא' }
+      ];
+      const h = w.b02ProvidersHtml();
+      t.has(h, 'קירור הצפון', 'איש מקצוע פעיל נעלם מהרשימה');
+      t.has(h, 'חשמל דרום', 'איש מקצוע מושבת נעלם — השבתה אינה מחיקה');
+      t.has(h, 'השבת', 'אין כפתור השבתה לאיש מקצוע פעיל');
+      t.has(h, 'הפעל מחדש', 'אין דרך להחזיר איש מקצוע מושבת');
+    },
+
+    '⛔ מושבת נעלם מהבוררים אבל נשאר בטבלה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.serviceProviders = [
+        { id: 'P1', name: 'יוסי', company: 'קירור הצפון', active: 'כן' },
+        { id: 'P2', name: 'דנה', company: 'חשמל דרום', active: 'לא' }
+      ];
+      const ids = w.b42Providers().map(x => x.id);
+      t.eq(ids.length, 1, 'איש מקצוע מושבת עדיין מוצע לבחירה בתקלות');
+      t.eq(ids[0], 'P1', 'הבורר מציג את איש המקצוע הלא נכון');
+      t.eq(w.DB.serviceProviders.length, 2, 'ההשבתה מחקה את הרשומה — ההיסטוריה אבדה');
+    },
+
+    '⛔ רק מנהל ומשרד מקבלים את כפתור ההשבתה': (t, { w, srv, H }) => {
+      ['מנהל', 'משרד'].forEach(role => {
+        H.login(w, role, srv);
+        w.DB.serviceProviders = [{ id: 'P1', name: 'יוסי', company: 'קירור הצפון', active: 'כן' }];
+        t.ok(w.b02CanProv(), role + ' חסום מהשבתת ספק שירות');
+        t.has(w.b02ProvidersHtml(), 'b02ToggleProv', 'כפתור ההשבתה חסר ל-' + role);
+      });
+      ['מחסן', 'נהג', 'ייצור'].forEach(role => {
+        H.login(w, role, srv);
+        w.DB.serviceProviders = [{ id: 'P1', name: 'יוסי', company: 'קירור הצפון', active: 'כן' }];
+        t.no(w.b02CanProv(), role + ' קיבל הרשאה להשבית ספק שירות');
+        t.hasNot(w.b02ProvidersHtml(), 'b02ToggleProv', 'כפתור ההשבתה נחשף ל-' + role);
+      });
+    },
+
+    '⛔ ההשבתה משתמשת בפעולת השרת הקיימת ושולחת את כל השדות': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/async function b02ToggleProv\(id\)[\s\S]*?\n\}/) || [''])[0];
+      t.has(fn, 'b42SaveProvider', 'נוצרה פעולת שרת חדשה במקום להשתמש בקיימת');
+      ['name:', 'company:', 'domain:', 'phone:', 'email:', 'vat_id:', 'notes:', 'active:'].forEach(f => {
+        t.has(fn, f, 'השדה ' + f + ' אינו נשלח — עדכון חלקי ירוקן אותו בגיליון');
+      });
+    },
+
+    'מסך הרכש מציג את רשימת אנשי המקצוע': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.serviceProviders = [{ id: 'P1', name: 'יוסי', company: 'קירור הצפון', active: 'כן' }];
+      w.go('purchasing');
+      t.has(w.document.getElementById('main').innerHTML, 'אנשי מקצוע וחברות שירות',
+        'רשימת אנשי המקצוע אינה מופיעה במסך רכש וספקים');
+    },
+
+    /* ---------- T2ב ---------- */
+
+    'סריקת יחידה, עגלה ומדף: פעולה ראשית אחת + ⋯': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/async function doScan\(\)[\s\S]*?\n\}\n/) || [''])[0];
+      t.has(fn, 'moreMenu', 'מסך הסריקה לא אימץ את דפוס ⋯ של b62OrderActions');
+      ['גרוט', 'ספירת מדף', 'היסטוריית הכביסה', 'פתח כרטיס עגלה'].forEach(lbl => {
+        t.has(fn, lbl, 'הפעולה "' + lbl + '" נעלמה ממסך הסריקה');
+      });
+    },
+
+    'מרכז האישורים: אישור גלוי, דחייה ב-⋯, ושום פעולה לא נעלמה': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/async function loadApprovals\(\)[\s\S]*?\n\}\n/) || [''])[0];
+      t.has(fn, 'moreMenu', 'מרכז האישורים לא אימץ את דפוס ⋯');
+      ['apprApproveGuarantee', 'apprRejectGuarantee', 'apprApproveException',
+       'apprRejectException', 'apprConfirmDecl', 'apprRejectDecl',
+       'apprReplyMsg', 'apprCloseMsg'].forEach(fnName => {
+        t.has(fn, fnName, 'הפעולה ' + fnName + ' נעלמה ממרכז האישורים');
+      });
+    },
+
+    '⛔ הרשאות מרכז האישורים לא השתנו': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      const fn = (src.match(/async function loadApprovals\(\)[\s\S]*?\n\}\n/) || [''])[0];
+      t.has(fn, 'canAct', 'בדיקת ההרשאה canAct נעלמה ממרכז האישורים');
+      t.has(fn, 'אישור/דחייה — מנהל בלבד', 'ההסבר למי שאינו מורשה נעלם');
+    },
+
+    '⛔ תפריט ⋯ נשאר אחד — לא נבנה דפוס שני (R8)': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      t.eq((src.match(/function\s+moreMenu\s*\(/g) || []).length, 1,
+        'קיימות שתי הגדרות moreMenu — נבנה דפוס תפריט שני');
+      t.eq((src.match(/function\s+toggleMore\s*\(/g) || []).length, 1,
+        'קיימות שתי הגדרות toggleMore');
+    }
+
+  }
+});
+
+
+/* ============================================================================
+   t08 — B64a: נרמול ערכי טקסט מהגיליון לפני השוואה
+   ----------------------------------------------------------------------------
+   ⚠ הבאג שנתפס כאן, ואיך הוא נראה למשתמש: רווח נגרר אחד בעמודת `stage`
+   בגיליון גרם ל-`STAGES.indexOf` להחזיר -1, `advanceForm` יצאה **לפני**
+   `openModal`, והמודל פשוט לא נפתח. ההודעה שכן הוצגה — "המשימה כבר בשלב
+   מוכן" — הייתה שגויה, ולכן שלחה לחפש במקום הלא נכון. אותו דפוס בדיוק
+   הפיל את כרטיס "בחר סיבה" של הנהג: `kind` עם רווח → `picks` ריק →
+   הכרטיס לא צויר כלל.
+   ⛔ הבדיקות האלה חייבות לרוץ **דרך המודל האמיתי**, לא דרך הפונקציה
+   העוזרת — אחרת הן לא מוכיחות שהתפריט באמת נפתח.
+   ============================================================================ */
+
+SPECS.push({
+  file: 't08-b64a-sval',
+  title: 'B64a — ערך מהגיליון עם רווח לא מפיל תפריט',
+  /* ⚠ 'ui' ולא 'both': בדיקת הריקבון מאמתת סמלים מול סביבה **אחת**, וכל
+     הסמלים כאן חיים בממשק. השוואת הקוד מול השרת נעשית דרך H.serverSrc(). */
+  needs: 'ui',
+  requires: ['sVal', 'sPick', 'advanceForm', 'STAGES', 'NOBLE_STAGES',
+             'b41IntakeState', 'b41DriverHandled', 'b41PickupReceived',
+             'b41IntakeBannerHtml', 'openModal', 'closeModal',
+             'portalLaundryHtml', 'dYmd', 'b58AfterRefresh', 'render', 'go'],
+
+  tests: {
+
+    /* ---------- המנרמל עצמו ---------- */
+
+    'sVal מנקה רווחים, רווח קשיח ותווי כיווניות': (t, { w }) => {
+      t.eq(w.sVal('בכביסה '), 'בכביסה', 'רווח נגרר לא נוקה');
+      t.eq(w.sVal(' בכביסה'), 'בכביסה', 'רווח מוביל לא נוקה');
+      t.eq(w.sVal('בגיהוץ  וקיפול'), 'בגיהוץ וקיפול', 'רווח כפול פנימי לא כווץ');
+      t.eq(w.sVal('בכביסה\u00A0'), 'בכביסה', 'רווח קשיח (הדבקה מדפדפן) לא נוקה');
+      t.eq(w.sVal('\u200Eבכביסה'), 'בכביסה', 'תו כיווניות RTL לא נוקה');
+      t.eq(w.sVal(null), '', 'null לא הפך למחרוזת ריקה');
+      t.eq(w.sVal(undefined), '', 'undefined לא הפך למחרוזת ריקה');
+    },
+
+    '⛔ sVal אינו משנה ערך תקין': (t, { w }) => {
+      w.STAGES.forEach(s => t.eq(w.sVal(s), s, 'הערך התקין "' + s + '" שונה על ידי sVal'));
+    },
+
+    'sPick מחזיר את הערך הקנוני מהרשימה, לא את מה שהיה בגיליון': (t, { w }) => {
+      t.eq(w.sPick('בכביסה ', w.STAGES), 'בכביסה', 'sPick לא החזיר את הערך הקנוני');
+      t.eq(w.sPick('שלב שלא קיים', w.STAGES), '', 'sPick התאים ערך שאינו ברשימה');
+      t.eq(w.sPick('', w.STAGES), '', 'ערך ריק קיבל התאמה');
+    },
+
+    /* ---------- הבאג המקורי: המודל חייב להיפתח ---------- */
+
+    '⭐ מודל קידום שלב נפתח גם כשיש רווח בגיליון': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'I1', name: 'מגבת' }];
+      w.DB.carts = [{ id: 'CA1', status: 'בשימוש' }];
+      ['בכביסה', 'בכביסה ', ' בכביסה', 'בכביסה\u00A0', '\u200Eבכביסה', 'בגיהוץ  וקיפול'].forEach(st => {
+        w.closeModal();
+        w.DB.laundryTasks = [{ id: 'LT1', item_id: 'I1', qty: 5, stage: st, cart_id: 'CA1' }];
+        w.advanceForm('LT1');
+        const open = w.document.getElementById('modalBg').style.display === 'flex';
+        t.ok(open, 'המודל לא נפתח כאשר stage=' + JSON.stringify(st) + ' — זה הבאג המקורי');
+        t.ok(w.document.getElementById('adv_to'), 'בורר שלב היעד לא נוצר עבור ' + JSON.stringify(st));
+      });
+    },
+
+    'בורר שלב היעד מציע את אותן אפשרויות עם רווח ובלעדיו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'I1', name: 'מגבת' }];
+      w.DB.carts = [{ id: 'CA1', status: 'בשימוש' }];
+      const opts = st => {
+        w.closeModal();
+        w.DB.laundryTasks = [{ id: 'LT1', item_id: 'I1', qty: 5, stage: st, cart_id: 'CA1' }];
+        w.advanceForm('LT1');
+        const s = w.document.getElementById('adv_to');
+        return s ? Array.from(s.options).map(o => o.value).join(',') : '';
+      };
+      t.eq(opts('בכביסה '), opts('בכביסה'), 'רווח בגיליון שינה את רשימת שלבי היעד');
+    },
+
+    '⛔ שלב שבאמת לא מוכר מקבל הודעה נכונה ולא "כבר בשלב מוכן"': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'I1', name: 'מגבת' }];
+      const msgs = [];
+      const orig = w.toast; w.toast = m => msgs.push(String(m));
+      w.closeModal();
+      w.DB.laundryTasks = [{ id: 'LT9', item_id: 'I1', qty: 1, stage: 'בכביסה ראשונה' }];
+      w.advanceForm('LT9');
+      w.toast = orig;
+      t.ok(msgs.length > 0, 'שלב לא מוכר לא הפיק שום הודעה');
+      t.hasNot(msgs[0], 'כבר בשלב מוכן', 'ההודעה השגויה חזרה — היא שולחת לחפש במקום הלא נכון');
+      t.has(msgs[0], 'בכביסה ראשונה', 'ההודעה אינה מציגה את הערך הבעייתי שבגיליון');
+      t.has(msgs[0], 'LT9', 'ההודעה אינה מציינת באיזו משימה לתקן');
+    },
+
+    'משימה שבאמת הסתיימה עדיין מקבלת את ההודעה הישנה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'I1', name: 'מגבת' }];
+      const msgs = [];
+      const orig = w.toast; w.toast = m => msgs.push(String(m));
+      w.closeModal();
+      w.DB.laundryTasks = [{ id: 'LT8', item_id: 'I1', qty: 1, stage: 'מוכן ' }];
+      w.advanceForm('LT8');
+      w.toast = orig;
+      t.has(msgs[0] || '', 'כבר בשלב מוכן', 'משימה שהסתיימה קיבלה הודעת שלב לא מוכר');
+      t.no(w.document.getElementById('modalBg').style.display === 'flex',
+        'משימה שהסתיימה פתחה מודל קידום');
+    },
+
+    /* ---------- בורר הסיבה של הנהג ---------- */
+
+    '⭐ כרטיס "בחר סיבה" מצויר גם כש-kind בגיליון עם רווח': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח' }];
+      w.DB.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', status: 'נמסרה',
+        type: 'השכרה', start_date: '2026-07-01', end_date: '2026-07-10' }];
+      ['איסוף', 'איסוף ', ' איסוף', 'איסוף\u00A0'].forEach(k => {
+        w.DB.deliveries = [{ id: 'D1', order_id: 'O1', kind: k, direction: 'איסוף',
+          status: 'מתוכנן', driver: 'נהג א', date: '2026-07-10' }];
+        const st = w.b41IntakeState('O1');
+        t.eq(st.picks.length, 1, 'kind=' + JSON.stringify(k) + ' — האיסוף לא נמצא, הכרטיס לא ייווצר');
+        t.ok(st.open.length === 1, 'kind=' + JSON.stringify(k) + ' — הנסיעה לא נחשבה פתוחה');
+      });
+    },
+
+    'status עם רווח עדיין נחשב נסיעה פתוחה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח' }];
+      w.DB.orders = [{ id: 'O1', customer_id: 'C1', status: 'נמסרה', type: 'השכרה',
+        start_date: '2026-07-01', end_date: '2026-07-10' }];
+      ['מתוכנן', 'מתוכנן ', 'בדרך '].forEach(stt => {
+        w.DB.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'איסוף', status: stt, driver: 'נהג א' }];
+        t.eq(w.b41IntakeState('O1').open.length, 1,
+          'status=' + JSON.stringify(stt) + ' לא נחשב פתוח');
+      });
+    },
+
+    'שם נהג עם רווח כפול עדיין מזוהה כמי שתיעד': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.ok(w.b41DriverHandled({ driver: 'יוסי כהן', scan_status: 'נסרק', scan_by: 'יוסי  כהן' }),
+        'רווח כפול בשם ניתק את זיהוי הנהג — המערכת "שוכחת" שהוא סרק');
+      t.ok(w.b41DriverHandled({ driver: 'יוסי כהן ', photo_url: 'u', photo_by: 'יוסי כהן' }),
+        'רווח נגרר בשם ניתק את זיהוי הצילום');
+      t.no(w.b41DriverHandled({ driver: 'יוסי', scan_status: 'נסרק', scan_by: 'דנה' }),
+        'נהג אחר זוהה בטעות כמי שתיעד — הנרמול רחב מדי');
+    },
+
+    '⛔ נהג שלא תיעד כלום עדיין דורש סיבה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח' }];
+      w.DB.orders = [{ id: 'O1', customer_id: 'C1', status: 'נמסרה', type: 'השכרה',
+        start_date: '2026-07-01', end_date: '2026-07-10' }];
+      w.DB.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'איסוף ', status: 'מתוכנן',
+        driver: 'נהג א' }];
+      t.ok(w.b41IntakeState('O1').needsReason,
+        'הדרישה לסיבה נעלמה — B41 נשבר, נסיעה לא מתועדת תיסגר בלי הסבר');
+    },
+
+    /* ---------- מחווני NOBLE ---------- */
+
+    'מחוון הכביסה בפורטל אינו נראה כבוי בגלל רווח': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const a = w.portalLaundryHtml({ status: 'בייבוש', eta_min: 0 });
+      const b = w.portalLaundryHtml({ status: 'בייבוש ', eta_min: 0 });
+      t.eq(a, b, 'רווח בעמודת status שינה את מחוון ההתקדמות שהלקוח רואה');
+    },
+
+    /* ---------- הסכמה בין שני הצדדים ---------- */
+
+    '⛔ sVal זהה בממשק ובשרת — שני הצדדים לא יתפצלו': (t, { H }) => {
+      const ui = H.stripComments(H.uiScript());
+      const sv = H.stripComments(H.serverSrc());
+      const grab = src => {
+        const m = src.match(/function sVal\([\s\S]*?\n\}/);
+        return m ? m[0].replace(/\s+/g, '') : '';
+      };
+      const a = grab(ui), b = grab(sv);
+      t.ok(a.length > 0, 'sVal חסר בממשק');
+      t.ok(b.length > 0, 'sVal חסר בשרת');
+      t.eq(a, b, 'sVal התפצל בין הממשק לשרת — ההתנהגות תשתנה בין הצדדים');
+    },
+
+    '⛔ השרת מנרמל את השלב שנקרא מהגיליון': (t, { H }) => {
+      const sv = H.stripComments(H.serverSrc());
+      t.has(sv, 'sPick(t.stage, STAGES)',
+        'השרת עדיין משווה את השלב מהגיליון בהשוואה מדויקת');
+      t.hasNot(sv, 'var idx = STAGES.indexOf(t.stage)',
+        'ההשוואה המדויקת הישנה נשארה בשרת');
+    },
+
+    /* ---------- הרענון האוטומטי לא קוטע בחירה ---------- */
+
+    '⛔ הרענון האוטומטי אינו מצייר מחדש בזמן שהמשתמש בתוך שדה או בורר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      const box = w.document.createElement('select');
+      box.innerHTML = '<option>א</option>';
+      w.document.getElementById('main').appendChild(box);
+      box.focus();
+      let rendered = 0;
+      const orig = w.render; w.render = () => { rendered++; };
+      w.b58AfterRefresh();
+      w.render = orig;
+      t.eq(rendered, 0, 'הרענון צייר מחדש בזמן בחירה — הרשימה נמחקת והפירוט שהוקלד אובד');
+    },
+
+    'הרענון כן מצייר מחדש כשהמשתמש אינו באמצע כלום': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.go('orders');
+      w.closeModal();
+      if (w.document.activeElement && w.document.activeElement.blur) w.document.activeElement.blur();
+      let rendered = 0;
+      const orig = w.render; w.render = () => { rendered++; };
+      w.b58AfterRefresh();
+      w.render = orig;
+      t.eq(rendered, 1, 'הרענון הפסיק לצייר מחדש לגמרי — המסך לא יתעדכן יותר');
+    },
+
+    '⛔ sVal לא הוחל על כסף או על מספרים': (t, { H }) => {
+      const ui = H.stripComments(H.uiScript());
+      ['sVal(x.amount', 'sVal(r.open_ag', 'sVal(o.total', 'sVal(fromAg', 'sVal(toAg'].forEach(bad => {
+        t.hasNot(ui, bad, 'sVal הוחל על ערך כספי — שם ההשוואה מספרית ולא טקסטואלית');
+      });
+    }
 
   }
 });
