@@ -1807,12 +1807,12 @@ SPECS.push({
 
     /* ===== canary ===== */
 
-    'canary עודכן ל-B65 בשני המקומות': (t, { H }) => {
+    'canary עודכן בשני המקומות': (t, { H }) => {
       const s = H.indexSrc();
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.66-B66', 'ה-canary לא עודכן ל-B66');
+      t.eq(inJs, 'v4.67-B67', 'ה-canary לא עודכן ל-B67');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -3270,6 +3270,493 @@ SPECS.push({
     }
   }
 });
+
+
+/* ==================== t11 — B67 / BLD-16: חוב שכר ברמת העובד ====================
+   ⚠ זו אצווה שנוגעת בכסף שיוצא בפועל. כל בדיקה כאן מגינה על באג כספי אמיתי. */
+
+SPECS.push({
+  file: 't11-b67-srv',
+  title: 'B67 — השרת: הקצאת תשלום לחוב הישן ביותר',
+  needs: 'server',
+  requires: ['b67PayOneRow', 'b67PayEmployee', 'b67EmployeeOpenRows', 'b67EmployeeDebt',
+             'b67FlushWrites', 'writeTable', 'payrollPaidSum', 'syncFutureExpenseForPayroll',
+             'cashBalanceSrv', 'handle', 'MANAGER_ONLY', 'READ_ONLY_ACTIONS', 'sVal'],
+
+  tests: {
+
+    '⭐ הדוגמה של אבי: 10,000 יולי + 20,000 אוגוסט · תשלום 5,000': (t, { srv, H }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 20000, 'אושר');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 5000, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.eq(r.allocations.length, 1, 'התשלום פוצל ליותר מחודש אחד');
+      t.eq(r.allocations[0].month, '2026-07', 'התשלום לא נכנס לחוב הישן ביותר');
+      t.eq(r.allocations[0].amount, 5000, 'סכום ההקצאה שגוי');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 25000, 'סך החוב אחרי התשלום שגוי');
+      t.eq(Math.round((10000 - srv.payrollPaidSum(db, 'P7')) * 100) / 100, 5000, 'יולי לא ירד ל-5,000');
+      t.eq(srv.payrollPaidSum(db, 'P8'), 0, 'אוגוסט נגע — אסור, הוא החדש יותר');
+      t.eq(srv.sVal(db.payroll.find(x => x.id === 'P8').status), 'אושר', 'סטטוס אוגוסט השתנה');
+    },
+
+    'תשלום שגולש חודש — יולי נסגר והעודף לאוגוסט': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 20000, 'אושר');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 12500, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.eq(r.allocations.length, 2, 'הגלישה לא בוצעה');
+      t.eq(r.allocations[0].amount, 10000, 'יולי לא נסגר במלואו');
+      t.eq(r.allocations[1].amount, 2500, 'העודף שנכנס לאוגוסט שגוי');
+      t.eq(srv.sVal(db.payroll.find(x => x.id === 'P7').status), 'שולם במלואו', 'יולי לא סומן כשולם במלואו');
+      t.eq(srv.sVal(db.payroll.find(x => x.id === 'P8').status), 'שולם חלקית', 'אוגוסט לא סומן כשולם חלקית');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 17500, 'החוב שנותר שגוי');
+    },
+
+    'תשלום מדויק על כל החוב — הכל שולם במלואו, יתרה אפס': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 20000, 'שולם חלקית');
+      B67.pay(db, 'P8', 'E1', 5000);
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 25000, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.eq(r.debt_after, 0, 'נותר חוב אחרי תשלום מלא');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 0, 'החוב הפתוח לא התאפס');
+      db.payroll.forEach(p => t.eq(srv.sVal(p.status), 'שולם במלואו', 'רשומה ' + p.month + ' לא סומנה כשולם במלואו'));
+      t.eq(srv.b67EmployeeOpenRows(db, 'E1').length, 0, 'נותרו חודשים פתוחים');
+    },
+
+    '⛔ סכום מעל החוב — נדחה, ושום דבר לא נכתב': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 10000.01 + 5, method: 'העברה' }, 'מנהל');
+      t.no(r.ok, 'תשלום מעל סך החוב התקבל');
+      t.has(r.error, '10000', 'ההודעה אינה אומרת מה סך החוב');
+      t.eq(db.payrollPayments.length, 0, 'נכתבה שורת תשלום למרות הדחייה');
+      t.eq(db.expenses.length, 0, 'נכתבה הוצאה למרות הדחייה');
+      t.eq(db.futureExpenses.length, 0, 'נכתבה הוצאה עתידית למרות הדחייה');
+      t.eq(srv.sVal(db.payroll[0].status), 'אושר', 'הסטטוס שונה למרות הדחייה');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 10000, 'החוב השתנה למרות הדחייה');
+    },
+
+    '⛔ מלכודת 1 — חודש בטיוטה בין השאר: מדולג, ומוחזרת אזהרה': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'טיוטה');   // ישן יותר, לא אושר
+      B67.pr(db, 'P8', 'E1', '2026-08', 20000, 'אושר');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 20000, 'טיוטה נספרה כחוב — אסור');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 3000, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.eq(r.allocations[0].month, '2026-08', 'התשלום נכנס לטיוטה — אסור לעקוף אישור');
+      t.eq(srv.payrollPaidSum(db, 'P7'), 0, 'שולם כסף כנגד רשומת טיוטה');
+      t.eq(r.skipped_drafts.join(','), '2026-07', 'הטיוטה הישנה לא דווחה כמדולגת');
+      t.ok(r.warning && r.warning.indexOf('2026-07') > -1, 'לא הוחזרה אזהרה על הדילוג — אסור לדלג בשקט');
+    },
+
+    'אין אזהרה כשאין טיוטה ישנה יותר': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      B67.pr(db, 'P9', 'E1', '2026-09', 5000, 'טיוטה');   // חדש יותר — אינו דילוג
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 1000, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.eq(r.skipped_drafts.length, 0, 'טיוטה עתידית דווחה כמדולגת — רעש מיותר');
+      t.eq(r.warning, '', 'הוחזרה אזהרה שלא לצורך');
+    },
+
+    '⭐ סכום ההקצאות שווה בדיוק לסכום ששולם — בלי סחיפת עיגול': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P1', 'E1', '2026-05', 3333.33, 'אושר');
+      B67.pr(db, 'P2', 'E1', '2026-06', 3333.33, 'אושר');
+      B67.pr(db, 'P3', 'E1', '2026-07', 3333.34, 'אושר');
+      const amt = 7777.77;
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: amt, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      const sum = Math.round(r.allocations.reduce((s, a) => s + a.amount, 0) * 100) / 100;
+      t.eq(sum, amt, 'סכום ההקצאות אינו שווה לסכום ששולם');
+      const rows = Math.round(db.payrollPayments.reduce((s, x) => s + Number(x.amount || 0), 0) * 100) / 100;
+      t.eq(rows, amt, 'סכום שורות התשלום בגיליון אינו שווה לסכום ששולם');
+      t.eq(r.debt_after, Math.round((10000 - amt) * 100) / 100, 'החוב שנותר סחף בעיגול');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), r.debt_after, 'החוב המחושב מחדש אינו תואם למה שהוחזר');
+    },
+
+    '⛔ מלכודת 2 — מזומן מעל יתרת הקופה נדחה לפני שנכתבה שורה אחת': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 4000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 4000, 'אושר');
+      db.payments.push({ id: 'PAY1', method: 'מזומן', amount: 5000, status: 'שולם' });
+      t.eq(srv.cashBalanceSrv(db), 5000, 'יתרת הקופה ההתחלתית שגויה — הבדיקה חסרת משמעות');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 8000, method: 'מזומן' }, 'מנהל');
+      t.no(r.ok, 'תשלום מזומן מעל יתרת הקופה התקבל');
+      t.has(r.error, 'מזומן', 'ההודעה אינה מסבירה שמדובר בקופת המזומן');
+      t.eq(db.payrollPayments.length, 0, '⛔ נכתבה שורה לפני שהבדיקה נכשלה — הקופה התרוקנה באמצע');
+      t.eq(db.expenses.length, 0, 'נכתבה הוצאה לפני שהבדיקה נכשלה');
+      t.eq(srv.cashBalanceSrv(db), 5000, 'יתרת הקופה השתנתה למרות הדחייה');
+    },
+
+    'בדיקת המזומן היא פעם אחת מול הסכום המלא, לא פר-שורה': (t, { srv }) => {
+      /* 8,000 מול קופה של 8,000 — עובר. אילו הבדיקה הייתה פר-שורה אחרי
+         שהראשונה נכתבה, השנייה הייתה נופלת על קופה שכבר התרוקנה. */
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 4000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 4000, 'אושר');
+      db.payments.push({ id: 'PAY1', method: 'מזומן', amount: 8000, status: 'שולם' });
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 8000, method: 'מזומן' }, 'מנהל');
+      t.ok(r.ok, 'תשלום תקין נדחה: ' + r.error);
+      t.eq(r.allocations.length, 2, 'שתי השורות לא נכתבו');
+      t.eq(srv.cashBalanceSrv(db), 0, 'יתרת הקופה אחרי התשלום שגויה');
+    },
+
+    '⛔ מלכודת 3 / R10 — כל טבלה נכתבת פעם אחת, גם בתשלום על שלושה חודשים': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P1', 'E1', '2026-05', 1000, 'אושר');
+      B67.pr(db, 'P2', 'E1', '2026-06', 1000, 'אושר');
+      B67.pr(db, 'P3', 'E1', '2026-07', 1000, 'אושר');
+      const seen = [];
+      const orig = srv.ensureSheet;
+      srv.ensureSheet = function (n) { seen.push(n); return orig(n); };
+      try {
+        const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 3000, method: 'העברה' }, 'מנהל');
+        t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      } finally { srv.ensureSheet = orig; }
+      const count = {};
+      seen.forEach(n => { count[n] = (count[n] || 0) + 1; });
+      Object.keys(count).forEach(n => {
+        t.eq(count[n], 1, '⛔ הטבלה ' + n + ' נכתבה ' + count[n] + ' פעמים — writeTable בתוך הלולאה');
+      });
+      t.ok(count['payroll_payments'] === 1 && count['payroll'] === 1 && count['expenses'] === 1,
+        'לא כל הטבלאות הנדרשות נכתבו בדיוק פעם אחת');
+      t.eq(srv.B67_WRITE_DEFER, null, 'דגל הצבירה נשאר דלוק אחרי הפעולה — כתיבות עתידיות ייעלמו');
+    },
+
+    '⛔ כשל בשורה השנייה — שום דבר לא הגיע לגיליון, גם לא מה שנכתב לפניו': (t, { srv }) => {
+      /* אטומיות: הבאפר נזרק בשלמותו. בלעדיה בקשה שנופלת באמצע משאירה
+         כסף חצי-רשום — בדיוק מה שההקצאה בשרת נועדה למנוע. */
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P1', 'E1', '2026-05', 1000, 'אושר');
+      B67.pr(db, 'P2', 'E1', '2026-06', 1000, 'אושר');
+      const sheets = [];
+      const origSheet = srv.ensureSheet;
+      const origSum = srv.payrollPaidSum;
+      let n = 0;
+      srv.ensureSheet = function (name) { sheets.push(name); return origSheet(name); };
+      srv.payrollPaidSum = function (d, id) { n++; return n > 3 ? 99999 : origSum(d, id); };
+      let r;
+      try { r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 2000, method: 'העברה' }, 'מנהל'); }
+      finally { srv.ensureSheet = origSheet; srv.payrollPaidSum = origSum; }
+      t.no(r.ok, 'כשל בשורה השנייה לא זוהה');
+      t.has(r.error, 'לא נרשם דבר', 'ההודעה אינה אומרת שדבר לא נרשם');
+      t.has(r.error, '2026-06', 'ההודעה אינה אומרת באיזה חודש נפל');
+      t.eq(sheets.length, 0, '⛔ ' + sheets.join(',') + ' נכתבו לגיליון למרות שהפעולה נכשלה באמצע');
+      t.eq(srv.B67_WRITE_DEFER, null, 'דגל הצבירה נשאר דלוק אחרי כשל — כתיבות עתידיות ייעלמו בשקט');
+    },
+
+    '⛔ case payPayroll הישן מתנהג בדיוק כמו לפני האצווה': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      const r = srv.handle('payPayroll',
+        { payroll_id: 'P7', amount: 4000, method: 'העברה', note: 'מקדמה', paid_at: '2026-08-03' }, db, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.ok(!!r.pay_id, 'לא הוחזר pay_id — הממשק נשען עליו למסך האסמכתאות');
+      t.eq(r.remaining, 6000, 'היתרה שהוחזרה שגויה');
+      t.eq(r.status, 'שולם חלקית', 'הסטטוס שהוחזר שגוי');
+      t.has(r.auditNote, 'תשלום שכר', 'ה-auditNote השתנה');
+      /* חמש הפעולות */
+      t.eq(db.payrollPayments.length, 1, 'לא נרשמה שורת תשלום');
+      t.eq(db.payrollPayments[0].paid_at, '2026-08-03', 'תאריך התשלום לא נשמר');
+      t.eq(db.payrollPayments[0].note, 'מקדמה', 'ההערה לא נשמרה');
+      t.eq(srv.sVal(db.payroll[0].status), 'שולם חלקית', 'סטטוס השכר לא עודכן');
+      t.eq(db.expenses.length, 1, 'לא נרשמה הוצאה');
+      t.eq(db.expenses[0].category, 'שכר', 'קטגוריית ההוצאה שגויה');
+      t.eq(db.futureExpenses.length, 1, 'syncFutureExpenseForPayroll לא רץ');
+      t.eq(db.futureExpenses[0].amount, 6000, 'ההוצאה העתידית לא סונכרנה ליתרה');
+    },
+
+    'payPayroll — הדחיות הישנות נשמרו מילה במילה': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'טיוטה');
+      t.eq(srv.handle('payPayroll', { payroll_id: 'NOPE', amount: 1 }, db, 'מנהל').error, 'רשומת שכר לא נמצאה', 'הודעת "לא נמצאה" השתנתה');
+      t.eq(srv.handle('payPayroll', { payroll_id: 'P7', amount: 1 }, db, 'מנהל').error, 'יש לאשר את השכר לפני תשלום', 'הודעת הטיוטה השתנתה');
+      db.payroll[0].status = 'אושר';
+      t.eq(srv.handle('payPayroll', { payroll_id: 'P7', amount: 0 }, db, 'מנהל').error, 'סכום לא תקין', 'הודעת הסכום השתנתה');
+      const over = srv.handle('payPayroll', { payroll_id: 'P7', amount: 99999 }, db, 'מנהל');
+      t.has(over.error, 'הסכום גבוה מהיתרה לתשלום', 'הודעת החריגה מהיתרה השתנתה');
+      t.eq(db.payrollPayments.length, 0, 'נכתב תשלום למרות שכל הקריאות נדחו');
+    },
+
+    '⛔ טיוטה אינה יוצרת רשומת future_expenses — גם אחרי תוספת': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'טיוטה');
+      const r = srv.handle('addPayrollAdjustment',
+        { payroll_id: 'P7', type: 'תוספת', category: 'בונוס', amount: 500, note: '' }, db, 'מנהל');
+      t.ok(r.ok, 'התוספת נדחתה: ' + r.error);
+      t.eq(db.futureExpenses.length, 0, '⛔ טיוטה נכנסה לתחזית התזרים כהתחייבות אמיתית');
+    },
+
+    'טיוטה שאושרה עוברת לחוב — בלי כפילות': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'טיוטה');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 0, 'טיוטה נספרה כחוב לפני האישור');
+      const r = srv.handle('approvePayroll', { payroll_id: 'P7' }, db, 'מנהל');
+      t.ok(r.ok, 'האישור נדחה: ' + r.error);
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 10000, 'אחרי האישור השכר לא נספר כחוב');
+      t.eq(db.futureExpenses.length, 1, 'לא נוצרה בדיוק רשומת הוצאה עתידית אחת');
+      t.eq(srv.b67EmployeeOpenRows(db, 'E1').length, 1, 'הרשומה נספרה פעמיים בחוב');
+    },
+
+    'עובד בלי חוב ועובד שאינו קיים — נדחים בהודעה ברורה': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      const noEmp = srv.b67PayEmployee(db, { employee_id: 'XX', amount: 100 }, 'מנהל');
+      t.no(noEmp.ok, 'תשלום לעובד שאינו קיים התקבל');
+      t.eq(noEmp.error, 'עובד לא נמצא', 'הודעת עובד לא נמצא השתנתה');
+      const noDebt = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 100 }, 'מנהל');
+      t.no(noDebt.ok, 'תשלום לעובד בלי חוב התקבל');
+      t.has(noDebt.error, 'דני', 'ההודעה אינה מזכירה את שם העובד');
+      t.eq(srv.b67PayEmployee(db, { employee_id: 'E1', amount: 0 }, 'מנהל').error, 'סכום לא תקין', 'הודעת הסכום השתנתה');
+    },
+
+    'החוב של עובד אחד אינו מושפע מעובד אחר': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני'); B67.emp(db, 'E2', 'רונית');
+      B67.pr(db, 'P1', 'E1', '2026-06', 5000, 'אושר');
+      B67.pr(db, 'P2', 'E2', '2026-05', 7000, 'אושר');   // ישן יותר, אבל של עובד אחר
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 5000, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.eq(r.allocations[0].payroll_id, 'P1', 'התשלום נכנס לחוב של עובד אחר');
+      t.eq(srv.b67EmployeeDebt(db, 'E2'), 7000, 'החוב של העובד השני השתנה');
+    },
+
+    '⛔ b67PayEmployee היא פעולת כתיבה — מנהל בלבד, ולא ב-READ_ONLY_ACTIONS': (t, { srv }) => {
+      t.ok(srv.MANAGER_ONLY.indexOf('b67PayEmployee') > -1, 'הפעולה אינה מוגבלת למנהל');
+      t.eq(srv.READ_ONLY_ACTIONS.indexOf('b67PayEmployee'), -1, '⛔ פעולה שכותבת לגיליון נכנסה ל-READ_ONLY_ACTIONS');
+      t.ok(srv.MANAGER_ONLY.indexOf('payPayroll') > -1, 'payPayroll יצא מ-MANAGER_ONLY');
+    },
+
+    '⛔ אין מסלול כתיבה שני — case payPayroll קורא ל-b67PayOneRow': (t, { srv, H }) => {
+      const src = H.stripComments(H.serverSrc());
+      const cnt = (src.match(/db\.payrollPayments\.push\(/g) || []).length;
+      t.eq(cnt, 1, '⛔ יש ' + cnt + ' מקומות שכותבים שורת תשלום שכר — נוצרה לוגיקת תשלום שנייה');
+      t.has(src, "case 'payPayroll'", "case 'payPayroll' נעלם");
+      t.has(src, 'b67PayOneRow(db, prP', "case 'payPayroll' כבר לא קורא ל-b67PayOneRow");
+    },
+
+    'auditNote מפרט את כל החודשים והסכומים': (t, { srv }) => {
+      const db = B67.db(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 1000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 1000, 'אושר');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 1500, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'התשלום נדחה: ' + r.error);
+      t.has(r.auditNote, '2026-07=1000', 'החודש הראשון חסר ביומן');
+      t.has(r.auditNote, '2026-08=500', 'החודש השני חסר ביומן');
+      t.has(r.auditNote, 'דני', 'שם העובד חסר ביומן');
+    }
+  }
+});
+
+
+SPECS.push({
+  file: 't11-b67-ui',
+  title: 'B67 — הממשק: תצוגת עובד וסיכום הטיוטות',
+  needs: 'ui',
+  requires: ['b67EmpView', 'b67EmpDebt', 'b67EmpMonthRows', 'b67DraftRows', 'b67DraftTotal',
+             'b67DraftCardHtml', 'b67DraftsList', 'b67PayEmp', 'b67EmpNameCell',
+             'payrollRowHtml', 'payrollDetail', 'payrollTable', 'payrollRowsFor', 'rPayroll',
+             'finPayrollTotal', 'fexpOpen', 'fexpRemain', 'futureExpensesHtml', 'savePayrollPayment'],
+
+  tests: {
+
+    '⭐ תצוגת העובד מציגה את כל חודשיו ולא רק את הנבחר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      w.b67EmpView('E1');
+      const h = w.el('modal').innerHTML;
+      t.has(h, 'יוני 2026', 'חודש קודם של העובד אינו מוצג');
+      t.has(h, 'יולי 2026', 'חודש נוסף של העובד אינו מוצג');
+      t.has(h, 'אוגוסט 2026', 'החודש האחרון של העובד אינו מוצג');
+      t.hasNot(h, 'רונית', 'הוצג עובד אחר בתצוגת עובד');
+      t.eq(w.b67EmpMonthRows('E1').length, 4, 'מספר החודשים של העובד שגוי');
+      w.closeModal();
+    },
+
+    'בראש התצוגה מספר אחד — סך החוב הפתוח, בלי הטיוטה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      /* יוני 3,000 יתרה · יולי 10,000 · אוגוסט 20,000 · ספטמבר 8,000 בטיוטה */
+      t.eq(w.b67EmpDebt('E1'), 33000, 'סך החוב שגוי — ייתכן שטיוטה נספרה');
+      w.b67EmpView('E1');
+      const h = w.el('modal').innerHTML;
+      t.has(h, 'סך החוב הפתוח', 'המספר הראשי חסר');
+      t.has(h, 'אינו נכלל בחוב', 'לא נאמר שהטיוטה אינה חלק מהחוב');
+      w.closeModal();
+    },
+
+    '⛔ אין מסך אישור שמפרט חודשים לפני התשלום': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      w.b67EmpView('E1');
+      const h = w.el('modal').innerHTML;
+      t.ok(!!w.el('b67_amt'), 'אין שדה סכום');
+      t.eq(w.el('b67_amt').value, '33000', 'ברירת המחדל אינה מלוא החוב');
+      t.has(h, 'שלם', 'אין כפתור תשלום');
+      t.hasNot(h, 'אשר את השיוך', 'נוסף מסך אישור שיוך — הכרעת אבי היא שהשיוך שקוף');
+      w.closeModal();
+    },
+
+    '⛔ אין כפתור תשלום נפרד בכל שורה בטבלת השכר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      const html = w.payrollTable('2026-08');
+      const box = w.el('modal');
+      box.innerHTML = html;
+      const rows = box.querySelectorAll('tr');
+      let payBtns = 0;
+      rows.forEach(r => r.querySelectorAll('button').forEach(b => {
+        if (String(b.getAttribute('onclick') || '').indexOf('b67PayEmp(') > -1) payBtns++;
+      }));
+      t.eq(payBtns, 0, '⛔ נוסף כפתור תשלום בשורת הטבלה — הכרעת אבי היא שאין');
+      t.has(html, 'פרטים / תשלום', 'כפתור הפרטים הקיים הוסר (R8)');
+      box.innerHTML = '';
+    },
+
+    'לחיצה על שם העובד פותחת את תצוגת העובד (R7 — אירוע אמיתי)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      w.el('modal').innerHTML = w.payrollTable('2026-08');
+      const nameEl = w.el('modal').querySelector('b[onclick*="b67EmpView"]');
+      t.ok(!!nameEl, 'שם העובד אינו לחיץ');
+      if (!nameEl) return;
+      H.click(w, nameEl);
+      t.has(w.el('modal').innerHTML, 'סך החוב הפתוח', 'הלחיצה על השם לא פתחה את תצוגת העובד');
+      w.closeModal();
+    },
+
+    'לחיצה על שורת חודש מובילה ל-payrollDetail הקיים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      w.b67EmpView('E1');
+      const tr = w.el('modal').querySelector('tr[onclick*="payrollDetail"]');
+      t.ok(!!tr, 'שורת החודש אינה מובילה לפירוט השכר');
+      if (!tr) return;
+      H.click(w, tr);
+      t.has(w.el('modal').innerHTML, 'תוספות וניכויים', 'לא נפתח payrollDetail הקיים אלא משהו אחר');
+      w.closeModal();
+    },
+
+    '⛔ סיכום הטיוטות אינו נספר ב-finPayrollTotal ואינו יוצר futureExpenses': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      t.eq(w.b67DraftTotal(), 8000, 'סכום הטיוטות שגוי');
+      t.eq(w.finPayrollTotal(), 0, '⛔ טיוטה נספרה בסך חוב השכר בהוצאות הצפויות');
+      t.eq(w.fexpOpen().filter(x => x.source === 'payroll').length, 0,
+        '⛔ נוצרה רשומת future_expenses לטיוטה — היא נספרת בתזרים כהתחייבות אמיתית');
+      t.eq((w.DB.futureExpenses || []).length, 0, '⛔ טיוטה נכתבה לטבלת ההוצאות העתידיות');
+    },
+
+    'סכום הטיוטות בהוצאות הצפויות מוצג בנפרד ולידו, ולא בתוך הסך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      const h = w.futureExpensesHtml();
+      t.has(h, 'טיוטות שכר — טרם אושר, אינו נכלל בסך', 'התווית אינה מבהירה שזו תחזית ולא חוב');
+      t.has(h, 'סה"כ צפוי לתשלום', 'כרטיס הסך המחייב נעלם');
+      t.has(h, 'b67DraftsList()', 'הכרטיס אינו נפתח לרשימת הפירוט');
+    },
+
+    'כרטיס הטיוטות במסך השכר נפתח לרשימה, ומשם לשכר עצמו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      w.rPayroll();
+      t.has(w.el('main').innerHTML, 'טיוטות שכר שטרם אושרו', 'כרטיס הסיכום חסר במסך השכר');
+      w.b67DraftsList();
+      const h = w.el('modal').innerHTML;
+      t.has(h, 'ספטמבר 2026', 'הטיוטה אינה מופיעה ברשימת הפירוט');
+      const tr = w.el('modal').querySelector('tr[onclick*="payrollDetail"]');
+      t.ok(!!tr, 'שורה ברשימת הטיוטות אינה מובילה לשכר עצמו');
+      w.closeModal();
+    },
+
+    '⛔ לנהג אין כפתור תשלום, אין סיכום טיוטות ואין תצוגת עובד': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv, { db: B67.uiDb(srv) });
+      t.eq(w.b67DraftCardHtml('payroll'), '', '⛔ הנהג רואה סיכום טיוטות');
+      t.eq(w.b67DraftCardHtml('fexp'), '', '⛔ הנהג רואה סיכום טיוטות בהוצאות הצפויות');
+      const cell = w.b67EmpNameCell({ id: 'E1', name: 'דני' });
+      t.hasNot(cell, 'b67EmpView', '⛔ הנהג יכול לפתוח תצוגת עובד');
+      w.b67EmpView('E1');
+      const h = w.el('modal').innerHTML;
+      t.hasNot(h, 'b67PayEmp(', '⛔ הנהג רואה כפתור תשלום');
+      t.hasNot(h, 'b67_amt', '⛔ הנהג רואה שדה סכום לתשלום');
+      w.closeModal();
+    },
+
+    '⛔ לנהג בשורת השכר יש רק הדפסה, ורק כשאינה טיוטה': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv, { db: B67.uiDb(srv) });
+      const emp = w.DB.employees[0];
+      const okRow = w.payrollRowHtml(w.DB.payroll.find(p => p.month === '2026-08'), emp);
+      t.has(okRow, 'printPayslip', 'כפתור ההדפסה של הנהג נעלם');
+      t.hasNot(okRow, 'payrollDetail', '⛔ הנהג רואה כפתור פרטים/תשלום');
+      t.hasNot(okRow, 'b67EmpView', '⛔ שם העובד לחיץ אצל הנהג');
+      const draftRow = w.payrollRowHtml(w.DB.payroll.find(p => p.month === '2026-09'), emp);
+      t.hasNot(draftRow, 'printPayslip', '⛔ הנהג יכול להדפיס שכר בטיוטה');
+      t.has(draftRow, 'טרם אושר', 'הודעת "טרם אושר" לנהג נעלמה');
+    },
+
+    'סכום שאינו תקין נעצר בממשק בלי לפנות לשרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      w.b67EmpView('E1');
+      w.el('b67_amt').value = '0';
+      const before = w.__fetches.length;
+      w.b67PayEmp('E1');
+      t.eq(w.__fetches.length, before, 'נשלחה בקשה לשרת על סכום לא תקין');
+      w.closeModal();
+    },
+
+    '⛔ R4 — מנגנוני השכר הקיימים לא נפגעו': (t, { w }) => {
+      ['payrollRowHtml', 'payrollDetail', 'payrollBreakdown', 'payrollPaid', 'payrollAdjustments',
+       'isGlobalPayroll', 'printPayslip', 'savePayrollPayment', 'payrollRowsFor', 'payrollTable',
+       'rPayroll', 'fexpOpen', 'fexpRemain', 'finPayrollTotal', 'isCashMethod', 'sVal', 'sPick']
+        .forEach(n => t.eq(typeof w[n], 'function', 'נעלם מנגנון חסין: ' + n));
+    },
+
+    '⛔ שכבה 2 לא נגעה — B67 אינו נוגע ביכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n);
+      t.eq(names.filter(n => n.indexOf('B67') > -1).length, 0,
+        'נוספה טענה ל-b61Tests — BLD-16 אינו נוגע ביכולת דפדפן');
+    }
+  }
+});
+
+/* עוזרי בנייה ל-t11. יושבים כאן ולא ברתמה כי הם ספציפיים לשכר. */
+const B67 = {
+  db(srv) { return H.emptyDb(srv); },
+  emp(db, id, name) { db.employees.push({ id: id, name: name, role: 'עובד רצפה', active: 'כן', can_edit: 'כן' }); },
+  pr(db, id, empId, month, total, status) {
+    db.payroll.push({ id: id, employee_id: empId, month: month, pay_type: 'גלובלי',
+      hours: 0, hourly_rate: 0, base_pay: total, bonus: 0, bonus_note: '', total: total, status: status });
+  },
+  pay(db, prId, empId, amount) {
+    db.payrollPayments.push({ id: 'PP' + db.payrollPayments.length, payroll_id: prId,
+      employee_id: empId, amount: amount, method: 'העברה', note: '', paid_at: '2026-08-01', created_by: 'מנהל' });
+  },
+  /* מסד לממשק: דני עם ארבעה חודשים — אחד שולם חלקית, שניים פתוחים, אחד בטיוטה */
+  uiDb(srv) {
+    const db = H.emptyDb(srv);
+    B67.emp(db, 'E1', 'דני'); B67.emp(db, 'E2', 'רונית');
+    B67.pr(db, 'P6', 'E1', '2026-06', 5000, 'שולם חלקית');
+    B67.pay(db, 'P6', 'E1', 2000);
+    B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+    B67.pr(db, 'P8', 'E1', '2026-08', 20000, 'אושר');
+    B67.pr(db, 'P9', 'E1', '2026-09', 8000, 'טיוטה');
+    B67.pr(db, 'Q8', 'E2', '2026-08', 4000, 'אושר');
+    return db;
+  }
+};
 
 
 /* ==================== חלק 2 — המריץ ==================== */
