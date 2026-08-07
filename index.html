@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.66-B66 · 02.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.67-B67 · 03.08.2026</div>
   </div>
 </div>
 
@@ -5633,7 +5633,9 @@ function futureExpensesHtml(){
         '</table></div>' : '<div class="card empty">אין הוצאות שנמחקו</div>');
   }
 
-  return filterBar + totalCard +
+  /* ⭐ B67: שני מספרים, ברור מה כל אחד. ⛔ טיוטות אינן מסוכמות לתוך הסך
+     המחייב, ו-finPayrollTotal/fexpOpen לא שינו את ערכם. */
+  return filterBar + totalCard + b67DraftCardHtml('fexp') +
     (withDate.length? '<div class="card"><table>'+HEAD+withDate.map(row).join('')+'</table></div>'
       : '<div class="card empty">אין הוצאות עתידיות פתוחות בטווח שנבחר</div>')+
     noDateCard +
@@ -7337,7 +7339,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.66-B66';
+var B61_CANARY = 'v4.67-B67';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -9652,6 +9654,7 @@ function rPayroll(){
       // B36: הפקה ידנית — עד כה שכר נוצר רק בטריגר החודשי, ואם הוא לא רץ לא היה שכר כלל.
       (ROLE==='מנהל'?'<button class="btn" onclick="doGeneratePayroll()">הפק שכר לחודש זה</button>':'')+
       '<span class="muted">השכר מחושב אוטומטית ב-1 בכל חודש עבור החודש שהסתיים, ונשמר כטיוטה לאישורך. שעתי: שעות × תעריף. גלובלי: סכום חודשי קבוע. "תצוגה מקדימה" מחשבת לבדיקה בלבד; "הפק שכר" יוצר טיוטות בפועל ואינו נוגע בשכר שכבר אושר או שולם.</span>':'')+'</div></div>'+
+    b67DraftCardHtml('payroll')+   /* ⭐ B67: סיכום טיוטות — תחזית, לא חוב */
     '<div id="prList">'+payrollTable(month)+'</div>';
 }
 /* B37: רשימת השכר נבנית מרשימת העובדים הפעילים ולא מרשומות השכר בלבד.
@@ -9686,7 +9689,7 @@ function payrollTable(month){
       if(!p){
         var glob0 = e.pay_type==='גלובלי';
         var hrs0 = glob0? 0 : payrollEffHours(e.id, month);
-        return '<tr style="opacity:.75"><td><b>'+esc(e.name)+'</b></td>'+
+        return '<tr style="opacity:.75"><td>'+b67EmpNameCell(e)+'</td>'+
           '<td>'+(glob0?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td>'+
           '<td>'+(glob0?'<span class="muted">—</span>':hrs0)+'</td>'+
           '<td>'+(glob0?'<span class="muted">—</span>':ils(e.hourly_rate||0))+'</td>'+
@@ -9704,7 +9707,7 @@ function payrollTable(month){
 function payrollRowHtml(p, e){
       var paid = payrollPaid(p.id), remaining = Math.round((Number(p.total)-paid)*100)/100;
       var glob = isGlobalPayroll(p,e);
-      return '<tr><td><b>'+esc(e.name)+'</b></td><td>'+(glob?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td><td>'+p.hours+'</td><td>'+(glob?'<span class="muted">—</span>':ils(p.hourly_rate))+'</td><td>'+ils(p.base_pay)+'</td>'+
+      return '<tr><td>'+b67EmpNameCell(e)+'</td><td>'+(glob?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td><td>'+p.hours+'</td><td>'+(glob?'<span class="muted">—</span>':ils(p.hourly_rate))+'</td><td>'+ils(p.base_pay)+'</td>'+
       '<td class="tot"><b>'+ils(p.total)+'</b></td><td>'+ils(paid)+'</td><td'+(remaining>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(remaining)+'</td>'+
       '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[p.status]||'')+'">'+esc(p.status)+'</span></td>'+
       // B17: לנהג — רק הדפסת המסמך הפנימי, בלי כפתורי ניהול
@@ -9888,6 +9891,145 @@ function printPayslip(pid){
     (adj.length?'<table><tr><th>סוג</th><th>קטגוריה</th><th>סכום</th><th>הערה</th></tr>'+
       adj.map(a=>'<tr><td>'+esc(a.type)+'</td><td>'+esc(a.category)+'</td><td>'+(a.type==='ניכוי'?'-':'')+ils(a.amount)+'</td><td>'+esc(a.note||'')+'</td></tr>').join('')+'</table>':'')+
     '<p class="muted" style="font-size:12px">מסמך פנימי — אינו תלוש שכר רשמי. תלוש רשמי מופק בתוכנת שכר מורשית.</p>', {signatures:true});
+}
+
+/* ============================================================
+   ⭐ B67 / BLD-16 — חוב שכר ברמת העובד + טיוטות שטרם אושרו
+   ============================================================
+   הכרעת אבי על הממשק: **השיוך לחודשים שקוף.** מספר אחד, שדה סכום, כפתור.
+   ⛔ אין מסך אישור שמפרט חודשים לפני התשלום. ⛔ אין כפתור תשלום בכל שורה
+   בטבלה. הפירוט נראה מעצמו **אחרי**, ברשימה שממילא פתוחה מול אבי.
+
+   ⛔ הכול נבנה מ-DB שכבר בזיכרון. אפס בקשות שרת נוספות.
+   ⛔ ההקצאה כולה בשרת (b67PayEmployee). הממשק שולח סכום אחד ובקשה אחת.
+   ⛔ טיוטות **אינן נכתבות** ל-futureExpenses — הן נגזרות לתצוגה בלבד.
+      הרגע שטיוטה נכנסת לטבלה היא נספרת בתחזית התזרים כהתחייבות אמיתית.
+   ============================================================ */
+
+/* ---- טיוטות: נגזרות מ-DB.payroll, לתצוגה בלבד ---- */
+function b67DraftRows(){
+  return (DB.payroll||[]).filter(function(p){ return sVal(p.status)==='טיוטה' && Number(p.total||0)>0; })
+    .slice().sort(function(a,b){ return String(b.month||'').localeCompare(String(a.month||'')); });
+}
+function b67DraftTotal(){
+  return Math.round(b67DraftRows().reduce(function(s,p){ return s+Number(p.total||0); },0)*100)/100;
+}
+/* תא שם העובד בטבלת השכר. ⛔ לנהג — טקסט בלבד, בלי מעבר לתצוגת עובד. */
+function b67EmpNameCell(e){
+  if(ROLE==='נהג' || !e || !e.id) return '<b>'+esc((e&&e.name)||'')+'</b>';
+  return '<b style="color:var(--navy2);cursor:pointer;text-decoration:underline" '+
+    'onclick="b67EmpView(\''+e.id+'\')" title="חוב שכר ותשלום לעובד">'+esc(e.name)+'</b>';
+}
+function b67EmpName(eid){
+  var e = (DB.employees||[]).find(function(x){ return x.id===eid; });
+  return e? e.name : '(עובד שהוסר)';
+}
+/* הכרטיס. ⛔ לנהג לעולם לא. ⛔ אינו נספר בשום סך מחייב. */
+function b67DraftCardHtml(where){
+  if(ROLE==='נהג') return '';
+  var rows = b67DraftRows();
+  if(!rows.length) return '';
+  var tot = b67DraftTotal();
+  var label = where==='fexp' ? 'טיוטות שכר — טרם אושר, אינו נכלל בסך' : 'טיוטות שכר שטרם אושרו';
+  return '<div class="card" style="cursor:pointer;border-right:3px solid var(--amber)" onclick="b67DraftsList()" title="לחץ לפירוט">'+
+    '<div class="row" style="align-items:center;flex-wrap:wrap">'+
+    '<b class="grow">'+esc(label)+'</b>'+
+    '<span class="tot" style="font-size:18px;text-decoration:underline;color:var(--amber)">'+ils(tot)+'</span></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:4px">'+rows.length+' רשומות · תחזית בלבד — אינו חוב ואינו נכלל בסך הצפוי לתשלום · לחץ לפירוט</div></div>';
+}
+function b67DraftsList(){
+  var rows = b67DraftRows();
+  openModal('<h2>טיוטות שכר שטרם אושרו</h2>'+
+    '<div class="muted" style="margin-bottom:8px">סה"כ '+ils(b67DraftTotal())+' · '+rows.length+' רשומות. '+
+    '⚠ תחזית בלבד — שכר שלא אושר אינו חוב, אינו נספר בהוצאות הצפויות ואינו משולם. לחיצה על שורה פותחת את השכר עצמו.</div>'+
+    (rows.length? '<div class="card"><table><tr><th>עובד</th><th>חודש</th><th>סה"כ</th></tr>'+
+      rows.map(function(p){
+        return '<tr style="cursor:pointer" onclick="payrollDetail(\''+p.id+'\')" title="פתח את רשומת השכר">'+
+          '<td><b style="color:var(--navy2);text-decoration:underline">'+esc(b67EmpName(p.employee_id))+'</b></td>'+
+          '<td>'+esc(monthLabel(p.month))+'</td><td class="tot">'+ils(p.total)+'</td></tr>';
+      }).join('')+'</table></div>' : '<div class="card empty">אין טיוטות</div>')+
+    '<div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+
+/* ---- תצוגת עובד: כל החודשים שלו, לאורך זמן ----
+   ⚠ payrollTable/payrollRowsFor בנויות לפי חודש נבחר בלבד, ולכן זה המקום
+   היחיד במערכת שמראה עובד לאורך זמן. */
+function b67EmpMonthRows(empId){
+  return (DB.payroll||[]).filter(function(p){ return p.employee_id===empId; })
+    .slice().sort(function(a,b){ return String(a.month||'').localeCompare(String(b.month||'')); })
+    .map(function(p){
+      var paid = payrollPaid(p.id);
+      var draft = sVal(p.status)==='טיוטה';
+      return { pr:p, paid:paid, draft:draft,
+        remaining: draft? 0 : Math.round((Number(p.total||0)-paid)*100)/100 };
+    });
+}
+/* סך החוב הפתוח. ⛔ טיוטה אינה חוב — חייב להישאר זהה ל-b67EmployeeDebt בשרת. */
+function b67EmpDebt(empId){
+  return Math.round(b67EmpMonthRows(empId).reduce(function(s,r){ return s+(r.remaining>0.005? r.remaining:0); },0)*100)/100;
+}
+function b67EmpView(empId, notice){
+  var e = (DB.employees||[]).find(function(x){ return x.id===empId; });
+  if(!e) return;
+  var rows = b67EmpMonthRows(empId);
+  var debt = b67EmpDebt(empId);
+  var drafts = rows.filter(function(r){ return r.draft; });
+  var draftSum = Math.round(drafts.reduce(function(s,r){ return s+Number(r.pr.total||0); },0)*100)/100;
+  var canPay = ROLE!=='נהג' && debt>0.005;
+  openModal('<h2>שכר — '+esc(e.name)+'</h2>'+
+    (notice||'')+
+    /* ⛔ בראש — מספר אחד. זה מה שאבי מסתכל עליו. */
+    '<div class="card"><div class="row" style="align-items:center;flex-wrap:wrap">'+
+      '<b class="grow" style="font-size:15px">סך החוב הפתוח</b>'+
+      '<span class="tot" style="font-size:26px'+(debt>0.005?';color:var(--danger)':'')+'">'+ils(debt)+'</span></div>'+
+      '<div class="muted" style="font-size:12px;margin-top:4px">כל החודשים שאושרו וטרם שולמו במלואם'+
+      (drafts.length?' · ⚠ בנוסף '+ils(draftSum)+' בטיוטה שטרם אושרה — אינו נכלל בחוב':'')+'</div></div>'+
+    (canPay?
+      '<fieldset style="margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px">'+
+      '<legend style="font-weight:700;font-size:13px;padding:0 6px">תשלום לעובד</legend>'+
+      '<div class="muted" style="font-size:12px;margin-bottom:8px">הסכום נכנס לחוב הישן ביותר וגולש הלאה. השיוך לחודשים מוצג ברשימה שמתחת, מיד אחרי התשלום.</div>'+
+      '<div class="row" style="gap:6px">'+
+      '<input id="b67_amt" type="number" min="0" step="0.01" max="'+debt+'" placeholder="סכום" style="width:130px" value="'+debt+'">'+
+      '<input id="b67_date" type="date" style="width:auto" value="'+ymdLocal()+'" title="תאריך התשלום">'+
+      '<select id="b67_method" style="width:auto">'+PAYROLL_METHODS.map(function(m){ return '<option>'+m+'</option>'; }).join('')+'</select>'+
+      '<input id="b67_note" placeholder="הערה" class="grow">'+
+      '<button class="btn" onclick="b67PayEmp(\''+empId+'\')">שלם</button></div></fieldset>'
+      : (ROLE!=='נהג'? '<p class="muted" style="margin-top:10px">אין חוב פתוח לעובד זה.</p>':''))+
+    '<h3 style="margin:14px 0 6px">חודשי השכר</h3>'+
+    (rows.length? '<div class="card"><table><tr><th>חודש</th><th>סה"כ</th><th>שולם</th><th>יתרה</th><th>סטטוס</th></tr>'+
+      rows.map(function(r){
+        var p = r.pr;
+        return '<tr style="cursor:pointer'+(r.draft?';opacity:.75':'')+'" onclick="payrollDetail(\''+p.id+'\')" title="פתח את רשומת השכר">'+
+          '<td><b style="color:var(--navy2);text-decoration:underline">'+esc(monthLabel(p.month))+'</b></td>'+
+          '<td class="tot">'+ils(p.total)+'</td><td>'+ils(r.paid)+'</td>'+
+          '<td'+(r.remaining>0.005?' style="color:var(--danger);font-weight:700"':'')+'>'+
+            (r.draft? '<span class="muted">— אינו חוב</span>' : ils(r.remaining))+'</td>'+
+          '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[sVal(p.status)]||'')+'">'+esc(p.status)+'</span></td></tr>';
+      }).join('')+'</table></div>'
+      : '<div class="card empty">אין רשומות שכר לעובד זה</div>')+
+    '<p class="muted" style="font-size:12px;margin-top:8px">לחיצה על שורת חודש פותחת את פירוט השכר של אותו חודש.</p>'+
+    '<div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal()">סגור</button></div>');
+}
+/* ⛔ בקשה אחת. הממשק אינו מפצל את הסכום — ההקצאה כולה בשרת. */
+async function b67PayEmp(empId){
+  var amt = Number(el('b67_amt')? el('b67_amt').value : 0)||0;
+  if(amt<=0) return toast('סכום לא תקין', true);
+  var r = await act('b67PayEmployee', {
+    employee_id: empId, amount: amt,
+    method: el('b67_method').value, note: el('b67_note').value,
+    paid_at: (el('b67_date')? el('b67_date').value : '')
+  }, 'התשלום נרשם');
+  if(!r) return;
+  /* הסיכום שאחרי — הפירוט שאבי ביקש לראות **אחרי** התשלום, לא לפניו */
+  var alloc = r.allocations||[];
+  var notice = '<div class="card" style="border-right:3px solid var(--ok,#2E7D32);margin-bottom:4px">'+
+    '<b>נרשם תשלום '+ils(r.paid)+'</b>'+
+    '<div class="muted" style="font-size:12px;margin-top:4px">שויך: '+
+      alloc.map(function(a){ return esc(monthLabel(a.month))+' — '+ils(a.amount); }).join(' · ')+
+      ' · חוב שנותר: '+ils(r.debt_after)+'</div>'+
+    (r.warning? '<div style="color:var(--amber);font-size:12.5px;font-weight:600;margin-top:6px">⚠ '+esc(r.warning)+'</div>':'')+
+    '</div>';
+  b67EmpView(empId, notice);
 }
 
 /* ================= מיתוג והגדרות ================= */
