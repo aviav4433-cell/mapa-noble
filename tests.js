@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.67-B67', 'ה-canary לא עודכן ל-B67');
+      t.eq(inJs, 'v4.68-B68', 'ה-canary לא עודכן ל-B68');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -3757,6 +3757,303 @@ const B67 = {
     return db;
   }
 };
+
+/* ============================================================
+   ⭐ B68 — ניקוי שכר: כפילויות · מחיקה · יתרת חובה
+   ============================================================ */
+const B68 = {
+  /* מסד עם כפילות אחת: לאברהם שתי שורות שכר לאותו חודש */
+  dupDb(srv) {
+    const db = H.emptyDb(srv);
+    B67.emp(db, 'E1', 'אברהם'); B67.emp(db, 'E2', 'רונית');
+    B67.pr(db, 'PA', 'E1', '2026-07', 6000, 'אושר');
+    B67.pr(db, 'PB', 'E1', '2026-07', 6000, 'אושר');   /* הכפילות */
+    B67.pr(db, 'PC', 'E2', '2026-07', 4000, 'אושר');
+    return db;
+  }
+};
+
+SPECS.push({
+  file: 't14-b68-srv',
+  title: 'B68 — השרת: כפילויות שכר, מחיקה וקיזוז יתרת חובה',
+  needs: 'server',
+  requires: ['b68PayrollFor', 'b68DupGroups', 'b68RowOverpay', 'b68EmployeeOverpay',
+             'b68MergePayroll', 'b68OffsetOverpay', 'b68PayrollFor', 'B68_OFFSET_CAT',
+             'payrollPaidSum', 'recomputePayrollTotal', 'syncFutureExpenseForPayroll',
+             'b67EmployeeDebt', 'handle', 'MANAGER_ONLY', 'READ_ONLY_ACTIONS', 'sVal'],
+
+  tests: {
+
+    '⭐ הבעיה של אבי: כפילות מנפחת את חוב העובד פי 2': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 12000, 'החוב אינו מנופח — הבדיקה לא משחזרת את הבאג');
+      t.eq(srv.b68DupGroups(db).length, 1, 'הכפילות לא זוהתה');
+      const r = srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PB' }, 'מנהל');
+      t.ok(r.ok, 'המיזוג נדחה: ' + r.error);
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 6000, '⛔ החוב לא חזר לסכום האמיתי אחרי המיזוג');
+      t.eq(db.payroll.filter(p => p.employee_id === 'E1').length, 1, 'נותרה יותר משורה אחת');
+      t.eq(srv.b68DupGroups(db).length, 0, 'הכפילות עדיין מדווחת');
+    },
+
+    'המיזוג מעביר תוספות ותשלומים ואינו מאבד כסף': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      db.payrollAdjustments.push({ id: 'A1', payroll_id: 'PB', employee_id: 'E1', month: '2026-07',
+        type: 'תוספת', category: 'בונוס', amount: 500, note: '', created_at: '', created_by: 'מנהל' });
+      B67.pay(db, 'PB', 'E1', 1500);
+      const r = srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PB' }, 'מנהל');
+      t.ok(r.ok, 'המיזוג נדחה: ' + r.error);
+      t.eq(r.moved_adjustments, 1, 'התוספת לא הועברה');
+      t.eq(r.moved_payments, 1, 'התשלום לא הועבר');
+      t.eq(db.payrollAdjustments.filter(a => a.payroll_id === 'PA').length, 1, 'התוספת אינה תלויה בשורה שנשמרה');
+      t.eq(srv.payrollPaidSum(db, 'PA'), 1500, '⛔ כסף ששולם נעלם במיזוג');
+      t.eq(db.payroll.find(p => p.id === 'PA').total, 6500, 'הסה"כ לא חושב מחדש עם התוספת שהועברה');
+      t.eq(srv.sVal(db.payroll.find(p => p.id === 'PA').status), 'שולם חלקית', 'הסטטוס לא עודכן לפי התשלומים שהועברו');
+    },
+
+    '⭐ הכרעת אבי 2: מיזוג שיוצר תשלום עודף יוצר יתרת חובה': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      B67.pay(db, 'PA', 'E1', 6000);            /* שולם על השורה הראשונה */
+      B67.pay(db, 'PB', 'E1', 6000);            /* ושוב על הכפולה — סה"כ 12,000 */
+      const r = srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PB' }, 'מנהל');
+      t.ok(r.ok, 'המיזוג נדחה: ' + r.error);
+      t.eq(r.overpay, 6000, 'התשלום העודף לא חושב');
+      t.eq(srv.b68EmployeeOverpay(db, 'E1'), 6000, 'יתרת החובה של העובד שגויה');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 0, '⛔ יתרה שלילית נספרה כחוב — אסור');
+      t.has(r.auditNote, 'תשלום עודף', 'התשלום העודף אינו מתועד ביומן');
+    },
+
+    '⛔ מיזוג שתי שורות של עובדים או חודשים שונים — נדחה': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      const r1 = srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PC' }, 'מנהל');
+      t.no(r1.ok, 'מוזגו שורות של שני עובדים שונים');
+      const r2 = srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PA' }, 'מנהל');
+      t.no(r2.ok, 'שורה מוזגה עם עצמה');
+      t.eq(db.payroll.length, 3, 'נמחקה שורה למרות שהמיזוג נדחה');
+    },
+
+    '⭐ הכרעת אבי 1: שורת שכר ששולמה אינה נמחקת': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      B67.pay(db, 'PA', 'E1', 100);
+      const r = srv.handle('delete', { table: 'payroll', id: 'PA', mgr_pin: H.MGR_PIN, reason: 'ניסיון' }, db, 'מנהל');
+      t.no(r.ok, '⛔ נמחקה שורת שכר ששולם כנגדה — הכסף כבר יצא מהקופה');
+      t.eq(db.payroll.filter(p => p.id === 'PA').length, 1, 'השורה נמחקה למרות הדחייה');
+    },
+
+    'מחיקת שורה בלי תשלומים — דורשת סיבה ומנקה את התוספות': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      db.payrollAdjustments.push({ id: 'A1', payroll_id: 'PB', employee_id: 'E1', month: '2026-07',
+        type: 'תוספת', category: 'בונוס', amount: 500, note: '', created_at: '', created_by: 'מנהל' });
+      const noReason = srv.handle('delete', { table: 'payroll', id: 'PB', mgr_pin: H.MGR_PIN }, db, 'מנהל');
+      t.no(noReason.ok, 'מחיקה בלי סיבה התקבלה');
+      t.eq(db.payroll.filter(p => p.id === 'PB').length, 1, 'השורה נמחקה למרות שאין סיבה');
+      const r = srv.handle('delete', { table: 'payroll', id: 'PB', mgr_pin: H.MGR_PIN, reason: 'רישום שגוי' }, db, 'מנהל');
+      t.ok(r.ok, 'המחיקה נדחתה: ' + r.error);
+      t.eq(db.payroll.filter(p => p.id === 'PB').length, 0, 'השורה לא נמחקה');
+      t.eq(db.payrollAdjustments.filter(a => a.payroll_id === 'PB').length, 0, '⛔ נותרו תוספות יתומות');
+    },
+
+    '⭐ חסם ייחודיות: הפקת שכר אינה יוצרת שורה שנייה, ואינה נוגעת בכפילות': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      db.payroll.forEach(p => { p.status = 'טיוטה'; });
+      const before = db.payroll.length;
+      const r = srv.buildPayrollForMonth(db, '2026-07');
+      t.eq(db.payroll.length, before, '⛔ ההפקה יצרה שורות שכר נוספות');
+      t.eq(r.dup, 1, 'ההפקה לא דיווחה על הכפילות');
+      t.eq(srv.b68PayrollFor(db, 'E1', '2026-07').count, 2, 'מספר השורות הכפולות השתנה');
+      t.ok(srv.b68PayrollFor(db, 'E1', '2026-07').dup, 'הכפילות לא סומנה');
+      t.no(srv.b68PayrollFor(db, 'E2', '2026-07').dup, 'עובד תקין סומן בטעות ככפול');
+    },
+
+    'B64a: רווח קשיח בגיליון אינו יוצר כפילות חדשה': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      db.payroll = db.payroll.filter(p => p.id !== 'PB');
+      db.payroll.find(p => p.id === 'PA').month = '2026-07\u00a0';   /* רווח קשיח */
+      const f = srv.b68PayrollFor(db, 'E1', '2026-07');
+      t.ok(!!f.row, '⛔ sVal לא הופעל — שורה עם רווח קשיח לא נמצאה, והפקה הייתה יוצרת כפילות');
+      t.eq(f.count, 1, 'מספר השורות שגוי');
+    },
+
+    'קיזוז יתרת חובה — ניכוי מפורש שמקטין את השכר הבא': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      B67.pay(db, 'PA', 'E1', 6000); B67.pay(db, 'PB', 'E1', 6000);
+      srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PB' }, 'מנהל');
+      B67.pr(db, 'PD', 'E1', '2026-08', 6000, 'אושר');
+      t.eq(srv.b68EmployeeOverpay(db, 'E1'), 6000, 'יתרת החובה לפני הקיזוז שגויה');
+      const r = srv.b68OffsetOverpay(db, { employee_id: 'E1', month: '2026-08', amount: 6000 }, 'מנהל');
+      t.ok(r.ok, 'הקיזוז נדחה: ' + r.error);
+      t.eq(db.payroll.find(p => p.id === 'PD').total, 0, 'השכר לא הוקטן בסכום הקיזוז');
+      t.eq(srv.b68EmployeeOverpay(db, 'E1'), 0, '⛔ יתרת החובה לא נסגרה — קיזוז כפול אפשרי');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 0, 'נותר חוב אחרי קיזוז מלא');
+      const dbl = srv.b68OffsetOverpay(db, { employee_id: 'E1', month: '2026-08', amount: 100 }, 'מנהל');
+      t.no(dbl.ok, '⛔ קיזוז שני התקבל אחרי שהיתרה נסגרה');
+    },
+
+    '⛔ קיזוז נדחה: מעל היתרה · חודש עם כפילות · אין יתרת חובה': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      B67.pay(db, 'PA', 'E1', 9000);   /* שולם 9,000 על שכר 6,000 — יתרת חובה 3,000 */
+      const noneYet = srv.b68OffsetOverpay(db, { employee_id: 'E2', month: '2026-07', amount: 10 }, 'מנהל');
+      t.no(noneYet.ok, 'קיזוז התקבל לעובד בלי יתרת חובה');
+      const dupMonth = srv.b68OffsetOverpay(db, { employee_id: 'E1', month: '2026-07', amount: 10 }, 'מנהל');
+      t.no(dupMonth.ok, '⛔ קיזוז בוצע על חודש שיש בו שתי שורות שכר');
+      t.has(dupMonth.error, 'למזג', 'ההודעה אינה מפנה למיזוג');
+      srv.b68MergePayroll(db, { keep_id: 'PA', drop_id: 'PB' }, 'מנהל');
+      B67.pr(db, 'PD', 'E1', '2026-08', 6000, 'אושר');
+      const tooMuch = srv.b68OffsetOverpay(db, { employee_id: 'E1', month: '2026-08', amount: 9999 }, 'מנהל');
+      t.no(tooMuch.ok, 'קיזוז מעל יתרת החובה התקבל');
+      t.eq(db.payrollAdjustments.length, 0, 'נכתב ניכוי למרות שכל הקיזוזים נדחו');
+    },
+
+    '⛔ ההרשאות: אבחון קריאה-בלבד, מיזוג וקיזוז כותבים — כולם מנהל בלבד': (t, { srv }) => {
+      ['b68DupScan', 'b68MergePayroll', 'b68OffsetOverpay'].forEach(a =>
+        t.ok(srv.MANAGER_ONLY.indexOf(a) > -1, 'פעולה שאינה מנהל-בלבד: ' + a));
+      t.ok(srv.READ_ONLY_ACTIONS.indexOf('b68DupScan') > -1, 'האבחון אינו מסומן כקריאה בלבד');
+      ['b68MergePayroll', 'b68OffsetOverpay'].forEach(a =>
+        t.eq(srv.READ_ONLY_ACTIONS.indexOf(a), -1, '⛔ פעולה כותבת סומנה כקריאה בלבד — תרוץ בלי נעילה ובלי audit: ' + a));
+    },
+
+    'האבחון קריאה בלבד — אינו משנה דבר': (t, { srv }) => {
+      const db = B68.dupDb(srv);
+      B67.pay(db, 'PA', 'E1', 9000);   /* שולם 9,000 על שכר 6,000 — יתרת חובה 3,000 */
+      const snap = JSON.stringify(db.payroll) + JSON.stringify(db.payrollPayments) + JSON.stringify(db.payrollAdjustments);
+      const r = srv.handle('b68DupScan', {}, db, 'מנהל');
+      t.ok(r.ok, 'האבחון נכשל: ' + r.error);
+      t.eq(r.groups.length, 1, 'מספר הכפילויות שדווח שגוי');
+      t.eq(r.dup_rows, 2, 'מספר השורות הכפולות שגוי');
+      t.eq(r.overpay.length, 1, 'רשימת יתרות החובה שגויה');
+      t.eq(r.overpay[0].overpay, 3000, 'סכום יתרת החובה שדווח שגוי');
+      t.eq(JSON.stringify(db.payroll) + JSON.stringify(db.payrollPayments) + JSON.stringify(db.payrollAdjustments), snap,
+        '⛔ R1 — פעולת אבחון שינתה נתונים');
+    },
+
+    '⛔ R4 — מנגנוני השכר של B67 לא נפגעו': (t, { srv }) => {
+      const db = H.emptyDb(srv);
+      B67.emp(db, 'E1', 'דני');
+      B67.pr(db, 'P7', 'E1', '2026-07', 10000, 'אושר');
+      B67.pr(db, 'P8', 'E1', '2026-08', 20000, 'אושר');
+      const r = srv.b67PayEmployee(db, { employee_id: 'E1', amount: 12500, method: 'העברה' }, 'מנהל');
+      t.ok(r.ok, 'תשלום ברמת העובד נשבר: ' + r.error);
+      t.eq(r.allocations.length, 2, 'הגלישה בין חודשים נשברה');
+      t.eq(srv.b67EmployeeDebt(db, 'E1'), 17500, 'חישוב החוב השתנה');
+      t.eq(srv.b68EmployeeOverpay(db, 'E1'), 0, 'תשלום תקין נספר בטעות כיתרת חובה');
+    }
+  }
+});
+
+SPECS.push({
+  file: 't14-b68-ui',
+  title: 'B68 — הממשק: אזהרת כפילויות, מיזוג ומחיקה',
+  needs: 'ui',
+  requires: ['b68Groups', 'b68EmpDupCount', 'b68RowOver', 'b68EmpOverpay', 'b68WarnHtml',
+             'b68DupModal', 'b68DoMerge', 'b68OffsetForm', 'b68DoOffset', 'b68DelPayroll',
+             'B68_OFFSET_CAT', 'payrollRowHtml', 'payrollDetail', 'rPayroll', 'b67EmpView',
+             'confirmManagerDelete', 'sVal'],
+
+  tests: {
+
+    '⭐ הכפילות מזוהה בממשק בלי בקשת שרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B68.dupDb(srv) });
+      t.eq(w.b68Groups().length, 1, 'הכפילות לא זוהתה בממשק');
+      t.eq(w.b68EmpDupCount('E1'), 1, 'מספר החודשים הכפולים של העובד שגוי');
+      t.eq(w.b68EmpDupCount('E2'), 0, 'עובד תקין סומן ככפול');
+    },
+
+    '⭐ הכרעת אבי 3: אזהרה בולטת, בלי חסימת ההפקה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B68.dupDb(srv) });
+      w.rPayroll();
+      const h = w.el('main').innerHTML;
+      t.has(h, 'כפילויות שכר', 'האזהרה אינה מוצגת במסך השכר');
+      t.has(h, 'b68DupModal', 'אין כפתור טיפול בכפילויות');
+      t.has(h, 'הפק שכר לחודש זה', '⛔ ההפקה נחסמה — הכרעת אבי היא אזהרה בלבד');
+    },
+
+    'השורה הכפולה מסומנת בטבלה עצמה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B68.dupDb(srv) });
+      const dup = w.payrollRowHtml(w.DB.payroll.find(p => p.id === 'PA'), { id: 'E1', name: 'אברהם' });
+      const ok = w.payrollRowHtml(w.DB.payroll.find(p => p.id === 'PC'), { id: 'E2', name: 'רונית' });
+      t.has(dup, 'כפולה', 'השורה הכפולה אינה מסומנת');
+      t.hasNot(ok, 'כפולה', 'שורה תקינה סומנה ככפולה');
+    },
+
+    '⛔ לנהג אין אזהרה, אין מיזוג ואין מחיקה': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv, { db: B68.dupDb(srv) });
+      t.eq(w.b68WarnHtml(), '', '⛔ לנהג הוצגה אזהרת כפילויות — כלי ניהולי');
+      w.payrollDetail('PA');
+      t.hasNot(w.el('modal').innerHTML, 'b68DelPayroll', '⛔ לנהג הוצג כפתור מחיקת שכר');
+      w.closeModal();
+    },
+
+    'כפתור המחיקה מופיע רק כשלא שולם דבר': (t, { w, srv, H }) => {
+      const db = B68.dupDb(srv);
+      B67.pay(db, 'PA', 'E1', 100);
+      H.login(w, 'מנהל', srv, { db: db });
+      w.payrollDetail('PB');
+      t.has(w.el('modal').innerHTML, 'b68DelPayroll', 'שורה בלי תשלומים אינה ניתנת למחיקה בממשק');
+      w.closeModal();
+      w.payrollDetail('PA');
+      const h = w.el('modal').innerHTML;
+      t.hasNot(h, 'b68DelPayroll', '⛔ הוצג כפתור מחיקה לשורה ששולם כנגדה');
+      t.has(h, 'אינה ניתנת למחיקה', 'לא הוסבר למה אין כפתור מחיקה');
+      w.closeModal();
+    },
+
+    '⭐ המיזוג נשלח בבקשה אחת לכל שורה מיותרת, עם אותו עובד וחודש': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B68.dupDb(srv) });
+      w.confirm = () => true;
+      const sent = [];
+      w.act = async (a, p) => { sent.push({ a: a, p: p }); return { ok: true, overpay: 0 }; };
+      w.b68DupModal();
+      return Promise.resolve(w.b68DoMerge('E1', '2026-07')).then(() => {
+        t.eq(sent.length, 1, 'מספר בקשות המיזוג שגוי');
+        t.eq(sent[0].a, 'b68MergePayroll', 'נשלחה פעולה שגויה');
+        t.ne(sent[0].p.keep_id, sent[0].p.drop_id, '⛔ נשלח מיזוג של שורה עם עצמה');
+        t.ok(['PA', 'PB'].indexOf(sent[0].p.keep_id) > -1, 'השורה הנשמרת אינה מהקבוצה');
+        t.ok(['PA', 'PB'].indexOf(sent[0].p.drop_id) > -1, 'השורה הנמחקת אינה מהקבוצה');
+      });
+    },
+
+    'יתרת חובה מוצגת בכרטיס העובד ואינה מקוזזת מהחוב': (t, { w, srv, H }) => {
+      const db = B68.dupDb(srv);
+      db.payroll = db.payroll.filter(p => p.id !== 'PB');
+      B67.pay(db, 'PA', 'E1', 9000);           /* שולם 9,000 על שכר 6,000 */
+      H.login(w, 'מנהל', srv, { db: db });
+      t.eq(w.b68EmpOverpay('E1'), 3000, 'יתרת החובה שגויה');
+      t.eq(w.b67EmpDebt('E1'), 0, '⛔ יתרה שלילית נספרה כחוב');
+      w.b67EmpView('E1');
+      const h = w.el('modal').innerHTML;
+      t.has(h, 'יתרת חובה', 'יתרת החובה אינה מוצגת בכרטיס העובד');
+      t.has(h, 'b68OffsetForm', 'אין כפתור קיזוז בכרטיס העובד');
+      w.closeModal();
+    },
+
+    'הקיזוז שכבר נרשם מקטין את יתרת החובה': (t, { w, srv, H }) => {
+      const db = B68.dupDb(srv);
+      db.payroll = db.payroll.filter(p => p.id !== 'PB');
+      B67.pay(db, 'PA', 'E1', 9000);
+      db.payrollAdjustments.push({ id: 'A9', payroll_id: 'PC', employee_id: 'E1', month: '2026-08',
+        type: 'ניכוי', category: 'קיזוז יתרת חובה', amount: 1000, note: '', created_at: '', created_by: 'מנהל' });
+      H.login(w, 'מנהל', srv, { db: db });
+      t.eq(w.b68EmpOverpay('E1'), 2000, '⛔ קיזוז שנרשם לא הוריד את יתרת החובה — קיזוז כפול אפשרי');
+    },
+
+    '⛔ המחיקה עוברת במסלול המחיקה הקיים, עם מספר אישי של מנהל': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B68.dupDb(srv) });
+      t.has(String(w.b68DelPayroll), 'confirmManagerDelete', '⛔ נבנה מסלול מחיקה שני בלי אימות מנהל (R8)');
+      t.has(String(w.b68DelPayroll), "'delete'", '⛔ המחיקה אינה עוברת בפעולת delete הקיימת');
+      t.has(String(w.b68DelPayroll), 'reason', 'המחיקה נשלחת בלי סיבה');
+    },
+
+    '⛔ R4 — מסכי השכר של B67 לא נפגעו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv, { db: B67.uiDb(srv) });
+      t.eq(w.b68WarnHtml(), '', 'הוצגה אזהרת כפילויות למסד תקין');
+      t.eq(w.b67EmpDebt('E1'), 33000, 'חישוב החוב של B67 השתנה');
+      w.rPayroll();
+      t.has(w.el('main').innerHTML, 'הפק שכר לחודש זה', 'מסך השכר נשבר');
+      w.b67EmpView('E1');
+      t.has(w.el('modal').innerHTML, 'סך החוב הפתוח', 'כרטיס העובד נשבר');
+      w.closeModal();
+    }
+  }
+});
 
 
 /* ==================== חלק 2 — המריץ ==================== */
