@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.68-B68', 'ה-canary לא עודכן ל-B68');
+      t.eq(inJs, 'v4.69-B69', 'ה-canary לא עודכן ל-B69');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -4052,6 +4052,478 @@ SPECS.push({
       t.has(w.el('modal').innerHTML, 'סך החוב הפתוח', 'כרטיס העובד נשבר');
       w.closeModal();
     }
+  }
+});
+
+
+/* ============================================================================
+   t15 — B69 / WASH-04: מודול NOBLE עובר את כלל B64a
+   ----------------------------------------------------------------------------
+   הבאג, ואיך הוא נראה למשתמש: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר,
+   רווח קשיח (\u00A0 — נוצר בהדבקה מדפדפן) או תו כיווניות בלתי נראה
+   (\u200F — נוצר בהקלדת עברית). כל אחד מהם שובר השוואת מחרוזת מדויקת,
+   **והכשל שקט**: אין שגיאה, אין חריגה. במסלול הכביסה זה התבטא בכך ש-
+   `total_charge` יצא אפס, שקליטה שנמסרה לא נכנסה לחשבונית לעולם, ושספר
+   החיובים פשוט לא הכיר בחיוב.
+
+   ⛔ מה הבדיקות האלה מוכיחות, ומה לא:
+   · הן מוכיחות שההתנהגות **זהה** לערך הנקי — לא רק שההשוואה מנורמלת.
+   · לאתרי הכסף יש בדיקה נפרדת שמוכיחה שהחיוב **נוצר, בסכום הנכון**.
+   · יש בדיקה מפורשת שאף ערך מנורמל **לא נכתב חזרה לגיליון** — הנרמול
+     הוא להשוואה בלבד, ואתר שכותב את הערך המנורמל הוא באג ולא תיקון.
+
+   ⚠ שכבה 2: WASH-04 אינו נוגע ביכולת דפדפן. אין כאן טענה ל-b61Tests().
+   ============================================================================ */
+
+/* שלוש צורות הלכלוך שנצפו בגיליון. הראשונה נקייה — היא קו הבסיס. */
+const W04_DIRT = [
+  { n: 'נקי', f: s => s },
+  { n: 'רווח נגרר', f: s => s + ' ' },
+  { n: 'רווח קשיח \\u00A0', f: s => s + '\u00A0' },
+  { n: 'תו כיווניות \\u200F', f: s => '\u200F' + s + ' ' }
+];
+
+const W04 = {
+  /* קליטה חיצונית באמצע הצינור — עגלה משויכת, מוכנה לשקילה */
+  db(srv, over) {
+    over = over || {};
+    const db = H.emptyDb(srv);
+    db.employees = [{ id: 'E1', name: 'עובד', pin: '111', active: 'כן' }];
+    db.customers = [{ id: 'C1', name: 'לקוח', active: 'כן', price_per_kg: 10 }];
+    db.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש', tare_kg: 5, condition: 'תקינה' }];
+    db.machines = [{ id: 'M1', barcode: 'M1', type: 'מכונת כביסה', status: 'פעילה', auto_stage: 'בכביסה', capacity: 50 }];
+    db.laundryIntakes = [{
+      id: 'IK1', customer_id: over.internal ? '' : 'C1', internal: over.internal || '',
+      status: over.status || 'באריזה', price_per_kg: 10, net_weight_kg: '', total_charge: '',
+      intake_ts: '2026-08-01 08:00', delivered_ts: '', delivery_id: '', order_id: '',
+      ready_ts: '', invoice_id: '', notes: ''
+    }];
+    db.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן', bind_ts: '', release_ts: '' }];
+    return db;
+  },
+  /* מלכלך כל שדה טקסט שנקרא מגיליון במודול NOBLE — ורק אותם */
+  soil(db, f) {
+    (db.laundryIntakes || []).forEach(i => { i.status = f(i.status); if (i.internal) i.internal = f(i.internal); });
+    (db.intakeCarts || []).forEach(b => { b.active = f(b.active); });
+    (db.laundryEvents || []).forEach(e => { e.event_type = f(e.event_type); e.stage = f(e.stage); });
+    (db.carts || []).forEach(c => { c.status = f(c.status); if (c.condition) c.condition = f(c.condition); if (c.virtual) c.virtual = f(c.virtual); });
+    (db.machines || []).forEach(m => { m.status = f(m.status); m.auto_stage = f(m.auto_stage); });
+    (db.employees || []).forEach(e => { e.active = f(e.active); });
+    (db.customers || []).forEach(c => { c.active = f(c.active); });
+    return db;
+  },
+  ledgerSum(srv, db) {
+    srv.b54Bump();
+    return srv.b54Ledger(db).reduce((s, r) => s + r.net_ag, 0);
+  }
+};
+
+
+SPECS.push({
+  file: 't15-b69-wash04',
+  title: 'B69 / WASH-04 — נרמול B64a במודול NOBLE (שרת)',
+  needs: 'server',
+  requires: ['sVal', 'sPick', 'NOBLE_STAGES', 'NOBLE_MACHINE_STAGES', 'NOBLE_WORK_STAGES',
+             'nobleIntake', 'nobleStageStart', 'nobleStageEnd', 'nobleWeigh', 'nobleMarkReady',
+             'nobleDriverScan', 'nobleDeliver', 'nobleCartInfo', 'nobleBoard', 'nobleMachineLoad',
+             'nobleWeighRollup', 'nobleOpenStarts', 'nobleReleaseCart', 'nobleCreateInvoice',
+             'b54Ledger', 'b54Bump', 'b48BalancesAg', 'b2CreditUsedAg',
+             'b49cIntakeClosed', 'b49cAfterAdvance', 'b56CloseLaundryReturnLeg', 'b56CloseLaundryOrder',
+             'b56IntakeOpen', 'B56_CLOSED_INTAKE', 'STAGES', 'b67PayOneRow', 'b68PayrollFor'],
+
+  tests: {
+
+    /* ---------- ⛔ אתרי הכסף. אלה הראשונים כי הם היקרים ביותר ---------- */
+
+    '⛔ כסף 1: סיכום השקילות מחזיר את החיוב גם עם event_type מלוכלך': (t, { srv }) => {
+      W04_DIRT.forEach(d => {
+        const db = W04.db(srv);
+        db.laundryEvents = [{ id: 'EV1', intake_id: 'IK1', cart_id: 'CA1', event_type: d.f('שקילה'),
+          stage: d.f('באריזה'), net_kg: 20, charge: 200 }];
+        const r = srv.nobleWeighRollup(db, 'IK1');
+        t.eq(r.charge, 200, d.n + ' — ⛔ החיוב יצא אפס. השקילה לא נספרה, והלקוח לא חויב');
+        t.eq(r.net, 20, d.n + ' — המשקל נטו אבד');
+        t.eq(r.count, 1, d.n + ' — השקילה לא נספרה כלל');
+      });
+    },
+
+    '⛔ כסף 2: שקילה יוצרת חיוב בסכום הנכון גם על נתונים מלוכלכים': (t, { srv }) => {
+      W04_DIRT.forEach(d => {
+        const db = W04.soil(W04.db(srv), d.f);
+        const r = srv.nobleWeigh(db, { worker_pin: '111', cart_barcode: 'CA1', gross_kg: 25 }, 'מנהל');
+        t.ok(r.ok, d.n + ' — השקילה נדחתה: ' + (r.error || ''));
+        t.eq(r.charge, 200, d.n + ' — ⛔ החיוב שנוצר אינו 200 (20 ק"ג נטו × 10 ₪)');
+        t.eq(db.laundryIntakes[0].total_charge, 200, d.n + ' — החיוב לא נרשם על הקליטה');
+      });
+    },
+
+    '⛔ כסף 3: כביסה פנימית אינה מחויבת גם כש-internal מלוכלך': (t, { srv }) => {
+      W04_DIRT.forEach(d => {
+        const db = W04.soil(W04.db(srv, { internal: 'כן' }), d.f);
+        const r = srv.nobleWeigh(db, { worker_pin: '111', cart_barcode: 'CA1', gross_kg: 25 }, 'מנהל');
+        t.ok(r.ok, d.n + ' — ⛔ שקילת כביסה פנימית נדחתה: ' + (r.error || ''));
+        t.eq(r.charge, 0, d.n + ' — ⛔ נוצר חיוב על כביסה פנימית של MAPA');
+        t.eq(db.laundryIntakes[0].total_charge, 0, d.n + ' — חיוב פנימי נרשם על הקליטה');
+      });
+    },
+
+    '⛔ כסף 4: חשבונית מכבסה מרוכזת אוספת קליטה שנמסרה גם עם status מלוכלך': (t, { srv }) => {
+      W04_DIRT.forEach(d => {
+        const db = W04.db(srv, { status: 'נמסר' });
+        db.laundryIntakes[0].total_charge = 200;
+        W04.soil(db, d.f);
+        const r = srv.nobleCreateInvoice(db, { customer_id: 'C1' }, 'מנהל');
+        t.ok(r.ok, d.n + ' — ⛔ הקליטה לא נכנסה לחשבונית: ' + (r.error || ''));
+        t.eq(r.invoice.subtotal, 200, d.n + ' — סכום החשבונית שגוי');
+        t.eq(r.count, 1, d.n + ' — מספר הקליטות בחשבונית שגוי');
+      });
+    },
+
+    '⛔ כסף 5: ספר החיובים מחזיר אותו מספר לפני ואחרי הלכלוך (R6)': (t, { srv }) => {
+      const clean = (() => {
+        const db = W04.db(srv, { status: 'נמסר' });
+        db.laundryIntakes[0].total_charge = 200;
+        return W04.ledgerSum(srv, db);
+      })();
+      t.eq(clean, 20000, 'קו הבסיס עצמו שגוי — 200 ₪ הם 20,000 אגורות');
+      W04_DIRT.forEach(d => {
+        const db = W04.db(srv, { status: 'נמסר' });
+        db.laundryIntakes[0].total_charge = 200;
+        W04.soil(db, d.f);
+        t.eq(W04.ledgerSum(srv, db), clean, d.n + ' — ⛔ ספר החיובים החזיר סכום אחר. R6 הופר');
+      });
+    },
+
+    '⛔ כסף 6: יתרת הלקוח זהה בשלושת המקורות גם על נתונים מלוכלכים (R6)': (t, { srv }) => {
+      /* ⚠ קליטה שנמסרה וטרם רוכזה לחשבונית היא `pending` ו-open_ag שלה אפס
+         מתוכנן. כדי לבדוק יתרה אמיתית צריך חשבונית — אחרת הבדיקה מודדת אפס
+         ומוכיחה כלום. */
+      const mk = (f) => {
+        const db = W04.db(srv, { status: 'נמסר' });
+        db.laundryIntakes[0].total_charge = 200;
+        db.laundryIntakes[0].invoice_id = 'INV1';
+        db.invoices = [{ id: 'INV1', number: 1001, order_id: '', customer_id: 'C1',
+          date: '2026-08-02', subtotal: 200, vat_rate: 0.18, vat: 36, total: 236, status: 'פתוחה' }];
+        W04.soil(db, f);
+        srv.b54Bump();
+        return { bal: srv.b48BalancesAg(db)['C1'] || 0, credit: srv.b2CreditUsedAg(db, 'C1') };
+      };
+      const clean = mk(s => s);
+      t.ok(clean.bal > 0, 'קו הבסיס עצמו אפס — הבדיקה אינה מוכיחה דבר');
+      W04_DIRT.forEach(d => {
+        const r = mk(d.f);
+        t.eq(r.bal, clean.bal, d.n + ' — ⛔ יתרת הלקוח השתנתה בגלל ערך מלוכלך בקליטה');
+        t.eq(r.credit, r.bal, d.n + ' — ⛔ מנוע האשראי וספר החיובים התפצלו (R6)');
+      });
+    },
+
+    /* ---------- הצינור המלא, מקצה לקצה ---------- */
+
+    '⭐ כל מסלול הכביסה עובד זהה כשכל ערך בגיליון מלוכלך': (t, { srv }) => {
+      const run = (f) => {
+        const db = H.emptyDb(srv);
+        db.employees = [{ id: 'E1', name: 'עובד', pin: '111', active: f('כן') }];
+        db.customers = [{ id: 'C1', name: 'לקוח', active: f('כן'), price_per_kg: 10 }];
+        db.carts = [{ id: 'CA1', barcode: 'CA1', status: f('פנויה'), tare_kg: 5, condition: f('תקינה') }];
+        db.machines = [{ id: 'M1', barcode: 'M1', type: 'מכונה', status: f('פעילה'), auto_stage: f('בכביסה'), capacity: 50 }];
+        const steps = {};
+        const soil = () => W04.soil(db, f);
+        steps.intake = srv.nobleIntake(db, { worker_pin: '111', customer_id: 'C1', cart_barcodes: ['CA1'] }, 'מנהל');
+        soil();
+        steps.start = srv.nobleStageStart(db, { worker_pin: '111', cart_barcode: 'CA1', machine_barcode: 'M1', portion_kg: 10 }, 'מנהל');
+        soil();
+        steps.end = srv.nobleStageEnd(db, { worker_pin: '111', cart_barcode: 'CA1' }, 'מנהל');
+        soil();
+        steps.weigh = srv.nobleWeigh(db, { worker_pin: '111', cart_barcode: 'CA1', gross_kg: 25 }, 'מנהל');
+        soil();
+        steps.ready = srv.nobleMarkReady(db, { worker_pin: '111', cart_barcode: 'CA1' }, 'מנהל');
+        soil();
+        steps.scan = srv.nobleDriverScan(db, { worker_pin: '111', cart_barcode: 'CA1' }, 'מנהל');
+        (db.deliveries || []).forEach(x => { x.status = f(x.status); x.signature_url = 'sig'; });
+        soil();
+        steps.deliver = srv.nobleDeliver(db, { worker_pin: '111', cart_barcode: 'CA1' }, 'מנהל');
+        return { steps, db };
+      };
+      W04_DIRT.forEach(d => {
+        const { steps, db } = run(d.f);
+        ['intake', 'start', 'end', 'weigh', 'ready', 'scan', 'deliver'].forEach(k => {
+          t.ok(steps[k] && steps[k].ok, d.n + ' — השלב "' + k + '" נכשל: ' + ((steps[k] || {}).error || 'ללא הודעה'));
+        });
+        t.eq(steps.start.stage, 'בכביסה', d.n + ' — השלב שנקבע מהמכונה אינו הערך הקנוני');
+        t.eq(steps.weigh.charge, 200, d.n + ' — ⛔ החיוב לאורך הצינור שגוי');
+        t.eq(srv.sVal(db.laundryIntakes[0].status), 'נמסר', d.n + ' — הקליטה לא נסגרה');
+        t.eq(Number(db.laundryIntakes[0].total_charge), 200, d.n + ' — ⛔ החיוב על הקליטה שגוי');
+      });
+    },
+
+    /* ---------- ⛔ הנרמול הוא להשוואה בלבד ---------- */
+
+    '⛔ שום ערך מנורמל אינו נכתב חזרה לגיליון': (t, { srv }) => {
+      /* הערכים המלוכלכים שאנחנו **לא** נוגעים בהם חייבים לחזור כמו שהם.
+         אתר שמנקה את הגיליון אגב ההשוואה הוא באג, לא תיקון. */
+      const db = W04.db(srv);
+      db.customers[0].active = 'כן\u00A0';
+      db.employees[0].active = 'כן\u00A0';
+      db.machines[0].status = 'פעילה\u00A0';
+      db.machines[0].auto_stage = 'בכביסה\u00A0';
+      db.intakeCarts[0].active = 'כן\u00A0';
+      db.carts[0].condition = 'תקינה\u00A0';
+      srv.nobleWeigh(db, { worker_pin: '111', cart_barcode: 'CA1', gross_kg: 25 }, 'מנהל');
+      srv.nobleCartInfo(db, { barcode: 'CA1' });
+      srv.nobleBoard(db);
+      srv.nobleMachineLoad(db);
+      t.eq(db.customers[0].active, 'כן\u00A0', '⛔ ערך הלקוח נדרס בגרסה מנורמלת');
+      t.eq(db.employees[0].active, 'כן\u00A0', '⛔ ערך העובד נדרס בגרסה מנורמלת');
+      t.eq(db.machines[0].status, 'פעילה\u00A0', '⛔ סטטוס המכונה נדרס בגרסה מנורמלת');
+      t.eq(db.machines[0].auto_stage, 'בכביסה\u00A0', '⛔ auto_stage נדרס בגרסה מנורמלת');
+      t.eq(db.intakeCarts[0].active, 'כן\u00A0', '⛔ שיוך העגלה נדרס בגרסה מנורמלת');
+      t.eq(db.carts[0].condition, 'תקינה\u00A0', '⛔ מצב העגלה נדרס בגרסה מנורמלת');
+    },
+
+    '⛔ sVal לא הוחל על כסף, על משקל או על מזהים': (t, { H }) => {
+      const sv = H.stripComments(H.serverSrc());
+      ['sVal(ik.total_charge', 'sVal(i.total_charge', 'sVal(e.charge', 'sVal(e.net_kg',
+       'sVal(gross', 'sVal(net)', 'sVal(m.capacity', 'sVal(ev.portion_kg', 'sVal(amtAg',
+       'sVal(ik.id', 'sVal(cart.id', 'sVal(mach.id'
+      ].forEach(bad => t.hasNot(sv, bad, 'sVal הוחל על ערך מספרי או על מזהה — שם ההשוואה אינה טקסטואלית'));
+    },
+
+    /* ---------- sPick מחזיר '' — טיפול מפורש ---------- */
+
+    "⛔ sPick שמחזיר '' מקבל טיפול ואינו ממשיך בשקט": (t, { srv }) => {
+      const db = W04.db(srv, { status: 'התקבל' });
+      db.machines[0].auto_stage = 'שלב שלא קיים';
+      const r = srv.nobleStageStart(db, { worker_pin: '111', cart_barcode: 'CA1', machine_barcode: 'M1' }, 'מנהל');
+      t.no(r.ok, "⛔ שלב שאינו ברשימה התקבל — sPick החזיר '' וההרצה המשיכה בשקט");
+      t.has(r.error, 'לא הוגדר שלב אוטומטי', 'ההודעה אינה מסבירה מה לתקן');
+      t.eq((db.laundryEvents || []).length, 0, '⛔ נרשם אירוע ביומן למרות שהשלב נדחה');
+      t.eq(srv.sVal(db.laundryIntakes[0].status), 'התקבל', 'סטטוס הקליטה שונה למרות הדחייה');
+    },
+
+    '⭐ השלב שנרשם ביומן הוא הערך הקנוני, לא הערך המלוכלך מהגיליון': (t, { srv }) => {
+      const db = W04.db(srv, { status: 'התקבל' });
+      db.machines[0].auto_stage = 'בכביסה\u00A0';
+      const r = srv.nobleStageStart(db, { worker_pin: '111', cart_barcode: 'CA1', machine_barcode: 'M1' }, 'מנהל');
+      t.ok(r.ok, 'התחלת השלב נדחתה: ' + (r.error || ''));
+      t.eq(r.stage, 'בכביסה', 'sPick לא החזיר את הערך הקנוני מ-NOBLE_MACHINE_STAGES');
+      t.eq(db.laundryEvents[0].stage, 'בכביסה', '⛔ ערך מלוכלך נכתב לתוך יומן האירועים והבאג היה מתרבה');
+      t.eq(db.laundryIntakes[0].status, 'בכביסה', '⛔ ערך מלוכלך נכתב לסטטוס הקליטה');
+      t.eq(db.machines[0].auto_stage, 'בכביסה\u00A0', '⛔ הגיליון עצמו נדרס — הנרמול הוא להשוואה בלבד');
+    },
+
+    /* ---------- מסכי קריאה ---------- */
+
+    'לוח הרצפה, תפוסת המכונות וכרטיס העגלה זהים על נתונים מלוכלכים': (t, { srv }) => {
+      const base = (() => {
+        const db = W04.db(srv);
+        db.laundryEvents = [{ id: 'EV1', intake_id: 'IK1', cart_id: 'CA1', machine_id: 'M1',
+          event_type: 'התחלה', stage: 'בכביסה', portion_kg: 10, ts: '2026-08-01 09:00' }];
+        return db;
+      });
+      const ref = (() => {
+        const db = base();
+        return { board: srv.nobleBoard(db), load: srv.nobleMachineLoad(db), info: srv.nobleCartInfo(db, { barcode: 'CA1' }) };
+      })();
+      t.eq(ref.board.intakes.length, 1, 'קו הבסיס עצמו ריק — הבדיקה אינה מוכיחה דבר');
+      t.eq((ref.load['M1'] || []).length, 1, 'קו הבסיס: המנה אינה במכונה');
+      W04_DIRT.forEach(d => {
+        const db = W04.soil(base(), d.f);
+        const board = srv.nobleBoard(db);
+        const load = srv.nobleMachineLoad(db);
+        const info = srv.nobleCartInfo(db, { barcode: 'CA1' });
+        t.eq(board.intakes.length, 1, d.n + ' — הקליטה נעלמה מהלוח החי');
+        t.eq(board.intakes[0].carts.length, 1, d.n + ' — העגלה נעלמה מהלוח');
+        t.eq((load['M1'] || []).length, 1, d.n + ' — המנה נעלמה מתפוסת המכונה');
+        t.eq(info.machines.length, 1, d.n + ' — המכונה נעלמה מבורר המכונות בכרטיס העגלה');
+        t.eq(info.bound_carts.length, 1, d.n + ' — העגלה המשויכת נעלמה מכרטיס העגלה');
+        t.eq(info.price_per_kg, ref.info.price_per_kg, d.n + ' — ⛔ המחיר לק"ג השתנה');
+      });
+    },
+
+    'שחרור עגלה ושיוך מחדש עובדים על נתונים מלוכלכים': (t, { srv }) => {
+      W04_DIRT.forEach(d => {
+        const db = W04.soil(W04.db(srv, { status: 'מוכן' }), d.f);
+        const r = srv.nobleReleaseCart(db, { worker_pin: '111', cart_barcode: 'CA1' }, 'מנהל');
+        t.ok(r.ok, d.n + ' — שחרור העגלה נכשל: ' + (r.error || ''));
+        t.eq(srv.sVal(db.carts[0].status), 'פנויה', d.n + ' — ⛔ העגלה נשארה תקועה "בשימוש"');
+        t.eq(srv.sVal(db.intakeCarts[0].active), 'לא', d.n + ' — השיוך לא נסגר');
+      });
+    },
+
+    /* ---------- ⛔ R4 — מה שאסור היה להשתנות ---------- */
+
+    '⛔ R4 — מנגנוני B56 · B67 · B68 לא נפגעו': (t, { srv, H }) => {
+      const sv = H.stripComments(H.serverSrc());
+      t.eq(srv.B56_CLOSED_INTAKE, 'נמסר', 'B56_CLOSED_INTAKE שונה');
+      ['function b56IntakeOpen', 'function b56CloseLaundryReturnLeg', 'function b56CloseLaundryOrder',
+       'function b49cAfterAdvance', 'function b40SplitLaundry', 'function b54Ledger',
+       'function b67PayOneRow', 'B67_WRITE_DEFER', 'function b68PayrollFor',
+       'function b68MergePayroll', 'function b68EmployeeOverpay'
+      ].forEach(n => t.has(sv, n, 'מנגנון חסין נעלם מהשרת: ' + n));
+      t.eq(srv.STAGES.join('|'), 'התקבל|בכביסה|בייבוש|בגיהוץ וקיפול|מוכן', 'STAGES שונתה');
+      t.eq(srv.NOBLE_STAGES.length, 8, 'NOBLE_STAGES שונתה');
+      t.eq(srv.NOBLE_MACHINE_STAGES.join('|'), 'בכביסה|בייבוש|בגיהוץ וקיפול|באריזה', 'NOBLE_MACHINE_STAGES שונתה');
+    },
+
+    '⛔ B67_WRITE_DEFER חוזר ל-null — נרמול NOBLE לא נגע במסלול הכתיבה של השכר': (t, { srv }) => {
+      t.eq(srv.B67_WRITE_DEFER, null, '⛔ מאגר הכתיבה הדחויה של B67 נשאר פתוח');
+    },
+
+    'b49cIntakeClosed מזהה קליטה סגורה גם עם status מלוכלך': (t, { srv }) => {
+      W04_DIRT.forEach(d => {
+        t.ok(srv.b49cIntakeClosed({ status: d.f('מוכן') }), d.n + ' — קליטה מוכנה לא זוהתה כסגורה');
+        t.ok(srv.b49cIntakeClosed({ status: d.f('נמסר') }), d.n + ' — קליטה שנמסרה לא זוהתה כסגורה');
+        t.no(srv.b49cIntakeClosed({ status: d.f('בכביסה') }), d.n + ' — קליטה פעילה סומנה כסגורה');
+      });
+    }
+
+  }
+});
+
+
+SPECS.push({
+  file: 't15b-b69-wash04-ui',
+  title: 'B69 / WASH-04 — נרמול B64a במודול NOBLE (ממשק)',
+  needs: 'ui',
+  requires: ['sVal', 'sPick', 'NOBLE_STAGES', 'b54LedgerFE', 'b48BalancesAgFE', 'custBalance',
+             'internalIntakeSet', 'b49cCompletedTs', 'b49bIsVirtual', 'b49dIntakeCartCount',
+             'nobleSummaryData', 'floorRenderInfo', 'floorBoardRender', 'rFloor', 'el',
+             'openModal', 'closeModal', 'go', 'b61Tests'],
+
+  tests: {
+
+    '⛔ כסף: ספר החיובים בממשק מחזיר אותו מספר לפני ואחרי הלכלוך (R6)': (t, { w, srv, H }) => {
+      const build = (f) => {
+        H.login(w, 'מנהל', srv);
+        w.DB.customers = [{ id: 'C1', name: 'לקוח', active: f('כן') }];
+        w.DB.laundryIntakes = [{ id: 'IK1', customer_id: 'C1', internal: '', status: f('נמסר'),
+          total_charge: 200, net_weight_kg: 20, delivered_ts: '2026-08-02 10:00',
+          intake_ts: '2026-08-01 08:00', invoice_id: '', order_id: '' }];
+        delete w.DB._b54Ledger;
+        return w.b54LedgerFE().reduce((s, r) => s + r.net_ag, 0);
+      };
+      const clean = build(s => s);
+      t.eq(clean, 20000, 'קו הבסיס שגוי — 200 ₪ הם 20,000 אגורות');
+      [s => s + ' ', s => s + '\u00A0', s => '\u200F' + s + ' '].forEach((f, i) => {
+        t.eq(build(f), clean, '⛔ ספר החיובים בממשק החזיר סכום אחר על לכלוך מסוג ' + i + '. R6 הופר');
+      });
+    },
+
+    '⛔ כסף: יתרת הלקוח במסך הגבייה זהה על נתונים מלוכלכים': (t, { w, srv, H }) => {
+      const bal = (f) => {
+        H.login(w, 'מנהל', srv);
+        w.DB.customers = [{ id: 'C1', name: 'לקוח', active: f('כן') }];
+        w.DB.laundryIntakes = [{ id: 'IK1', customer_id: 'C1', internal: '', status: f('נמסר'),
+          total_charge: 200, net_weight_kg: 20, delivered_ts: '2026-08-02 10:00',
+          intake_ts: '2026-08-01 08:00', invoice_id: 'INV1', order_id: '' }];
+        /* ⚠ קליטה שטרם רוכזה לחשבונית היא pending ו-open שלה אפס מתוכנן.
+           בלי חשבונית הבדיקה מודדת אפס ואינה מוכיחה דבר. */
+        w.DB.invoices = [{ id: 'INV1', number: 1001, order_id: '', customer_id: 'C1',
+          date: '2026-08-02', subtotal: 200, vat_rate: 0.18, vat: 36, total: 236, status: 'פתוחה' }];
+        delete w.DB._b54Ledger;
+        return w.custBalance('C1');
+      };
+      const clean = bal(s => s);
+      t.ok(clean > 0, 'קו הבסיס עצמו אפס — הבדיקה אינה מוכיחה דבר');
+      [s => s + ' ', s => s + '\u00A0', s => '\u200F' + s + ' '].forEach((f, i) => {
+        t.eq(bal(f), clean, '⛔ יתרת הלקוח השתנתה על לכלוך מסוג ' + i);
+      });
+    },
+
+    'סימון כביסה פנימית וספירת העגלות עמידים ללכלוך': (t, { w, srv, H }) => {
+      [s => s, s => s + ' ', s => s + '\u00A0', s => '\u200F' + s + ' '].forEach((f, i) => {
+        H.login(w, 'מנהל', srv);
+        w.DB.laundryIntakes = [{ id: 'IK1', internal: f('כן'), status: f('מוכן'), ready_ts: '2026-08-01 12:00' },
+                               { id: 'IK2', internal: '', status: f('בכביסה') }];
+        w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: f('כן') },
+                            { id: 'IC2', intake_id: 'IK1', cart_id: 'CA2', active: f('לא') }];
+        w.DB.carts = [{ id: 'CA1', virtual: f('כן') }, { id: 'CA2', virtual: '' }];
+        t.ok(w.internalIntakeSet()['IK1'], i + ' — קליטה פנימית לא זוהתה');
+        t.no(!!w.internalIntakeSet()['IK2'], i + ' — קליטה חיצונית סומנה כפנימית');
+        t.eq(w.b49cCompletedTs(w.DB.laundryIntakes[0]), '2026-08-01 12:00', i + ' — מועד ההשלמה של קליטה פנימית אבד');
+        t.eq(w.b49dIntakeCartCount('IK1'), 1, i + ' — ספירת העגלות המשויכות שגויה');
+        t.ok(w.b49bIsVirtual(w.DB.carts[0]), i + ' — עגלה וירטואלית לא זוהתה');
+        t.no(w.b49bIsVirtual(w.DB.carts[1]), i + ' — עגלה פיזית סומנה כווירטואלית');
+      });
+    },
+
+    'דוח ביצועי המכבסה סופר אותם קילוגרמים על נתונים מלוכלכים': (t, { w, srv, H }) => {
+      const kg = (f) => {
+        H.login(w, 'מנהל', srv);
+        w.DB.laundryIntakes = [
+          { id: 'IK1', internal: '', status: f('נמסר'), net_weight_kg: 20, total_charge: 200, delivered_ts: '2026-08-07 10:00' },
+          { id: 'IK2', internal: f('כן'), status: f('מוכן'), net_weight_kg: 50, total_charge: 0, ready_ts: '2026-08-07 10:00' }
+        ];
+        return w.nobleSummaryData(30);
+      };
+      const clean = kg(s => s);
+      t.eq(clean.del, 2, 'קו הבסיס: שתי הקליטות אמורות להיספר כהושלמו');
+      [s => s + ' ', s => s + '\u00A0', s => '\u200F' + s + ' '].forEach((f, i) => {
+        const r = kg(f);
+        t.eq(r.del, clean.del, i + ' — מספר הקליטות שהושלמו השתנה');
+        t.eq(r.kg, clean.kg, i + ' — ⛔ הקילוגרמים בדוח השתנו. כביסה פנימית נספרה או נשמטה בטעות');
+        t.eq(r.rev, clean.rev, i + ' — ההכנסות בדוח השתנו');
+      });
+    },
+
+    '⭐ כרטיס העגלה ברצפת הייצור מצויר זהה גם עם סטטוס מלוכלך (R7)': (t, { w, srv, H }) => {
+      const draw = (f) => {
+        H.login(w, 'מנהל', srv);
+        w.go('floor');
+        w.FLOOR_INFO = {
+          ok: true,
+          cart: { id: 'CA1', status: f('בשימוש'), tare_kg: 5 },
+          intake: { id: 'IK1', status: f('מוכן'), internal: f('כן'), customer_id: '' },
+          customer_name: 'פנימי — MAPA', price_per_kg: 0, bound_carts: ['CA1'],
+          open_stage: '', open_machine: '', cart_released: false, opens: [],
+          machines: [{ id: 'M1', type: 'מכונה', status: f('פעילה'), auto_stage: f('בכביסה'), capacity: 50, load_kg: 0, load_count: 0 }],
+          weighed: { net: 20, charge: 0, count: 1, carts: ['CA1'] }
+        };
+        w.floorRenderInfo();
+        return w.el('floorInfo') ? w.el('floorInfo').innerHTML : '';
+      };
+      /* ⛔ מה שמושווה הוא **המבנה**: הצבע, הכפתורים והמסלול שנבחר.
+         טקסט הסטטוס עצמו מוצג כפי שהוא בגיליון — וזה מכוון: המסך מראה
+         למשתמש את הערך האמיתי, ולא גרסה מנוקה שתסתיר ממנו את התקלה. */
+      const shape = (h) => h.replace(/>[^<]*</g, '><').replace(/\s+/g, ' ');
+      const clean = draw(s => s);
+      t.ok(clean.length > 50, 'קו הבסיס: כרטיס העגלה לא צויר כלל');
+      t.has(clean, 'floorDriver()', 'קו הבסיס: כפתור סריקת הנהג חסר בקליטה מוכנה');
+      [s => s + ' ', s => s + '\u00A0', s => '\u200F' + s + ' '].forEach((f, i) => {
+        const dirty = draw(f);
+        t.ok(dirty.length > 50, i + ' — ⛔ הכרטיס לא צויר. זה בדיוק המסך שלא מגיב');
+        t.eq(shape(dirty), shape(clean), i + ' — מבנה הכרטיס, הצבעים או הכפתורים השתנו');
+        t.has(dirty, 'floorDriver()', i + ' — ⛔ כפתור ההעמסה נעלם. הקליטה תיתקע ב"מוכן"');
+        t.has(dirty, 'var(--teal)', i + ' — צבע התג השתנה — הסטטוס לא זוהה');
+      });
+    },
+
+    '⛔ sVal לא הוחל על כסף או על מספרים בממשק': (t, { H }) => {
+      const ui = H.stripComments(H.uiScript());
+      ['sVal(ik.total_charge', 'sVal(i.total_charge', 'sVal(i.net_weight_kg', 'sVal(e.net_kg',
+       'sVal(amtAg', 'sVal(m.capacity', 'sVal(c.tare_kg', 'sVal(x.amount', 'sVal(o.total'
+      ].forEach(bad => t.hasNot(ui, bad, 'sVal הוחל על ערך כספי או מספרי — שם ההשוואה מספרית'));
+    },
+
+    '⛔ sVal/sPick נשארו זהים תו-בתו בין הממשק לשרת (B64a)': (t, { H }) => {
+      const grab = (src, name) => {
+        const m = H.stripComments(src).match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
+        return m ? m[0].replace(/\s+/g, '') : '';
+      };
+      ['sVal', 'sPick'].forEach(fn => {
+        const a = grab(H.uiScript(), fn), b = grab(H.serverSrc(), fn);
+        t.ok(a.length > 0, fn + ' חסר בממשק');
+        t.eq(a, b, fn + ' התפצל בין הממשק לשרת — ההתנהגות תשתנה בין הצדדים');
+      });
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-04 אינו נוגע ביכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n);
+      t.ok(names.length > 0, 'כרטיס הבדיקה העצמית התרוקן');
+      t.no(names.join(' | ').indexOf('WASH') > -1, '⛔ נוספה טענה ל-b61Tests למרות שהאצווה אינה נוגעת ביכולת דפדפן');
+    }
+
   }
 });
 
