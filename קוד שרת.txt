@@ -107,6 +107,17 @@
 //                     לשלב קודם". stage_from/stage_to כבר קיימות — אין עמודה חדשה.
 //                   ⚠ b49cAfterAdvance לא נגעה — הגשר משקף את toStage כמות שהוא.
 //                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
+//             B69 — WASH-04: מודול NOBLE עובר את כלל B64a — canary v4.69-B69
+//                   • 51 אתרי השוואה מול רשימה קבועה עברו ל-sVal/sPick:
+//                     NC1/NC2/NC3 · b49c (הגשר מלוח הכביסה) · b49d · b54Ledger ·
+//                     יתרת ההזמנה. ⛔ שבעה מהם נוגעים בכסף.
+//                   • nobleStageStart עברה ל-sPick(mach.auto_stage,
+//                     NOBLE_MACHINE_STAGES) — מרגע זה השלב שנרשם ביומן ובסטטוס
+//                     הקליטה הוא הערך **הקנוני** ולא הערך המלוכלך מהגיליון.
+//                     '' = אין התאמה, ומקבל דחייה מפורשת.
+//                   ⛔ נרמול להשוואה בלבד. הערך בגיליון אינו משתנה — יש בדיקה.
+//                   ⛔ לא הוחל על כסף, על משקל ועל מזהים.
+//                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -5359,7 +5370,7 @@ function assignCart(db, taskId, cartId, user) {
   var t = db.laundryTasks.find(function (x) { return x.id === taskId; });
   var c = db.carts.find(function (x) { return x.id === cartId; });
   if (!t || !c) return { ok: false, error: 'משימה או עגלה לא נמצאו' };
-  if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + cartId + ' אינה פנויה' };
+  if (sVal(c.status) !== 'פנויה') return { ok: false, error: 'העגלה ' + cartId + ' אינה פנויה' };
   if (t.cart_id) { releaseCart(db, t.cart_id); }
   t.cart_id = cartId;
   c.status = 'בשימוש';
@@ -5561,7 +5572,7 @@ function b49cTaskIntake(db, t) {
   return nobleIntakeById(db, t.intake_id);
 }
 function b49cIntakeClosed(ik) {
-  return !ik || ['מוכן', 'במשלוח', 'נמסר'].indexOf(ik.status) > -1;
+  return !ik || ['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1;
 }
 
 /* פתיחת קליטת NOBLE פנימית מהחזרת הזמנה.
@@ -5597,7 +5608,7 @@ function b49cOpenReturnIntake(db, order, user) {
 
 /* שחרור שיוך עגלה מהקליטה (בלי לגעת בסטטוס העגלה — הלוח כבר שחרר אותו) */
 function b49cUnbindCart(db, intake, cartId, w, reason) {
-  var bind = db.intakeCarts.find(function (b) { return b.intake_id === intake.id && b.cart_id === cartId && b.active === 'כן'; });
+  var bind = db.intakeCarts.find(function (b) { return b.intake_id === intake.id && b.cart_id === cartId && sVal(b.active) === 'כן'; });
   if (!bind) return false;
   bind.active = 'לא'; bind.release_ts = nowTs();
   nobleEvent(db, {
@@ -5629,9 +5640,9 @@ function b49cBindRealCart(db, t, cartId, user) {
   }
   // שחרור העגלות הווירטואליות — יש עכשיו עגלה פיזית
   db.intakeCarts.slice().forEach(function (b) {
-    if (b.intake_id !== ik.id || b.active !== 'כן' || b.cart_id === cartId) return;
+    if (b.intake_id !== ik.id || sVal(b.active) !== 'כן' || b.cart_id === cartId) return;
     var c = db.carts.find(function (x) { return x.id === b.cart_id; });
-    if (!c || String(c.virtual || '') !== 'כן') return;
+    if (!c || sVal(c.virtual) !== 'כן') return;
     c.status = 'פנויה';
     b49cUnbindCart(db, ik, b.cart_id, w, 'הוחלפה בעגלה פיזית ' + cartId);
   });
@@ -5658,7 +5669,7 @@ function b49cCloseIntake(db, intake, w) {
 function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
   var out = { events: 0, closed: false, released: [] };
   var ik = b49cTaskIntake(db, t);
-  if (!ik || ['במשלוח', 'נמסר'].indexOf(ik.status) > -1) return out;
+  if (!ik || ['במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1) return out;
   var w = b49cWorkerRef(db, t.worker || user);
   var isFinish = (toStage === 'מוכן');
 
@@ -5692,7 +5703,7 @@ function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
   }
   // 4. כל משימות הקליטה הגיעו ל"מוכן" → סגירת הקליטה (L3: זה הרגע שנספר בדוח)
   if (isFinish) {
-    var stillOpen = db.laundryTasks.filter(function (x) { return x.intake_id === ik.id && x.stage !== 'מוכן'; });
+    var stillOpen = db.laundryTasks.filter(function (x) { return x.intake_id === ik.id && sVal(x.stage) !== 'מוכן'; });
     if (!stillOpen.length) { out.released = b49cCloseIntake(db, ik, w); out.closed = true; }
   }
   return out;
@@ -5779,7 +5790,7 @@ function b49dAddCarts(db, p, user) {
     var bind = nobleActiveBinding(db, c.id);
     if (bind && bind.intake_id === ik.id) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה הזו' };
     if (bind) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה פעילה' };
-    if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
+    if (sVal(c.status) !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
     carts.push(c);
   }
   carts.forEach(function (c) {
@@ -5792,12 +5803,12 @@ function b49dAddCarts(db, p, user) {
     });
   });
   var released = [];
-  if (carts.some(function (c) { return String(c.virtual || '') !== 'כן'; })) {
+  if (carts.some(function (c) { return sVal(c.virtual) !== 'כן'; })) {
     db.intakeCarts.slice().forEach(function (b) {
-      if (b.intake_id !== ik.id || b.active !== 'כן') return;
+      if (b.intake_id !== ik.id || sVal(b.active) !== 'כן') return;
       if (carts.some(function (c) { return c.id === b.cart_id; })) return;
       var vc = db.carts.find(function (x) { return x.id === b.cart_id; });
-      if (!vc || String(vc.virtual || '') !== 'כן') return;
+      if (!vc || sVal(vc.virtual) !== 'כן') return;
       vc.status = 'פנויה';
       b49cUnbindCart(db, ik, b.cart_id, w, 'הוחלפה בעגלה פיזית שנוספה לקליטה');
       released.push(b.cart_id);
@@ -5914,7 +5925,7 @@ function b54Ledger(db) {
 
   // ---- 2) קליטות מכבסה (המקור: total_charge מ-nobleWeigh — לא נוגעים בו) ----
   (db.laundryIntakes || []).forEach(function (ik) {
-    if (String(ik.internal) === 'כן') return;          // כביסה פנימית — אפס שינוי
+    if (sVal(ik.internal) === 'כן') return;          // כביסה פנימית — אפס שינוי (⛔ WASH-04 · כסף)
     var amtAg = toAg(ik.total_charge);
     if (!(amtAg > 0)) return;
     var kg = Number(ik.net_weight_kg) || 0;
@@ -5930,7 +5941,7 @@ function b54Ledger(db) {
     var oid = String(ik.order_id || '').trim();
     if (oid && byOrder[oid]) { byOrder[oid].rows.push(row); return; }
     // קליטה חופשית שנמסרה וטרם רוכזה לחשבונית — נרשמת בספר, אינה חוב (כמו היום)
-    if (String(ik.status) === 'נמסר') {
+    if (sVal(ik.status) === 'נמסר') {   /* ⛔ WASH-04 · כסף: סטטוס מלוכלך הוציא את החיוב מספר החיובים */
       row.customer_id = ik.customer_id; row.pending = 1; loose.push(row);
     }
   });
@@ -6193,7 +6204,7 @@ function b54RawOrderTotalAg(db, o) {
   // C8: קליטה מקושרת להזמנה — חיובה שייך להזמנה, אלא אם רוכזה לחשבונית מרוכזת
   (db.laundryIntakes || []).forEach(function (ik) {
     if (String(ik.order_id || '').trim() !== o.id) return;
-    if (String(ik.internal) === 'כן') return;
+    if (sVal(ik.internal) === 'כן') return;   /* ⛔ WASH-04 · כסף */
     if (!(toAg(ik.total_charge) > 0)) return;
     var iv = (db.invoices || []).find(function (v) { return v.id === ik.invoice_id && v.status !== 'בוטלה'; });
     if (iv && !iv.order_id) return;
@@ -6729,7 +6740,7 @@ function nRound2(n) { return Math.round(Number(n) * 100) / 100; }
 // זיהוי העובד המבצע: קוד אישי (מצב טאבלט משותף) גובר על סשן אישי
 function nobleWorker(db, p, user) {
   if (p.worker_pin !== undefined && String(p.worker_pin) !== '') {
-    var byPin = db.employees.find(function (x) { return String(x.pin) === String(p.worker_pin) && x.active !== 'לא'; });
+    var byPin = db.employees.find(function (x) { return String(x.pin) === String(p.worker_pin) && sVal(x.active) !== 'לא'; });
     if (!byPin) return { ok: false, error: 'מספר אישי שגוי' };
     return { ok: true, id: byPin.id, name: byPin.name };
   }
@@ -6738,7 +6749,7 @@ function nobleWorker(db, p, user) {
     if (bySess) return { ok: true, id: bySess.id, name: bySess.name };
   }
   if (db.employees.length) {
-    var byName = db.employees.find(function (x) { return x.name === user && x.active !== 'לא'; });
+    var byName = db.employees.find(function (x) { return sVal(x.name) === sVal(user) && sVal(x.active) !== 'לא'; });
     if (byName) return { ok: true, id: byName.id, name: byName.name };
     return { ok: false, error: 'נדרש זיהוי עובד — הזן קוד אישי' };
   }
@@ -6751,7 +6762,7 @@ function nobleFindCart(db, bc) {
   return db.carts.find(function (c) { return String(c.barcode) === s || String(c.id) === s; }) || null;
 }
 function nobleActiveBinding(db, cartId) {
-  return db.intakeCarts.find(function (b) { return b.cart_id === cartId && b.active === 'כן'; }) || null;
+  return db.intakeCarts.find(function (b) { return b.cart_id === cartId && sVal(b.active) === 'כן'; }) || null;
 }
 function nobleIntakeById(db, id) {
   return db.laundryIntakes.find(function (i) { return i.id === id; }) || null;
@@ -6763,9 +6774,9 @@ function nobleIntakeById(db, id) {
 function nobleLastReleasedIntake(db, cartId) {
   var best = null, bestTs = '';
   db.intakeCarts.forEach(function (b) {
-    if (b.cart_id !== cartId || b.active === 'כן') return;
+    if (b.cart_id !== cartId || sVal(b.active) === 'כן') return;
     var ik = nobleIntakeById(db, b.intake_id);
-    if (!ik || ['מוכן', 'במשלוח'].indexOf(ik.status) === -1) return;
+    if (!ik || ['מוכן', 'במשלוח'].indexOf(sVal(ik.status)) === -1) return;
     var ts = String(b.release_ts || b.bind_ts || '');
     if (!best || ts >= bestTs) { best = ik; bestTs = ts; }
   });
@@ -6815,9 +6826,10 @@ function nobleEventsOf(db, intakeId, cartId) {
 function nobleOpenStarts(db, intakeId, cartId) {
   var byKey = {};
   nobleEventsOf(db, intakeId, cartId).forEach(function (e) {
-    if (e.event_type !== 'התחלה' && e.event_type !== 'סיום') return;
-    var k = String(e.machine_id || '') + '|' + String(e.stage || '');
-    if (e.event_type === 'התחלה') byKey[k] = e;
+    var et = sVal(e.event_type);
+    if (et !== 'התחלה' && et !== 'סיום') return;
+    var k = String(e.machine_id || '') + '|' + sVal(e.stage);
+    if (et === 'התחלה') byKey[k] = e;
     else delete byKey[k];
   });
   return Object.keys(byKey).map(function (k) { return byKey[k]; });
@@ -6831,9 +6843,9 @@ function nobleOpenStart(db, intakeId, cartId) {
 function nobleMachineLoad(db) {
   var out = {};
   db.laundryIntakes.forEach(function (ik) {
-    if (ik.status === 'נמסר') return;
+    if (sVal(ik.status) === 'נמסר') return;
     db.intakeCarts.forEach(function (b) {
-      if (b.intake_id !== ik.id || b.active !== 'כן') return;
+      if (b.intake_id !== ik.id || sVal(b.active) !== 'כן') return;
       nobleOpenStarts(db, ik.id, b.cart_id).forEach(function (ev) {
         if (!ev.machine_id) return;
         (out[ev.machine_id] = out[ev.machine_id] || []).push({
@@ -6849,7 +6861,7 @@ function nobleMachineLoad(db) {
 function nobleWeighRollup(db, intakeId) {
   var lastByCart = {};
   nobleEventsOf(db, intakeId).forEach(function (e) {
-    if (e.event_type === 'שקילה') lastByCart[e.cart_id] = e;
+    if (sVal(e.event_type) === 'שקילה') lastByCart[e.cart_id] = e;
   });
   var net = 0, charge = 0, count = 0, weighedCarts = [];
   Object.keys(lastByCart).forEach(function (c) {
@@ -6871,20 +6883,20 @@ function nobleCartInfo(db, p) {
   if (!bind && !relIk) return { ok: true, cart: cart, intake: null };
   var intake = bind ? nobleIntakeById(db, bind.intake_id) : relIk;
   var cust = intake && intake.customer_id ? db.customers.find(function (c) { return c.id === intake.customer_id; }) : null;
-  var carts = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן'; }).map(function (b) { return b.cart_id; });
+  var carts = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן'; }).map(function (b) { return b.cart_id; });
   var open = bind ? nobleOpenStart(db, intake.id, cart.id) : null;
   var roll = nobleWeighRollup(db, intake.id);
   return {
     ok: true, cart: cart, intake: intake,
-    customer_name: cust ? cust.name : (intake.internal === 'כן' ? 'פנימי — MAPA' : ''),
-    price_per_kg: intake.internal === 'כן' ? 0 : Number(cust && cust.price_per_kg) || 0,
+    customer_name: cust ? cust.name : (sVal(intake.internal) === 'כן' ? 'פנימי — MAPA' : ''),
+    price_per_kg: sVal(intake.internal) === 'כן' ? 0 : Number(cust && cust.price_per_kg) || 0,
     bound_carts: carts, open_stage: open ? open.stage : '', open_machine: open ? open.machine_id : '',
     cart_released: !bind,
     // B39b: כל המנות הפתוחות של העגלה (פיצול בין מכונות) + תפוסת המכונות
     opens: (bind ? nobleOpenStarts(db, intake.id, cart.id) : []).map(function (o) {
       return { stage: o.stage, machine_id: o.machine_id, since: o.ts, portion_kg: Number(o.portion_kg) || 0 };
     }),
-    machines: db.machines.filter(function (m) { return NOBLE_MACHINE_STAGES.indexOf(String(m.auto_stage || '')) > -1; })
+    machines: db.machines.filter(function (m) { return sPick(m.auto_stage, NOBLE_MACHINE_STAGES) !== ''; })
       .map(function (m) {
         var lo = nobleMachineLoad(db)[m.id] || [];
         var kg = 0; lo.forEach(function (x) { kg += x.portion_kg; });
@@ -6916,7 +6928,7 @@ function nobleIntake(db, p, user) {
   var dg49fI = b49fDeclareGate(db, w.name, p.trip_done);
   if (!dg49fI.ok) return dg49fI;
   if (!b49dOid && !internal) {
-    cust = db.customers.find(function (c) { return c.id === p.customer_id && c.active !== 'לא'; });
+    cust = db.customers.find(function (c) { return c.id === p.customer_id && sVal(c.active) !== 'לא'; });
     if (!cust) return { ok: false, error: 'יש לבחור לקוח (או לסמן כביסה פנימית)' };
   }
   var bcs = (p.cart_barcodes || []).map(String).filter(function (s) { return s.trim() !== ''; });
@@ -6942,7 +6954,7 @@ function nobleIntake(db, p, user) {
     if (seen[c.id]) return { ok: false, error: 'העגלה ' + c.id + ' נסרקה פעמיים' };
     seen[c.id] = 1;
     if (nobleActiveBinding(db, c.id)) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה פעילה' };
-    if (c.status !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
+    if (sVal(c.status) !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
     carts.push(c);
   }
   /* B49d: המחיר לק"ג נלקח מכרטיס הלקוח כבר בפתיחת הקליטה, לא רק בשקילה.
@@ -6993,13 +7005,16 @@ function nobleStageStart(db, p, user) {
   var intake = r.intake, cart = r.cart;
   if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
   var blk = nobleBlockReleased(r); if (blk) return blk;
-  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(intake.status) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
   var mbc = String(p.machine_barcode || '').trim();
   var mach = db.machines.find(function (m) { return String(m.barcode) === mbc || String(m.id) === mbc; });
   if (!mach) return { ok: false, error: 'מכונה לא נמצאה — בדוק את הברקוד' };
-  if (mach.status && mach.status !== 'פעילה') return { ok: false, error: 'המכונה ' + mach.id + ' אינה פעילה (סטטוס: ' + mach.status + ')' };
-  var stage = String(mach.auto_stage || '').trim();
-  if (NOBLE_MACHINE_STAGES.indexOf(stage) === -1) return { ok: false, error: 'למכונה ' + mach.id + ' לא הוגדר שלב אוטומטי — עדכן במסך עגלות ומכונות' };
+  if (sVal(mach.status) && sVal(mach.status) !== 'פעילה') return { ok: false, error: 'המכונה ' + mach.id + ' אינה פעילה (סטטוס: ' + mach.status + ')' };
+  /* WASH-04: sPick מחזיר את הערך **הקנוני** מהרשימה — ולכן מרגע זה
+     `stage` הוא הקבוע שלנו ולא הערך המלוכלך מהגיליון. '' = אין התאמה
+     אמיתית, ומקבל טיפול מפורש בשורה הבאה (⛔ אסור להמשיך בשקט). */
+  var stage = sPick(mach.auto_stage, NOBLE_MACHINE_STAGES);
+  if (stage === '') return { ok: false, error: 'למכונה ' + mach.id + ' לא הוגדר שלב אוטומטי — עדכן במסך עגלות ומכונות' };
   /* B39b: חסימה רק על אותה מכונה. עגלה אחת יכולה להתחלק בין כמה מכונות
      במקביל, וגם להיות בשלבים שונים בו-זמנית (מנה אחת כבר בייבוש בזמן
      שהשנייה עדיין בכביסה) — זה בדיוק מה שקורה במכבסה אמיתית. */
@@ -7070,14 +7085,14 @@ function nobleWeigh(db, p, user) {
   var intake = r.intake, cart = r.cart;
   if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
   var blkW = nobleBlockReleased(r); if (blkW) return blkW;
-  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(intake.status) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
   var gross = Number(p.gross_kg);
   if (!(gross > 0)) return { ok: false, error: 'יש להזין משקל ברוטו תקין (ק"ג)' };
   var tare = Number(cart.tare_kg) || 0;
   var net = nRound2(gross - tare);
   if (!(net > 0)) return { ok: false, error: 'משקל נטו אינו חיובי (ברוטו ' + gross + ' − משקל עצמי ' + tare + ') — בדוק את משקל העגלה' };
   var price = 0;
-  if (intake.internal !== 'כן') {
+  if (sVal(intake.internal) !== 'כן') {   /* ⛔ WASH-04 · כסף: internal מלוכלך היה מחייב כביסה פנימית */
     var cust = db.customers.find(function (c) { return c.id === intake.customer_id; });
     price = Number(cust && cust.price_per_kg) || 0;
     if (!(price > 0)) return { ok: false, error: 'ללקוח לא הוגדר מחיר לק"ג — עדכן בכרטיס הלקוח לפני שקילה' };
@@ -7092,7 +7107,7 @@ function nobleWeigh(db, p, user) {
   intake.net_weight_kg = roll.net;
   intake.total_charge = roll.charge;
   intake.price_per_kg = price;
-  if (['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול'].indexOf(intake.status) > -1) intake.status = 'באריזה';
+  if (['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול'].indexOf(sVal(intake.status)) > -1) intake.status = 'באריזה';
   writeTable('laundry_intakes', db.laundryIntakes);
   return { ok: true, net_kg: net, tare_kg: tare, charge: charge, intake_total_net: roll.net, intake_total_charge: roll.charge, auditNote: 'שקילה ' + cart.id + ' · נטו ' + net + ' ק"ג · ₪' + charge };
 }
@@ -7102,11 +7117,11 @@ function nobleMarkReady(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
   var intake = r.intake;
-  if (intake.status === 'מוכן') return { ok: false, error: 'הקליטה כבר מסומנת כמוכנה' };
-  if (intake.status === 'במשלוח' || intake.status === 'נמסר') return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  if (sVal(intake.status) === 'מוכן') return { ok: false, error: 'הקליטה כבר מסומנת כמוכנה' };
+  if (sVal(intake.status) === 'במשלוח' || sVal(intake.status) === 'נמסר') return { ok: false, error: 'הקליטה כבר ' + intake.status };
   var roll = nobleWeighRollup(db, intake.id);
   if (!roll.count) return { ok: false, error: 'לא ניתן לסמן מוכן — לא בוצעה שקילה לאף עגלה' };
-  var activeCartIds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן'; })
+  var activeCartIds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן'; })
     .map(function (b) { return b.cart_id; });
   // תיקון באג כספי: לוודא ששקלו את כל העגלות הפעילות, לא רק שלפחות אחת נשקלה
   var unweighed = activeCartIds.filter(function (cid) { return roll.carts.indexOf(cid) === -1; });
@@ -7127,7 +7142,7 @@ function nobleMarkReady(db, p, user) {
      ברירת המחדל היא לשחרר את העגלות כאן ולא להמתין למסירה ללקוח, אחרת
      עגלות נעולות ימים ואי אפשר לקלוט אליהן. ניתן לשנות בהגדרה
      noble_release_carts_on = 'נמסר'. */
-  var relOn = String((db.settings.find(function (x) { return x.key === 'noble_release_carts_on'; }) || {}).value || 'מוכן');
+  var relOn = sVal((db.settings.find(function (x) { return x.key === 'noble_release_carts_on'; }) || {}).value) || 'מוכן';
   var released = [];
   if (relOn === 'מוכן') released = nobleReleaseAll(db, intake, w, 'שוחרר אוטומטית — הקליטה סומנה מוכנה');
   writeTable('laundry_intakes', db.laundryIntakes);
@@ -7139,11 +7154,11 @@ function nobleMarkReady(db, p, user) {
 function nobleReleaseAll(db, intake, w, reason) {
   var out = [];
   db.intakeCarts.forEach(function (b) {
-    if (b.intake_id !== intake.id || b.active !== 'כן') return;
+    if (b.intake_id !== intake.id || sVal(b.active) !== 'כן') return;
     b.active = 'לא'; b.release_ts = nowTs();
     var c = db.carts.find(function (x) { return x.id === b.cart_id; });
     // אם העגלה מוחזקת גם על ידי משימת כביסה של MAPA — משחררים את השיוך לקליטה, אבל לא את הסטטוס
-    var held = db.laundryTasks.some(function (t) { return t.cart_id === b.cart_id && t.stage !== 'מוכן'; });
+    var held = db.laundryTasks.some(function (t) { return t.cart_id === b.cart_id && sVal(t.stage) !== 'מוכן'; });
     if (c && !held) c.status = 'פנויה';
     out.push(b.cart_id);
     nobleEvent(db, {
@@ -7162,12 +7177,12 @@ function nobleReleaseCart(db, p, user) {
   if (!cart) return { ok: false, error: 'עגלה לא נמצאה — בדוק את הברקוד' };
   /* B39b: אם העגלה מוחזקת בכלל על ידי משימת כביסה של MAPA (assignCart) —
      לא נוגעים בה מכאן, אחרת נשחרר עגלה שבפועל עדיין תפוסה. */
-  var mapaTask = db.laundryTasks.find(function (t) { return t.cart_id === cart.id && t.stage !== 'מוכן'; });
+  var mapaTask = db.laundryTasks.find(function (t) { return t.cart_id === cart.id && sVal(t.stage) !== 'מוכן'; });
   if (mapaTask) return { ok: false, error: 'העגלה ' + cart.id + ' משויכת למשימת כביסה של MAPA (' + mapaTask.stage + ') — שחרר אותה מלוח הכביסה' };
   var bind = nobleActiveBinding(db, cart.id);
   if (!bind) {
     // כבר משוחררת — מיישרים את הסטטוס אם נשאר תקוע ומחזירים הצלחה
-    if (cart.status !== 'פנויה') { cart.status = 'פנויה'; writeTable('carts', db.carts); }
+    if (sVal(cart.status) !== 'פנויה') { cart.status = 'פנויה'; writeTable('carts', db.carts); }
     return { ok: true, cart_id: cart.id, already: true, auditNote: 'שחרור עגלה ' + cart.id + ' (לא הייתה משויכת)' };
   }
   var intake = nobleIntakeById(db, bind.intake_id);
@@ -7188,8 +7203,8 @@ function nobleReleaseCart(db, p, user) {
       portion_kg: o.portion_kg || '', note: 'נסגר בשחרור עגלה'
     });
   });
-  var others = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן' && b.cart_id !== cart.id; });
-  if (!others.length && ['מוכן', 'במשלוח', 'נמסר'].indexOf(intake.status) === -1 && !force)
+  var others = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן' && b.cart_id !== cart.id; });
+  if (!others.length && ['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) === -1 && !force)
     return {
       ok: false, need_force: true, last_cart: true,
       error: 'זו העגלה האחרונה בקליטה ' + intake.id + ' והיא עדיין בעבודה. שחרור ישאיר את הקליטה בלי עגלות. אשר כדי להמשיך'
@@ -7211,7 +7226,7 @@ function nobleDriverScan(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
   var intake = r.intake;
-  if (intake.status !== 'מוכן') return { ok: false, error: 'ניתן להעמיס רק קליטה במצב "מוכן" (מצב נוכחי: ' + intake.status + ')' };
+  if (sVal(intake.status) !== 'מוכן') return { ok: false, error: 'ניתן להעמיס רק קליטה במצב "מוכן" (מצב נוכחי: ' + intake.status + ')' };
   var cust = intake.customer_id ? db.customers.find(function (c) { return c.id === intake.customer_id; }) : null;
   var dlv = {
     id: genId('DELI'), order_id: '', kind: 'משלוח מכבסה', date: today(), driver: w.name,
@@ -7235,11 +7250,11 @@ function nobleDeliver(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
   var intake = r.intake;
-  if (intake.status !== 'במשלוח') return { ok: false, error: 'ניתן לסמן נמסר רק לקליטה במצב "במשלוח" (מצב נוכחי: ' + intake.status + ')' };
+  if (sVal(intake.status) !== 'במשלוח') return { ok: false, error: 'ניתן לסמן נמסר רק לקליטה במצב "במשלוח" (מצב נוכחי: ' + intake.status + ')' };
   // B19d (L6): אכיפה בצד השרת — גם משלוח מכבסה לא נסגר בלי חתימת לקוח או צילום מסירה.
   if (intake.delivery_id) {
     var dlvChk = db.deliveries.find(function (d) { return d.id === intake.delivery_id; });
-    if (dlvChk && B5_OPEN_STATUSES.indexOf(dlvChk.status) > -1 && !String(dlvChk.signature_url || '').trim() && !String(dlvChk.photo_url || '').trim())
+    if (dlvChk && B5_OPEN_STATUSES.indexOf(sVal(dlvChk.status)) > -1 && !String(dlvChk.signature_url || '').trim() && !String(dlvChk.photo_url || '').trim())
       return { ok: false, error: 'לא ניתן לסמן נמסר — למשלוח אין חתימת לקוח או צילום מסירה' };
   }
   intake.status = 'נמסר';
@@ -7248,7 +7263,7 @@ function nobleDeliver(db, p, user) {
   nobleReleaseAll(db, intake, w, 'שוחרר במסירה ללקוח');
   if (intake.delivery_id) {
     var dlv = db.deliveries.find(function (d) { return d.id === intake.delivery_id; });
-    if (dlv && B5_OPEN_STATUSES.indexOf(dlv.status) > -1) { dlv.status = 'בוצע'; if (!dlv.note_number) dlv.note_number = nextNumber(db, 'delivery_note', 3001); writeTable('deliveries', db.deliveries); }
+    if (dlv && B5_OPEN_STATUSES.indexOf(sVal(dlv.status)) > -1) { dlv.status = 'בוצע'; if (!dlv.note_number) dlv.note_number = nextNumber(db, 'delivery_note', 3001); writeTable('deliveries', db.deliveries); }
   }
   nobleEvent(db, {
     intake_id: intake.id, customer_id: intake.customer_id, cart_id: '',
@@ -7293,8 +7308,8 @@ function nobleStageAvgs(db) {
   db.laundryEvents.forEach(function (e) {
     // B39b: המפתח כולל מכונה — אחרת פיצול עגלה בין מכונות מערבב זוגות התחלה→סיום
     var k = e.intake_id + '|' + e.cart_id + '|' + e.machine_id + '|' + e.stage;
-    if (e.event_type === 'התחלה') open[k] = e.ts;
-    else if (e.event_type === 'סיום' && open[k]) {
+    if (sVal(e.event_type) === 'התחלה') open[k] = e.ts;
+    else if (sVal(e.event_type) === 'סיום' && open[k]) {
       var a = nobleParseTs(open[k]), b = nobleParseTs(e.ts);
       if (a && b && b > a) {
         var m = (b - a) / 60000;
@@ -7324,7 +7339,7 @@ function nobleStageAvgs(db) {
 function nobleCartProgress(db, intakeId, cartId) {
   var ended = {};
   nobleEventsOf(db, intakeId, cartId).forEach(function (e) {
-    if (e.event_type === 'סיום') ended[e.stage] = 1;
+    if (sVal(e.event_type) === 'סיום') ended[sVal(e.stage)] = 1;
   });
   var opens = nobleOpenStarts(db, intakeId, cartId).map(function (o) {
     return { stage: o.stage, machine: o.machine_id, ts: o.ts, portion_kg: Number(o.portion_kg) || 0 };
@@ -7342,8 +7357,8 @@ function nobleCartProgress(db, intakeId, cartId) {
 
 // זמן משוער (בדקות) לסיום קליטה: לכל עגלה — חצי מהשלב הפתוח + השלבים שטרם בוצעו; הקובע הוא האיטי מבין העגלות
 function nobleEtaMin(db, intake, avgs) {
-  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(intake.status) > -1) return 0;
-  var binds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && b.active === 'כן'; });
+  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return 0;
+  var binds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן'; });
   var eta = 0;
   binds.forEach(function (b) {
     var pr = nobleCartProgress(db, intake.id, b.cart_id), m = 0;
@@ -7368,10 +7383,10 @@ function nobleBoard(db) {
   /* B49c: כביסה פנימית של MAPA אינה נמסרת לעולם — לכן קליטה פנימית שהגיעה
      ל"מוכן" הושלמה וירדה מהלוח החי. בלעדי זה היא הייתה נשארת "פעילה" לנצח. */
   var active = db.laundryIntakes.filter(function (i) {
-    return i.status !== 'נמסר' && !(i.internal === 'כן' && String(i.ready_ts || ''));
+    return sVal(i.status) !== 'נמסר' && !(sVal(i.internal) === 'כן' && String(i.ready_ts || ''));
   });
   var intakes = active.map(function (ik) {
-    var binds = db.intakeCarts.filter(function (b) { return b.intake_id === ik.id && b.active === 'כן'; });
+    var binds = db.intakeCarts.filter(function (b) { return b.intake_id === ik.id && sVal(b.active) === 'כן'; });
     var carts = binds.map(function (b) {
       var pr = nobleCartProgress(db, ik.id, b.cart_id);
       // B39b: opens — כל המנות הפתוחות של העגלה; open/machine נשמרים לתאימות
@@ -7379,7 +7394,7 @@ function nobleBoard(db) {
     });
     var roll = nobleWeighRollup(db, ik.id);
     return {
-      id: ik.id, customer: custName(ik.customer_id), internal: ik.internal === 'כן', status: ik.status,
+      id: ik.id, customer: custName(ik.customer_id), internal: sVal(ik.internal) === 'כן', status: ik.status,
       intake_ts: ik.intake_ts, carts: carts, net: roll.net, charge: roll.charge, eta_min: nobleEtaMin(db, ik, avgs)
     };
   });
@@ -7399,11 +7414,11 @@ function nobleBoard(db) {
   });
   var td = today(), kg = 0, kgInt = 0, evCount = 0;
   var internalSet = {};
-  db.laundryIntakes.forEach(function (i) { if (i.internal === 'כן') internalSet[i.id] = 1; });
+  db.laundryIntakes.forEach(function (i) { if (sVal(i.internal) === 'כן') internalSet[i.id] = 1; });
   db.laundryEvents.forEach(function (e) {
     if (String(e.ts).slice(0, 10) !== td) return;
     evCount++;
-    if (e.event_type === 'שקילה') { var nk = Number(e.net_kg) || 0; kg += nk; if (internalSet[e.intake_id]) kgInt += nk; }
+    if (sVal(e.event_type) === 'שקילה') { var nk = Number(e.net_kg) || 0; kg += nk; if (internalSet[e.intake_id]) kgInt += nk; }
   });
   return {
     ok: true, intakes: intakes, machines: machines, avgs: avgs, stages: NOBLE_STAGES,
@@ -7426,13 +7441,13 @@ function nobleCreateInvoice(db, p, user) {
   // C8: קליטה שנפתחה מהזמנה (B49d) יוצאת מהחשבונית המרוכזת — היא מחויבת
   // דרך חשבונית ההזמנה. קליטה חופשית / פנימית — ללא שינוי כלל.
   var open = db.laundryIntakes.filter(function (i) {
-    if (i.customer_id !== cust.id || i.internal === 'כן' || i.status !== 'נמסר') return false;
+    if (i.customer_id !== cust.id || sVal(i.internal) === 'כן' || sVal(i.status) !== 'נמסר') return false;   /* ⛔ WASH-04 · כסף */
     if (String(i.invoice_id || '').trim()) return false;
     if (!(Number(i.total_charge) > 0)) return false;
     var oid = String(i.order_id || '').trim();
     if (oid) {
       var ord = db.orders.find(function (x) { return x.id === oid; });
-      if (ord && ord.status !== 'בוטלה') return false;
+      if (ord && sVal(ord.status) !== 'בוטלה') return false;
     }
     return true;
   });
