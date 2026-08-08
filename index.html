@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.67-B67 · 03.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.68-B68 · 08.08.2026</div>
   </div>
 </div>
 
@@ -7339,7 +7339,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.67-B67';
+var B61_CANARY = 'v4.68-B68';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -9654,6 +9654,7 @@ function rPayroll(){
       // B36: הפקה ידנית — עד כה שכר נוצר רק בטריגר החודשי, ואם הוא לא רץ לא היה שכר כלל.
       (ROLE==='מנהל'?'<button class="btn" onclick="doGeneratePayroll()">הפק שכר לחודש זה</button>':'')+
       '<span class="muted">השכר מחושב אוטומטית ב-1 בכל חודש עבור החודש שהסתיים, ונשמר כטיוטה לאישורך. שעתי: שעות × תעריף. גלובלי: סכום חודשי קבוע. "תצוגה מקדימה" מחשבת לבדיקה בלבד; "הפק שכר" יוצר טיוטות בפועל ואינו נוגע בשכר שכבר אושר או שולם.</span>':'')+'</div></div>'+
+    b68WarnHtml()+                 /* ⭐ B68: אזהרת כפילויות ויתרת חובה — לא חוסמת */
     b67DraftCardHtml('payroll')+   /* ⭐ B67: סיכום טיוטות — תחזית, לא חוב */
     '<div id="prList">'+payrollTable(month)+'</div>';
 }
@@ -9707,7 +9708,12 @@ function payrollTable(month){
 function payrollRowHtml(p, e){
       var paid = payrollPaid(p.id), remaining = Math.round((Number(p.total)-paid)*100)/100;
       var glob = isGlobalPayroll(p,e);
-      return '<tr><td>'+b67EmpNameCell(e)+'</td><td>'+(glob?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td><td>'+p.hours+'</td><td>'+(glob?'<span class="muted">—</span>':ils(p.hourly_rate))+'</td><td>'+ils(p.base_pay)+'</td>'+
+      /* ⭐ B68: סימון שורה כפולה על השורה עצמה — בטבלה ארוכה
+         אזהרה בראש המסך לבדה אינה מספיקה כדי למצוא את הצמד. */
+      var b68dup = (DB.payroll||[]).filter(function(x){
+        return sVal(x.employee_id)===sVal(p.employee_id) && sVal(x.month)===sVal(p.month); }).length>1;
+      var b68mark = b68dup? ' <span class="chip" style="background:var(--danger);color:#fff" title="קיימת עוד שורת שכר לאותו עובד באותו חודש">כפולה</span>' : '';
+      return '<tr'+(b68dup?' style="background:#fff5f5"':'')+'><td>'+b67EmpNameCell(e)+b68mark+'</td><td>'+(glob?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td><td>'+p.hours+'</td><td>'+(glob?'<span class="muted">—</span>':ils(p.hourly_rate))+'</td><td>'+ils(p.base_pay)+'</td>'+
       '<td class="tot"><b>'+ils(p.total)+'</b></td><td>'+ils(paid)+'</td><td'+(remaining>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(remaining)+'</td>'+
       '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[p.status]||'')+'">'+esc(p.status)+'</span></td>'+
       // B17: לנהג — רק הדפסת המסמך הפנימי, בלי כפתורי ניהול
@@ -9793,7 +9799,16 @@ function payrollDetail(pid){
         '<input id="f_paynote" placeholder="הערה" class="grow">'+
         '<button class="btn" onclick="savePayrollPayment(\''+pid+'\')">רשום תשלום</button></div></fieldset>':
         '<p class="muted" style="margin-top:10px">השכר שולם במלואו.</p>'))+
-    '<div style="margin-top:10px"><button class="btn ghost sm" onclick="printPayslip(\''+pid+'\')">הדפסת מסמך פנימי</button></div>');
+    '<div style="margin-top:10px"><button class="btn ghost sm" onclick="printPayslip(\''+pid+'\')">הדפסת מסמך פנימי</button>'+
+    /* ⭐ B68: מחיקת שורת שכר — מנהל בלבד, ורק כשלא שולם דבר כנגדה.
+       השרת אוכף את שני התנאים שוב ודורש סיבה. */
+    ((ROLE==='מנהל' && paid<=0.005)
+      ? '<button class="btn danger sm" style="margin-right:6px" onclick="b68DelPayroll(\''+pid+'\')">מחק שורת שכר</button>'
+      : '')+
+    ((ROLE==='מנהל' && paid>0.005)
+      ? '<span class="muted" style="font-size:11px;margin-right:8px">שולם כנגד שורה זו — אינה ניתנת למחיקה</span>'
+      : '')+
+    '</div>');
 }
 // B22: חלון פירוט רכיבי השכר — לחיצה על "סה"כ ותשלומים" בחלון הפרטים
 function payrollBreakdown(pid){
@@ -9894,6 +9909,169 @@ function printPayslip(pid){
 }
 
 /* ============================================================
+   ⭐ B68 — ניקוי שכר: כפילויות עובד+חודש · מחיקה · יתרת חובה
+   ============================================================
+   הכרעות אבי (07.08.2026):
+   1. שורה עם תשלום בפועל אינה נמחקת — רק ממוזגת.
+   2. מיזוג שיוצר תשלום עודף מתבצע, והעודף הופך ליתרת חובה של העובד.
+   3. כפילות אינה חוסמת הפקת שכר — רק אזהרה בולטת.
+
+   ⛔ הזיהוי נעשה מ-DB שכבר בזיכרון. אפס בקשות שרת נוספות לתצוגה.
+   ⛔ המחיקה עוברת בפעולת delete הקיימת, עם מספר אישי של מנהל שנבדק
+      בשרת (R8 — אין דפוס מחיקה שני).
+   ⛔ יתרת חובה היא חישוב, לא שדה. אין עמודה חדשה.
+   ============================================================ */
+var B68_OFFSET_CAT = 'קיזוז יתרת חובה';
+
+/* קבוצות של שתי שורות שכר ומעלה לאותו עובד ואותו חודש.
+   ⛔ sVal חובה — רווח קשיח בגיליון הוא בדיוק מה שיצר את הכפילויות. */
+function b68Groups(){
+  var map={}, order=[];
+  (DB.payroll||[]).forEach(function(p){
+    var k = sVal(p.employee_id)+'|'+sVal(p.month);
+    if(!map[k]){ map[k]=[]; order.push(k); }
+    map[k].push(p);
+  });
+  return order.filter(function(k){ return map[k].length>1; }).map(function(k){ return map[k]; });
+}
+/* בכמה חודשים לעובד יש שתי שורות שכר ומעלה. */
+function b68EmpDupCount(eid){
+  return b68Groups().filter(function(g){ return sVal(g[0].employee_id)===sVal(eid); }).length;
+}
+function b68RowOver(p){
+  var o = Math.round((payrollPaid(p.id)-Number(p.total||0))*100)/100;
+  return o>0.005?o:0;
+}
+/* יתרת החובה של עובד = תשלומים עודפים פחות קיזוזים שכבר נרשמו. */
+function b68EmpOverpay(eid){
+  var over=0;
+  (DB.payroll||[]).forEach(function(p){ if(sVal(p.employee_id)===sVal(eid)) over+=b68RowOver(p); });
+  var off=(DB.payrollAdjustments||[]).filter(function(a){
+    return sVal(a.employee_id)===sVal(eid) && sVal(a.category)===B68_OFFSET_CAT && sVal(a.type)==='ניכוי';
+  }).reduce(function(s,a){ return s+(Number(a.amount)||0); },0);
+  var net=Math.round((over-off)*100)/100;
+  return net>0.005?net:0;
+}
+/* האזהרה במסך השכר. ⛔ לנהג לעולם לא — זה כלי ניהולי. */
+function b68WarnHtml(){
+  if(ROLE!=='מנהל') return '';
+  var g = b68Groups();
+  var ov = [];
+  var seen = {};
+  (DB.payroll||[]).forEach(function(p){
+    var eid = sVal(p.employee_id);
+    if(!eid || seen[eid]) return; seen[eid]=1;
+    var o = b68EmpOverpay(eid);
+    if(o>0.005) ov.push({id:p.employee_id, name:b67EmpName(p.employee_id), over:o});
+  });
+  if(!g.length && !ov.length) return '';
+  var h = '<div class="card" style="border:2px solid var(--danger);background:#fff5f5">';
+  if(g.length){
+    h += '<div style="font-weight:800;color:var(--danger)">⚠ נמצאו '+g.length+' כפילויות שכר (אותו עובד, אותו חודש)</div>'+
+      '<div class="muted" style="font-size:12px;margin-top:4px">שורה כפולה נספרת פעמיים בחוב השכר של העובד. יש למזג אותן.</div>'+
+      '<div class="row" style="margin-top:8px"><button class="btn danger sm" onclick="b68DupModal()">טפל בכפילויות</button></div>';
+  }
+  if(ov.length){
+    h += '<div style="font-weight:800;color:var(--danger);margin-top:'+(g.length?'10px':'0')+'">⚠ יתרת חובה של עובדים (שולם יותר מהמגיע)</div>'+
+      '<table style="margin-top:6px"><tr><th>עובד</th><th>יתרת חובה</th><th></th></tr>'+
+      ov.map(function(x){
+        return '<tr><td><b>'+esc(x.name)+'</b></td><td style="color:var(--danger);font-weight:700">'+ils(x.over)+'</td>'+
+          '<td><button class="btn ghost sm" onclick="b68OffsetForm(\''+x.id+'\')">קזז מהשכר</button></td></tr>';
+      }).join('')+'</table>';
+  }
+  return h+'</div>';
+}
+/* חלון הטיפול. כל קבוצה — בחירת השורה שנשמרת, והשאר ממוזגות אליה. */
+function b68DupModal(){
+  var g = b68Groups();
+  if(!g.length){ closeModal(); return toast('לא נמצאו כפילויות'); }
+  openModal('<h2>כפילויות שכר</h2>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">בחר את השורה שנשארת. התוספות והתשלומים של השורות האחרות יעברו אליה, והן יימחקו. אם התשלומים גבוהים מהשכר — ההפרש יירשם כיתרת חובה של העובד.</div>'+
+    g.map(function(rows){
+      var e = (DB.employees||[]).find(function(x){ return sVal(x.id)===sVal(rows[0].employee_id); })||{};
+      var keep = rows.slice().sort(function(a,b){
+        return (payrollPaid(b.id)-payrollPaid(a.id)) || (Number(b.total||0)-Number(a.total||0));
+      })[0];
+      return '<div class="card"><div style="font-weight:800">'+esc(e.name||'(עובד שהוסר)')+' · '+esc(sVal(rows[0].month))+'</div>'+
+        '<table style="margin-top:6px"><tr><th>נשמרת</th><th>סטטוס</th><th>בסיס</th><th>סה"כ</th><th>שולם</th><th>תוספות</th></tr>'+
+        rows.map(function(p){
+          var gk = sVal(p.employee_id)+'|'+sVal(p.month);
+          return '<tr><td><input type="radio" name="b68g_'+esc(gk)+'" '+(p.id===keep.id?'checked':'')+
+            ' onclick="B68_KEEP[\''+esc(gk)+'\']=\''+p.id+'\'"></td>'+
+            '<td>'+esc(sVal(p.status))+'</td><td>'+ils(p.base_pay)+'</td><td class="tot">'+ils(p.total)+'</td>'+
+            '<td>'+ils(payrollPaid(p.id))+'</td><td>'+payrollAdjustments(p.id).length+'</td></tr>';
+        }).join('')+'</table>'+
+        '<div class="row" style="margin-top:6px"><button class="btn danger sm" onclick="b68DoMerge(\''+esc(sVal(rows[0].employee_id))+'\',\''+esc(sVal(rows[0].month))+'\')">מזג קבוצה זו</button></div></div>';
+    }).join(''));
+  var g0 = b68Groups();
+  B68_KEEP = {};
+  g0.forEach(function(rows){
+    var keep = rows.slice().sort(function(a,b){
+      return (payrollPaid(b.id)-payrollPaid(a.id)) || (Number(b.total||0)-Number(a.total||0));
+    })[0];
+    B68_KEEP[sVal(rows[0].employee_id)+'|'+sVal(rows[0].month)] = keep.id;
+  });
+}
+var B68_KEEP = {};
+/* המיזוג. ⛔ בקשה אחת לכל שורה מיותרת, ברצף — השרת מאמת בכל קריאה
+   שהשורות באמת של אותו עובד ואותו חודש. */
+async function b68DoMerge(eid, month){
+  var key = sVal(eid)+'|'+sVal(month);
+  var rows = (DB.payroll||[]).filter(function(p){ return sVal(p.employee_id)===sVal(eid) && sVal(p.month)===sVal(month); });
+  if(rows.length<2) return toast('אין כפילות בקבוצה זו', true);
+  var keepId = B68_KEEP[key] || rows[0].id;
+  var drops = rows.filter(function(p){ return p.id!==keepId; });
+  if(!confirm('למזג '+drops.length+' שורות לתוך השורה הנבחרת? הפעולה אינה ניתנת לביטול.')) return;
+  var last=null;
+  for(var i=0;i<drops.length;i++){
+    last = await act('b68MergePayroll',{keep_id:keepId, drop_id:drops[i].id});
+    if(!last) return;
+  }
+  closeModal();
+  if(last && last.overpay>0.005) alert('המיזוג בוצע. ⚠ תשלום עודף של '+last.overpay+' ₪ — נרשם כיתרת חובה של העובד.');
+  else toast('המיזוג בוצע');
+  if(VIEW==='payroll') render();
+}
+/* קיזוז יתרת חובה — ניכוי מפורש בשכר של חודש נבחר. אין קיזוז אוטומטי. */
+function b68OffsetForm(eid){
+  var over = b68EmpOverpay(eid);
+  if(over<=0.005) return toast('אין יתרת חובה לעובד זה');
+  var months = (DB.payroll||[]).filter(function(p){
+    return sVal(p.employee_id)===sVal(eid) && sVal(p.status)!=='שולם במלואו';
+  }).map(function(p){ return sVal(p.month); });
+  months = months.filter(function(m,i){ return months.indexOf(m)===i; }).sort().reverse();
+  openModal('<h2>קיזוז יתרת חובה — '+esc(b67EmpName(eid))+'</h2>'+
+    '<div class="card"><div>יתרת חובה: <b style="color:var(--danger)">'+ils(over)+'</b></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:4px">הקיזוז נרשם כניכוי בשכר של החודש שתבחר, ומקטין את הסכום לתשלום. אין קיזוז אוטומטי.</div></div>'+
+    (months.length
+      ? '<div class="row" style="gap:6px;margin-top:8px">'+
+        '<select id="f_b68m" style="width:auto">'+months.map(function(m){ return '<option>'+esc(m)+'</option>'; }).join('')+'</select>'+
+        '<input id="f_b68amt" type="number" min="0" max="'+over+'" value="'+over+'" style="width:120px">'+
+        '<input id="f_b68note" placeholder="הערה" class="grow">'+
+        '<button class="btn" onclick="b68DoOffset(\''+eid+'\')">קזז</button></div>'
+      : '<div class="card empty">אין חודש שכר פתוח לקיזוז. הפק שכר לחודש הבא ואז קזז.</div>'));
+}
+async function b68DoOffset(eid){
+  var amt = Number(el('f_b68amt').value)||0;
+  if(amt<=0) return toast('סכום לא תקין', true);
+  var r = await act('b68OffsetOverpay',{employee_id:eid, month:el('f_b68m').value, amount:amt, note:el('f_b68note').value},'הקיזוז נרשם');
+  if(r){ closeModal(); if(VIEW==='payroll') render(); }
+}
+/* מחיקת שורת שכר. ⛔ רק כשאין תשלומים — השרת אוכף את זה שוב. */
+function b68DelPayroll(pid){
+  var p = (DB.payroll||[]).find(function(x){ return x.id===pid; }); if(!p) return;
+  if(payrollPaid(pid)>0.005) return toast('שולם כנגד שורה זו — לא ניתן למחוק. השתמש במיזוג', true);
+  var reason = prompt('סיבת מחיקת שורת השכר (שדה חובה):','רישום שגוי');
+  if(reason===null) return;
+  reason = String(reason).trim();
+  if(!reason) return toast('סיבת המחיקה היא שדה חובה', true);
+  confirmManagerDelete(async function(mgrPin){
+    var r = await act('delete',{table:'payroll',id:pid,mgr_pin:mgrPin,reason:reason},'שורת השכר נמחקה');
+    if(r){ closeModal(); if(VIEW==='payroll') render(); }
+  });
+}
+
+/* ============================================================
    ⭐ B67 / BLD-16 — חוב שכר ברמת העובד + טיוטות שטרם אושרו
    ============================================================
    הכרעת אבי על הממשק: **השיוך לחודשים שקוף.** מספר אחד, שדה סכום, כפתור.
@@ -9983,7 +10161,13 @@ function b67EmpView(empId, notice){
       '<b class="grow" style="font-size:15px">סך החוב הפתוח</b>'+
       '<span class="tot" style="font-size:26px'+(debt>0.005?';color:var(--danger)':'')+'">'+ils(debt)+'</span></div>'+
       '<div class="muted" style="font-size:12px;margin-top:4px">כל החודשים שאושרו וטרם שולמו במלואם'+
-      (drafts.length?' · ⚠ בנוסף '+ils(draftSum)+' בטיוטה שטרם אושרה — אינו נכלל בחוב':'')+'</div></div>'+
+      (drafts.length?' · ⚠ בנוסף '+ils(draftSum)+' בטיוטה שטרם אושרה — אינו נכלל בחוב':'')+'</div>'+
+      /* ⭐ B68: כפילות מנפחת את המספר שמעל. חובה שתיראה כאן. */
+      (b68EmpDupCount(empId)? '<div style="margin-top:6px;color:var(--danger);font-weight:700;font-size:12.5px">⚠ '+b68EmpDupCount(empId)+' חודשים עם שתי שורות שכר — החוב שמעל מנופח. יש למזג במסך השכר.</div>':'')+
+      /* ⭐ B68: יתרת חובה — שולם לעובד יותר מהמגיע. אינה מקוזזת מהחוב לעיל. */
+      (b68EmpOverpay(empId)>0.005? '<div style="margin-top:6px;color:var(--danger);font-weight:700;font-size:12.5px">⚠ יתרת חובה של העובד: '+ils(b68EmpOverpay(empId))+' — שולם מעבר למגיע'+
+        (ROLE==='מנהל'?' <button class="btn ghost sm" onclick="b68OffsetForm(\''+empId+'\')">קזז מהשכר</button>':'')+'</div>':'')+
+      '</div>'+
     (canPay?
       '<fieldset style="margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px">'+
       '<legend style="font-weight:700;font-size:13px;padding:0 6px">תשלום לעובד</legend>'+
