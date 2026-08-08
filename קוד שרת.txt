@@ -465,7 +465,10 @@ var MANAGER_ONLY = [
   // B52: רישום/ביטול טאבלט קיוסק ומצב הרישום — מנהל בלבד
   'b52RegisterKiosk', 'b52RevokeKiosk', 'b52KioskStatus',
   // B57: אבחון ביצועים — מנהל בלבד
-  'b57PerfProbe'];
+  'b57PerfProbe',
+  // ⭐ B68: ניקוי שכר — אבחון כפילויות, מיזוג, וקיזוז יתרת חובה. מנהל בלבד.
+  // ⛔ b68MergePayroll ו-b68OffsetOverpay כותבות ולכן אינן ב-READ_ONLY_ACTIONS.
+  'b68DupScan', 'b68MergePayroll', 'b68OffsetOverpay'];
 
 // הרץ פעם אחת מהעורך
 // B7: עוזר חד-פעמי — מדפיס ליומן (View → Logs) את שם וה-id של כל עובד,
@@ -1922,7 +1925,10 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   'b57PerfProbe',
   // B58: שליפה חלקית ואבחון הקריאה המהירה — קריאה בלבד.
   // b58SetFast בכוונה **אינה** כאן: היא כותבת ל-ScriptProperties ולכן חייבת נעילה ורישום ביומן.
-  'b58Tables', 'b58Probe'];
+  'b58Tables', 'b58Probe',
+  // ⭐ B68: אבחון כפילויות שכר ותשלומים עודפים — קריאה בלבד (כלל R1).
+  // b68MergePayroll ו-b68OffsetOverpay בכוונה **אינן** כאן — שתיהן כותבות.
+  'b68DupScan'];
 
 function route(action, p, user) {
   b54Bump();   // B54: ספר חיובים נקי לכל בקשה
@@ -2378,6 +2384,29 @@ function handle(action, p, db, user) {
         writeTable('order_lines', db.orderLines);
       }
       if (p.table === 'notes') return { ok: false, error: 'תרשומות לא נמחקות לעולם' };
+      /* ⭐ B68 — מחיקת שורת שכר. הכרעת אבי: שורה ששולמה אינה נמחקת לעולם,
+         כי הכסף כבר יצא מהקופה ונרשם ב-expenses. מחיקה תשאיר הוצאה בלי
+         מקור. שורה בלי תשלומים נמחקת יחד עם התוספות שלה, וההוצאה
+         העתידית שלה מסומנת כמחוקה (מחיקה רכה, דפוס B28 — R8). */
+      if (p.table === 'payroll') {
+        var prDel = arr2[idx];
+        var paidDel = payrollPaidSum(db, prDel.id);
+        if (paidDel > 0.005)
+          return { ok: false, error: 'שולמו ' + paidDel + ' ₪ כנגד שורה זו — שכר ששולם אינו נמחק. אם זו כפילות, השתמש במיזוג' };
+        var reasonPR = String(p.reason || '').trim();
+        if (!reasonPR) return { ok: false, error: 'סיבת המחיקה היא שדה חובה' };
+        db.payrollAdjustments = db.payrollAdjustments.filter(function (a) { return a.payroll_id !== prDel.id; });
+        writeTable('payroll_adjustments', db.payrollAdjustments);
+        (db.futureExpenses || []).forEach(function (f) {
+          if (f.source === 'payroll' && f.ref_id === prDel.id && fexpAlive(f)) {
+            f.deleted = 'כן';
+            f.delete_reason = 'שורת השכר נמחקה: ' + reasonPR;
+            f.deleted_by = user || '';
+            f.deleted_at = nowTs();
+          }
+        });
+        writeTable('future_expenses', db.futureExpenses);
+      }
       if (p.table === 'invoices' || p.table === 'payments' || p.table === 'audit_log')
         return { ok: false, error: 'מסמכים חשבונאיים לא נמחקים — רק מבוטלים' };
       if (p.table === 'customers') {
@@ -3108,10 +3137,15 @@ function handle(action, p, db, user) {
       writeTable('attendance', db.attendance);
       // עדכון שכר לאותו חודש: רק רשומה בטיוטה מתעדכנת אוטומטית
       var monthV = String(attV.date || '').substring(0, 7);
-      var prV = db.payroll.find(function (x) { return x.employee_id === attV.employee_id && x.month === monthV; });
+      /* ⭐ B68: אותה נקודת אמת אחת לצירוף עובד+חודש, עם sVal (B64a).
+         בכפילות לא נוגעים — עדכון אוטומטי של שורה אחת מתוך שתיים
+         היה מסתיר את הבעיה במקום לפתור אותה. */
+      var fV = b68PayrollFor(db, attV.employee_id, monthV);
+      var prV = fV.row;
       var locked = false;
-      if (prV) {
-        if (prV.status === 'טיוטה') { rebuildPayrollFromAttendance(db, prV); writeTable('payroll', db.payroll); }
+      if (fV.dup) locked = true;
+      else if (prV) {
+        if (sVal(prV.status) === 'טיוטה') { rebuildPayrollFromAttendance(db, prV); writeTable('payroll', db.payroll); }
         else locked = true;
       }
       var empV = db.employees.find(function (x) { return x.id === attV.employee_id; });
@@ -3197,6 +3231,27 @@ function handle(action, p, db, user) {
     }
     // ⭐ B67 / BLD-16: תשלום ברמת העובד — נכנס לחוב הפתוח הישן ביותר וגולש הלאה.
     case 'b67PayEmployee': return b67PayEmployee(db, p, user);
+    /* ⭐ B68 — ניקוי שכר. אבחון בלבד; המיזוג והקיזוז הם הפעולות הכותבות. */
+    case 'b68DupScan': {
+      var b68g = b68DupGroups(db);
+      var b68seen = {}, b68over = [];
+      (db.payroll || []).forEach(function (pr) {
+        var eid = sVal(pr.employee_id);
+        if (!eid || b68seen[eid]) return;
+        b68seen[eid] = 1;
+        var ov = b68EmployeeOverpay(db, eid);
+        if (ov <= 0.005) return;
+        var e68 = (db.employees || []).find(function (x) { return sVal(x.id) === eid; });
+        b68over.push({ employee_id: pr.employee_id, employee_name: e68 ? e68.name : '(עובד שהוסר)', overpay: ov });
+      });
+      return {
+        ok: true, groups: b68g, overpay: b68over,
+        total_rows: (db.payroll || []).length,
+        dup_rows: b68g.reduce(function (s, g) { return s + g.rows.length; }, 0)
+      };
+    }
+    case 'b68MergePayroll': return b68MergePayroll(db, p, user);
+    case 'b68OffsetOverpay': return b68OffsetOverpay(db, p, user);
     // B20: הוצאה עתידית ידנית (לא קשורה לשכר) — למשל תשלום ספק צפוי, ביטוח, וכו'
     case 'addFutureExpense': {
       if (!p.category || !p.amount) return { ok: false, error: 'שדות חובה חסרים' };
@@ -4591,11 +4646,18 @@ function payrollPreviewRows(db, month) {
 // החישוב האמיתי. יוצר/מעדכן רשומות שכר בסטטוס "טיוטה" בלבד.
 // רשומה שכבר אושרה או שולמה לעולם אינה נדרסת. בטוח להרצה חוזרת.
 function buildPayrollForMonth(db, month) {
-  var created = 0, updated = 0, locked = 0;
+  var created = 0, updated = 0, locked = 0, dup = 0;
   db.employees.filter(function (e) { return e.active !== 'לא'; }).forEach(function (e) {
     var c = payrollBaseFor(db, e, month);
-    var ex = db.payroll.find(function (x) { return x.employee_id === e.id && x.month === month; });
-    if (ex && ex.status !== 'טיוטה') { locked++; return; }
+    /* ⭐ B68 — חסם הייחודיות. עד כה השורה נמצאה ב-find, כלומר שורה כפולה
+       הייתה בלתי נראית לחישוב ונשארת יתומה לנצח. עכשיו: אם קיימות שתי
+       שורות ומעלה — לא נוגעים בהן כלל ומדווחים, כי כל בחירה תהיה ניחוש.
+       ⛔ b68PayrollFor עוברת sVal, ולכן רווח נגרר בגיליון כבר אינו יוצר
+          "עובד חדש" ושורה שנייה (שורש הבאג, מחלקת B64a). */
+    var f = b68PayrollFor(db, e.id, month);
+    if (f.dup) { dup++; return; }
+    var ex = f.row;
+    if (ex && sVal(ex.status) !== 'טיוטה') { locked++; return; }
     if (ex) {
       ex.pay_type = c.pay_type; ex.hours = c.hours; ex.hourly_rate = c.rate; ex.base_pay = c.base;
       recomputePayrollTotal(ex, db);
@@ -4611,7 +4673,7 @@ function buildPayrollForMonth(db, month) {
     }
   });
   writeTable('payroll', db.payroll);
-  return { month: month, created: created, updated: updated, locked: locked };
+  return { month: month, created: created, updated: updated, locked: locked, dup: dup };
 }
 // טריגר חודשי — רץ ב-1 בכל חודש ומחשב את החודש שהסתיים.
 // התוצאה היא טיוטה בלבד. האישור נשאר ידני, כדי ששום חוב שכר לא ייווצר בלי בדיקה.
@@ -4678,6 +4740,195 @@ function syncFutureExpenseForPayroll(db, pr) {
     });
   }
   writeTable('future_expenses', db.futureExpenses);
+}
+
+/* ============================================================
+   B68 — ניקוי שכר: כפילויות עובד+חודש · מחיקה · תשלום עודף
+   ============================================================
+   רקע (אומת בקוד): טבלת payroll מעולם לא נאכפה לייחודיות עובד+חודש,
+   ולא הייתה שום דרך למחוק שורת שכר שבורה. שורה כפולה נספרת פעמיים
+   ב-b67EmployeeOpenRows ולכן **מנפחת את חוב השכר**.
+
+   הכרעות אבי (07.08.2026):
+   1. שורה עם תשלום בפועל אינה נמחקת לעולם — רק ממוזגת. הכסף כבר יצא
+      מהקופה ונרשם ב-expenses.
+   2. מיזוג שיוצר תשלום עודף מתבצע, והעודף הופך ל**יתרת חובה של העובד**.
+   3. כפילות אינה חוסמת הפקת שכר — רק אזהרה בולטת.
+
+   ⛔ יתרת חובה היא **חישוב, לא שדה**. אין עמודה חדשה ואין שינוי סכימה.
+   ⛔ הקיזוז אינו אוטומטי. הוא ניכוי מפורש בשכר של חודש נבחר, דרך
+      payroll_adjustments הקיימת (R8 — אין דפוס שני).
+   ⛔ המחיקה עוברת ב-case 'delete' הקיים, עם אימות מספר אישי של מנהל
+      בשרת. אין פעולת מחיקה שנייה.
+   ============================================================ */
+
+/* קטגוריית הניכוי המזהה קיזוז יתרת חובה. הערך נכתב לגיליון ולכן
+   כל השוואה אליו עוברת sVal (B64a). */
+var B68_OFFSET_CAT = 'קיזוז יתרת חובה';
+
+/* שורת השכר של עובד לחודש. ⛔ נקודת האמת היחידה לצירוף עובד+חודש.
+   dup=true פירושו שקיימות שתי שורות ומעלה — במצב הזה אין לגעת בהן
+   אוטומטית, כי כל בחירה תהיה ניחוש. */
+function b68PayrollFor(db, employeeId, month) {
+  var same = (db.payroll || []).filter(function (x) {
+    return sVal(x.employee_id) === sVal(employeeId) && sVal(x.month) === sVal(month);
+  });
+  return { row: same.length ? same[0] : null, dup: same.length > 1, count: same.length };
+}
+
+/* כל צירוף עובד+חודש שיש בו יותר משורה אחת. */
+function b68DupGroups(db) {
+  var map = {}, order = [];
+  (db.payroll || []).forEach(function (pr) {
+    var k = sVal(pr.employee_id) + '|' + sVal(pr.month);
+    if (!map[k]) { map[k] = []; order.push(k); }
+    map[k].push(pr);
+  });
+  var out = [];
+  order.forEach(function (k) {
+    if (map[k].length < 2) return;
+    var first = map[k][0];
+    var emp = (db.employees || []).find(function (e) { return e.id === first.employee_id; });
+    out.push({
+      employee_id: first.employee_id,
+      employee_name: emp ? emp.name : '(עובד שהוסר)',
+      month: sVal(first.month),
+      rows: map[k].map(function (pr) {
+        return {
+          id: pr.id, status: sVal(pr.status),
+          total: Number(pr.total || 0), base_pay: Number(pr.base_pay || 0),
+          hours: Number(pr.hours || 0),
+          adjustments: (db.payrollAdjustments || []).filter(function (a) { return a.payroll_id === pr.id; }).length,
+          payments: (db.payrollPayments || []).filter(function (x) { return x.payroll_id === pr.id; }).length,
+          paid: payrollPaidSum(db, pr.id)
+        };
+      })
+    });
+  });
+  out.sort(function (a, b) {
+    return String(a.employee_name).localeCompare(String(b.employee_name)) ||
+      String(a.month).localeCompare(String(b.month));
+  });
+  return out;
+}
+
+/* תשלום עודף על שורת שכר אחת. חיובי = העובד קיבל יותר מהמגיע לו. */
+function b68RowOverpay(db, pr) {
+  var over = Math.round((payrollPaidSum(db, pr.id) - Number(pr.total || 0)) * 100) / 100;
+  return over > 0.005 ? over : 0;
+}
+
+/* יתרת החובה של עובד = סך התשלומים העודפים בכל חודשיו, פחות ניכויי
+   הקיזוז שכבר נרשמו. ⛔ נגזרת בלבד — אין שדה כזה בשום טבלה. */
+function b68EmployeeOverpay(db, employeeId) {
+  var over = 0;
+  (db.payroll || []).forEach(function (pr) {
+    if (sVal(pr.employee_id) !== sVal(employeeId)) return;
+    over += b68RowOverpay(db, pr);
+  });
+  var offset = (db.payrollAdjustments || []).filter(function (a) {
+    return sVal(a.employee_id) === sVal(employeeId) &&
+      sVal(a.category) === B68_OFFSET_CAT && sVal(a.type) === 'ניכוי';
+  }).reduce(function (s, a) { return s + (Number(a.amount) || 0); }, 0);
+  var net = Math.round((over - offset) * 100) / 100;
+  return net > 0.005 ? net : 0;
+}
+
+/* מיזוג שתי שורות שכר של אותו עובד ואותו חודש.
+   תוספות ותשלומים עוברים לשורה הנשמרת, השורה המיותרת נמחקת. */
+function b68MergePayroll(db, p, user) {
+  var keepId = String((p && p.keep_id) || ''), dropId = String((p && p.drop_id) || '');
+  if (!keepId || !dropId) return { ok: false, error: 'יש לבחור שורה לשמירה ושורה למחיקה' };
+  if (keepId === dropId) return { ok: false, error: 'לא ניתן למזג שורה עם עצמה' };
+  var keep = (db.payroll || []).find(function (x) { return x.id === keepId; });
+  var drop = (db.payroll || []).find(function (x) { return x.id === dropId; });
+  if (!keep || !drop) return { ok: false, error: 'רשומת שכר לא נמצאה' };
+  if (sVal(keep.employee_id) !== sVal(drop.employee_id) || sVal(keep.month) !== sVal(drop.month))
+    return { ok: false, error: 'שתי השורות אינן של אותו עובד ואותו חודש — מיזוג אסור' };
+
+  var movedAdj = 0, movedPay = 0;
+  (db.payrollAdjustments || []).forEach(function (a) {
+    if (a.payroll_id === dropId) { a.payroll_id = keepId; movedAdj++; }
+  });
+  (db.payrollPayments || []).forEach(function (x) {
+    if (x.payroll_id === dropId) { x.payroll_id = keepId; movedPay++; }
+  });
+  /* ההוצאה העתידית של השורה הנמחקת — מחיקה רכה בדפוס B28, לא הסרה,
+     כדי שהתזרים ההיסטורי לא ישתנה בשקט. */
+  (db.futureExpenses || []).forEach(function (f) {
+    if (f.source === 'payroll' && f.ref_id === dropId && fexpAlive(f)) {
+      f.deleted = 'כן';
+      f.delete_reason = 'מוזג לשורת שכר ' + keepId + ' (B68)';
+      f.deleted_by = user || '';
+      f.deleted_at = nowTs();
+    }
+  });
+  db.payroll = db.payroll.filter(function (x) { return x.id !== dropId; });
+
+  recomputePayrollTotal(keep, db);
+  var paid = payrollPaidSum(db, keep.id);
+  /* ⛔ שורה שקיבלה תשלומים אינה יכולה להישאר טיוטה — טיוטה אינה חוב
+     ולכן הייתה נעלמת מחישוב החוב של B67. */
+  if (paid > 0.005)
+    keep.status = (paid + 0.01 >= Number(keep.total || 0)) ? 'שולם במלואו' : 'שולם חלקית';
+
+  writeTable('payroll_adjustments', db.payrollAdjustments);
+  writeTable('payroll_payments', db.payrollPayments);
+  writeTable('future_expenses', db.futureExpenses);
+  writeTable('payroll', db.payroll);
+  if (sVal(keep.status) !== 'טיוטה') syncFutureExpenseForPayroll(db, keep);
+
+  var emp = (db.employees || []).find(function (e) { return e.id === keep.employee_id; });
+  var over = b68RowOverpay(db, keep);
+  return {
+    ok: true, keep_id: keepId, moved_adjustments: movedAdj, moved_payments: movedPay,
+    total: Number(keep.total || 0), paid: paid, status: keep.status, overpay: over,
+    employee_overpay: b68EmployeeOverpay(db, keep.employee_id),
+    auditNote: 'מיזוג כפילות שכר ' + (emp ? emp.name : '') + ' ' + keep.month +
+      ' · נשמרה ' + keepId + ' · נמחקה ' + dropId +
+      ' · הועברו ' + movedAdj + ' תוספות ו-' + movedPay + ' תשלומים' +
+      (over > 0 ? ' · ⚠ תשלום עודף ' + over + ' ₪' : '')
+  };
+}
+
+/* קיזוז יתרת חובה — ניכוי מפורש משכר של חודש נבחר.
+   ⛔ ידני בלבד. אין קיזוז אוטומטי משום שכר. */
+function b68OffsetOverpay(db, p, user) {
+  var empId = String((p && p.employee_id) || '');
+  var month = String((p && p.month) || '');
+  if (!empId) return { ok: false, error: 'עובד לא נבחר' };
+  if (!/^\d{4}-\d{2}$/.test(month)) return { ok: false, error: 'חודש בפורמט YYYY-MM' };
+  var over = b68EmployeeOverpay(db, empId);
+  if (over <= 0.005) return { ok: false, error: 'אין יתרת חובה לעובד זה' };
+  var amt = (p.amount === '' || p.amount === undefined || p.amount === null) ? over : Number(p.amount) || 0;
+  if (amt <= 0) return { ok: false, error: 'סכום לא תקין' };
+  if (amt > over + 0.01) return { ok: false, error: 'הסכום גבוה מיתרת החובה (' + over + ' ₪)' };
+
+  var t = b68PayrollFor(db, empId, month);
+  if (t.dup) return { ok: false, error: 'קיימות ' + t.count + ' שורות שכר לחודש ' + month + ' — יש למזג אותן קודם' };
+  if (!t.row) return { ok: false, error: 'אין שורת שכר לחודש ' + month + ' — הפק אותה קודם' };
+  var pr = t.row;
+  if (sVal(pr.status) === 'שולם במלואו') return { ok: false, error: 'שכר ' + month + ' שולם במלואו — בחר חודש אחר' };
+  var openRem = Math.round((Number(pr.total || 0) - payrollPaidSum(db, pr.id)) * 100) / 100;
+  if (amt > openRem + 0.01)
+    return { ok: false, error: 'הקיזוז גבוה מיתרת השכר הפתוחה לחודש ' + month + ' (' + openRem + ' ₪). קזז בכמה חודשים' };
+
+  db.payrollAdjustments.push({
+    id: genId('PADJ'), payroll_id: pr.id, employee_id: pr.employee_id, month: pr.month,
+    type: 'ניכוי', category: B68_OFFSET_CAT, amount: amt,
+    note: String((p && p.note) || 'קיזוז תשלום עודף'), created_at: nowTs(), created_by: user || ''
+  });
+  writeTable('payroll_adjustments', db.payrollAdjustments);
+  recomputePayrollTotal(pr, db);
+  writeTable('payroll', db.payroll);
+  if (sVal(pr.status) !== 'טיוטה') syncFutureExpenseForPayroll(db, pr);
+
+  var emp = (db.employees || []).find(function (e) { return e.id === empId; });
+  return {
+    ok: true, total: Number(pr.total || 0), month: pr.month,
+    remaining_overpay: b68EmployeeOverpay(db, empId),
+    auditNote: 'קיזוז יתרת חובה ' + amt + ' ₪ ' + (emp ? emp.name : '') + ' משכר ' + pr.month
+  };
 }
 
 /* ============================================================
