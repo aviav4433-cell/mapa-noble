@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.69-B69', 'ה-canary לא עודכן ל-B69');
+      t.eq(inJs, 'v4.70-B70', 'ה-canary לא עודכן ל-B70');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -4522,6 +4522,434 @@ SPECS.push({
       const names = w.b61Tests().map(x => x.n);
       t.ok(names.length > 0, 'כרטיס הבדיקה העצמית התרוקן');
       t.no(names.join(' | ').indexOf('WASH') > -1, '⛔ נוספה טענה ל-b61Tests למרות שהאצווה אינה נוגעת ביכולת דפדפן');
+    }
+
+  }
+});
+
+
+
+/* ==================== t16 — B70 / WASH-03: עגלה שחוזרת לאותה קליטה ====================
+   ⛔ הבאג שנסגר כאן: nobleWeighRollup ספרה את **השקילה האחרונה של כל עגלה**
+   ומחקה בשקט את כל מה שקדם לה. עגלה שהתרוקנה וחזרה לקלוט מאותה הזמנה
+   נשקלת שוב בשעה אחרת — 10:00, 12:00, 15:00 — וכל אחת מהן היא כביסה
+   אמיתית שהלקוח חייב עליה.
+   ⚠ כל בדיקה כאן נכתבה כך שהיא **נכשלת על הקוד שלפני B70**. */
+
+const B70 = {
+  /* קליטה חיצונית באמצע הצינור, עגלה CA1 משויכת. מחיר 10 ₪ לק"ג, טרה 5 */
+  db(srv, over) {
+    over = over || {};
+    const db = H.emptyDb(srv);
+    db.employees = [{ id: 'E1', name: 'עובד', pin: '111', active: 'כן', role: 'מכבסה' },
+                    { id: 'E9', name: 'המנהל', pin: '999', active: 'כן', role: 'מנהל' }];
+    db.customers = [{ id: 'C1', name: 'לקוח', active: 'כן', price_per_kg: 10 }];
+    db.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש', tare_kg: 5, condition: 'תקינה' },
+                { id: 'CA2', barcode: 'CA2', status: 'בשימוש', tare_kg: 5, condition: 'תקינה' }];
+    db.machines = [{ id: 'M1', barcode: 'M1', type: 'מכונת כביסה', status: 'פעילה', auto_stage: 'בכביסה', capacity: 50 }];
+    db.laundryIntakes = [{
+      id: 'IK1', customer_id: over.internal ? '' : 'C1', internal: over.internal || '',
+      status: over.status || 'באריזה', price_per_kg: 10, net_weight_kg: '', total_charge: '',
+      intake_ts: '2026-08-01 08:00', delivered_ts: '', delivery_id: '', order_id: '',
+      ready_ts: '', invoice_id: '', notes: ''
+    }];
+    db.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן', bind_ts: '', release_ts: '' }];
+    return db;
+  },
+  /* שקילה עם שעה מפורשת — הרתמה מזייפת שעון, ולכן ts נקבע כאן ידנית */
+  weigh(db, gross, hhmm, cart) {
+    const tare = 5, net = Math.round((gross - tare) * 100) / 100;
+    const ev = {
+      id: 'EVT-W' + (db.laundryEvents.length + 1), ts: '2026-08-01 ' + hhmm + ':00',
+      intake_id: 'IK1', customer_id: db.laundryIntakes[0].customer_id, cart_id: cart || 'CA1',
+      machine_id: '', stage: 'באריזה', event_type: 'שקילה', worker_id: 'E1', worker_name: 'עובד',
+      gross_kg: gross, tare_kg: tare, net_kg: net,
+      price_per_kg: db.laundryIntakes[0].internal ? 0 : 10,
+      charge: db.laundryIntakes[0].internal ? 0 : Math.round(net * 10 * 100) / 100,
+      note: '', portion_kg: '', ref_id: ''
+    };
+    db.laundryEvents.push(ev);
+    return ev;
+  },
+  ev(db, type, cart, hhmm) {
+    const e = {
+      id: 'EVT-' + type + (db.laundryEvents.length + 1), ts: '2026-08-01 ' + (hhmm || '09:00') + ':00',
+      intake_id: 'IK1', customer_id: 'C1', cart_id: cart || 'CA1', machine_id: 'M1',
+      stage: 'בכביסה', event_type: type, worker_id: 'E1', worker_name: 'עובד',
+      gross_kg: '', tare_kg: '', net_kg: '', price_per_kg: '', charge: '', note: '', portion_kg: '', ref_id: ''
+    };
+    db.laundryEvents.push(e);
+    return e;
+  }
+};
+
+SPECS.push({
+  file: 't16-b70-wash03-srv',
+  title: 'B70 / WASH-03 — כל שקילה היא חיוב בפני עצמה (שרת)',
+  needs: 'server',
+  requires: ['nobleWeighRollup', 'b70Weighs', 'b70CartNeedsWeigh', 'b70Seq', 'nobleWeighFix',
+             'nobleWeigh', 'nobleMarkReady', 'nobleCartInfo', 'nobleBoard', 'b38VerifyManagerPin',
+             'b54Ledger', 'b54Bump', 'b48BalancesAg', 'b2CreditUsedAg', 'TABLES',
+             'READ_ONLY_ACTIONS', 'handle', 'sVal', 'nobleEventsOf', 'appendRowToTable'],
+
+  tests: {
+
+    /* ---------- ⛔ הבאג עצמו. הבדיקה הזו נכשלת על הקוד שלפני B70 ---------- */
+
+    '⭐⭐ הדוגמה של אבי: עגלה 001 נשקלה ב-10:00, 12:00 ו-15:00 — שלושת החיובים קיימים': (t, { srv }) => {
+      const db = B70.db(srv);
+      B70.weigh(db, 25, '10:00');   // נטו 20 → ₪200
+      B70.weigh(db, 35, '12:00');   // נטו 30 → ₪300
+      B70.weigh(db, 15, '15:00');   // נטו 10 → ₪100
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 600, '⛔ החיוב אינו סכום שלוש השקילות. זה בדיוק WASH-03 — שקילה מאוחרת מחקה את הקודמות');
+      t.eq(roll.net, 60, '⛔ המשקל הנטו אינו סכום שלוש השקילות');
+      t.eq(roll.weighs.length, 3, 'לא הוחזרו שלוש שורות שקילה');
+      t.eq(roll.weighs.map(x => x.seq).join(','), '1,2,3', 'מספור השקילות של העגלה שגוי');
+      t.eq(roll.carts.length, 1, 'העגלה נספרה יותר מפעם אחת ברשימת העגלות שנשקלו');
+    },
+
+    'שתי עגלות, אחת מהן בשני מחזורים — כל ארבע השקילות נספרות': (t, { srv }) => {
+      const db = B70.db(srv);
+      db.intakeCarts.push({ id: 'IC2', intake_id: 'IK1', cart_id: 'CA2', active: 'כן' });
+      B70.weigh(db, 25, '10:00', 'CA1');   // ₪200
+      B70.weigh(db, 15, '11:00', 'CA2');   // ₪100
+      B70.weigh(db, 35, '13:00', 'CA1');   // ₪300
+      B70.weigh(db, 25, '16:00', 'CA2');   // ₪200
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 800, '⛔ סכום החיוב של שתי עגלות בשני מחזורים שגוי');
+      t.eq(roll.carts.length, 2, 'רשימת העגלות שנשקלו שגויה');
+      t.eq(srv.b70Weighs(db, 'IK1', 'CA1').length, 2, 'לא הוחזרו שתי שקילות ל-CA1');
+      t.eq(srv.b70Weighs(db, 'IK1', 'CA2').map(x => x.seq).join(','), '1,2', 'מספור השקילות של CA2 שגוי');
+    },
+
+    'שקילה דרך nobleWeigh — נוספת ולא דורסת, ומחזירה את מספר השקילה': (t, { srv }) => {
+      const db = B70.db(srv);
+      const r1 = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 25 }, 'עובד');
+      t.ok(r1.ok, 'השקילה הראשונה נדחתה: ' + r1.error);
+      t.eq(r1.cart_seq, 1, 'מספר השקילה הראשונה אינו 1');
+      const r2 = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 35 }, 'עובד');
+      t.ok(r2.ok, '⛔ שקילה שנייה של אותה עגלה נדחתה — מחזור נוסף הוא מציאות אמיתית: ' + r2.error);
+      t.eq(r2.cart_seq, 2, 'מספר השקילה השנייה אינו 2');
+      t.eq(db.laundryIntakes[0].total_charge, 500, '⛔ total_charge אינו סכום שתי השקילות — החיוב הראשון נמחק');
+      t.eq(db.laundryIntakes[0].net_weight_kg, 50, 'המשקל הנטו של הקליטה אינו סכום שתי השקילות');
+    },
+
+    /* ---------- תיקון מנהל: שורה חדשה, לא דריסה ---------- */
+
+    '⭐ תיקון מנהל — רק הערך המתוקן נספר, והשקילה השנייה לא נגעה': (t, { srv }) => {
+      const db = B70.db(srv);
+      const e1 = B70.weigh(db, 25, '10:00');   // ₪200
+      B70.weigh(db, 35, '12:00');              // ₪300
+      const r = srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 15, reason: 'הוזן ברוטו שגוי', mgr_pin: '999' }, 'המנהל');
+      t.ok(r.ok, 'התיקון נדחה: ' + r.error);
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 400, '⛔ אחרי תיקון הראשונה ל-₪100, הסך אמור להיות 400 (100+300)');
+      t.eq(roll.weighs.length, 2, 'מספר שורות השקילה השתנה — התיקון אינו אמור ליצור שורה נוספת בתצוגה');
+      t.ok(roll.weighs[0].fixed, 'השורה הראשונה לא סומנה כמתוקנת');
+      t.no(roll.weighs[1].fixed, 'השורה השנייה סומנה כמתוקנת בטעות');
+      t.eq(db.laundryIntakes[0].total_charge, 400, 'total_charge לא עודכן אחרי התיקון');
+    },
+
+    '⛔ append-only — התיקון מוסיף שורה ליומן ואינו נוגע בשורה המקורית': (t, { srv }) => {
+      const db = B70.db(srv);
+      const e1 = B70.weigh(db, 25, '10:00');
+      const before = JSON.stringify(e1);
+      const n = db.laundryEvents.length;
+      srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 15, reason: 'טעות הקלדה', mgr_pin: '999' }, 'המנהל');
+      t.eq(JSON.stringify(db.laundryEvents[0]), before, '⛔ השורה המקורית ביומן שונתה. laundry_events הוא append-only');
+      t.eq(db.laundryEvents.length, n + 1, 'לא נוספה שורת תיקון ליומן');
+      const fix = db.laundryEvents[db.laundryEvents.length - 1];
+      t.eq(String(fix.ref_id), e1.id, '⛔ שורת התיקון אינה מצביעה על השקילה שתוקנה (ref_id)');
+      t.has(String(fix.note), 'טעות הקלדה', 'סיבת התיקון לא נשמרה ביומן');
+      t.has(String(fix.worker_name), 'המנהל', 'שם המתקן לא נשמר ביומן');
+    },
+
+    'ביטול שקילה — היא יוצאת מהחיוב אבל נשארת ביומן': (t, { srv }) => {
+      const db = B70.db(srv);
+      const e1 = B70.weigh(db, 25, '10:00');   // ₪200
+      B70.weigh(db, 35, '12:00');              // ₪300
+      const r = srv.nobleWeighFix(db, { event_id: e1.id, cancel: true, reason: 'נשקלה פעמיים בטעות', mgr_pin: '999' }, 'המנהל');
+      t.ok(r.ok, 'הביטול נדחה: ' + r.error);
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 300, 'אחרי ביטול השקילה הראשונה נותר רק החיוב השני');
+      t.ok(roll.weighs[0].cancelled, 'השורה המבוטלת לא סומנה כמבוטלת');
+      t.eq(roll.weighs.length, 2, 'השורה המבוטלת נעלמה מהתצוגה — היא אמורה להישאר גלויה');
+    },
+
+    'שרשרת תיקונים — תיקון של תיקון, האחרון קובע': (t, { srv }) => {
+      const db = B70.db(srv);
+      const e1 = B70.weigh(db, 25, '10:00');
+      srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 15, reason: 'תיקון ראשון', mgr_pin: '999' }, 'המנהל');
+      const fix1 = db.laundryEvents[db.laundryEvents.length - 1];
+      srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 45, reason: 'תיקון שני', mgr_pin: '999' }, 'המנהל');
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 400, 'התיקון האחרון (נטו 40) לא קבע');
+      t.eq(roll.weighs.length, 1, 'שרשרת התיקונים יצרה שורות כפולות');
+      t.ok(fix1.id, 'שורת התיקון הראשון לא נוצרה');
+    },
+
+    /* ---------- שערי התיקון ---------- */
+
+    '⛔ תיקון בלי סיבה נדחה, ושום דבר לא נכתב': (t, { srv }) => {
+      const db = B70.db(srv);
+      const e1 = B70.weigh(db, 25, '10:00');
+      const n = db.laundryEvents.length;
+      const r = srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 15, reason: '  ', mgr_pin: '999' }, 'המנהל');
+      t.no(r.ok, 'תיקון בלי סיבה התקבל');
+      t.has(r.error, 'סיבה', 'ההודעה אינה אומרת שחסרה סיבה');
+      t.eq(db.laundryEvents.length, n, 'נכתבה שורה ליומן למרות הדחייה');
+      t.eq(srv.nobleWeighRollup(db, 'IK1').charge, 200, 'החיוב השתנה למרות הדחייה');
+    },
+
+    '⛔ תיקון בלי מספר אישי של מנהל נדחה': (t, { srv }) => {
+      const db = B70.db(srv);
+      const e1 = B70.weigh(db, 25, '10:00');
+      const n = db.laundryEvents.length;
+      const r = srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 15, reason: 'סיבה תקינה', mgr_pin: '123' }, 'עובד');
+      t.no(r.ok, '⛔ תיקון עם קוד מנהל שגוי התקבל');
+      t.eq(db.laundryEvents.length, n, 'נכתבה שורה ליומן למרות הדחייה');
+    },
+
+    '⛔ אחרי שהקליטה יצאה ללקוח אי אפשר לתקן שקילה': (t, { srv }) => {
+      ['במשלוח', 'נמסר'].forEach(st => {
+        const db = B70.db(srv);
+        const e1 = B70.weigh(db, 25, '10:00');
+        db.laundryIntakes[0].status = st;
+        const r = srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 15, reason: 'מאוחר מדי', mgr_pin: '999' }, 'המנהל');
+        t.no(r.ok, 'תיקון התקבל בסטטוס ' + st);
+        t.has(r.error, st, 'ההודעה אינה אומרת מה הסטטוס');
+      });
+    },
+
+    '⛔ תיקון של שורה שאינה שקילה נדחה': (t, { srv }) => {
+      const db = B70.db(srv);
+      const st = B70.ev(db, 'התחלה', 'CA1', '09:00');
+      const r = srv.nobleWeighFix(db, { event_id: st.id, gross_kg: 15, reason: 'לא רלוונטי', mgr_pin: '999' }, 'המנהל');
+      t.no(r.ok, 'תיקון של אירוע התחלה התקבל');
+    },
+
+    /* ---------- הדלת האחורית: מוכן למשלוח בלי לשקול את המחזור ---------- */
+
+    '⭐⭐ עגלה שסיימה מחזור נוסף וטרם נשקלה עליו — "מוכן למשלוח" חסום': (t, { srv }) => {
+      const db = B70.db(srv);
+      B70.ev(db, 'התחלה', 'CA1', '08:00');
+      B70.ev(db, 'סיום', 'CA1', '09:30');
+      B70.weigh(db, 25, '10:00');            // מחזור ראשון — נשקל
+      B70.ev(db, 'התחלה', 'CA1', '11:00');   // מחזור שני
+      B70.ev(db, 'סיום', 'CA1', '12:30');    // הסתיים — וטרם נשקל
+      t.ok(srv.b70CartNeedsWeigh(db, 'IK1', 'CA1'), 'העגלה לא זוהתה כמי שסיימה מחזור בלי שקילה');
+      const r = srv.nobleMarkReady(db, { cart_barcode: 'CA1' }, 'עובד');
+      t.no(r.ok, '⛔ הקליטה סומנה מוכנה בזמן שמחזור שלם לא נשקל — הכביסה הייתה נוסעת בלי חיוב');
+      t.has(r.error, 'CA1', 'ההודעה אינה אומרת איזו עגלה');
+    },
+
+    'אותה עגלה אחרי שנשקלה על המחזור השני — "מוכן למשלוח" עובר': (t, { srv }) => {
+      const db = B70.db(srv);
+      B70.ev(db, 'התחלה', 'CA1', '08:00');
+      B70.ev(db, 'סיום', 'CA1', '09:30');
+      B70.weigh(db, 25, '10:00');
+      B70.ev(db, 'התחלה', 'CA1', '11:00');
+      B70.ev(db, 'סיום', 'CA1', '12:30');
+      B70.weigh(db, 35, '13:00');
+      t.no(srv.b70CartNeedsWeigh(db, 'IK1', 'CA1'), 'העגלה סומנה כטעונת שקילה למרות שנשקלה');
+      const r = srv.nobleMarkReady(db, { cart_barcode: 'CA1' }, 'עובד');
+      t.ok(r.ok, 'סימון מוכן נחסם למרות ששתי השקילות בוצעו: ' + r.error);
+      t.eq(srv.nobleWeighRollup(db, 'IK1').charge, 500, 'החיוב אינו סכום שני המחזורים');
+    },
+
+    /* ---------- ⛔ הכסף. R6 ---------- */
+
+    '⛔ כסף: total_charge שווה בדיוק לסכום שספר החיובים מכיר בו': (t, { srv }) => {
+      const db = B70.db(srv);
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 25 }, 'עובד');
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 35 }, 'עובד');
+      db.laundryIntakes[0].status = 'נמסר';
+      db.laundryIntakes[0].delivered_ts = '2026-08-02 10:00';
+      srv.b54Bump();
+      const led = srv.b54Ledger(db).reduce((s, r) => s + (r.net_ag || 0), 0);
+      t.eq(led, Math.round(db.laundryIntakes[0].total_charge * 100), '⛔ ספר החיובים ו-total_charge התפצלו');
+      t.eq(led, 50000, '⛔ ספר החיובים לא מכיר בשני המחזורים (500 ₪)');
+    },
+
+    '⛔ כסף: שלושת מקורות היתרה מחזירים אותו מספר (R6)': (t, { srv }) => {
+      const db = B70.db(srv);
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 25 }, 'עובד');
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 35 }, 'עובד');
+      db.laundryIntakes[0].status = 'נמסר';
+      db.laundryIntakes[0].delivered_ts = '2026-08-02 10:00';
+      db.laundryIntakes[0].invoice_id = 'INV1';
+      db.invoices = [{ id: 'INV1', number: 1001, order_id: '', customer_id: 'C1',
+        date: '2026-08-02', subtotal: 500, vat_rate: 0.18, vat: 90, total: 590, status: 'פתוחה' }];
+      srv.b54Bump();
+      const bal = srv.b48BalancesAg(db)['C1'] || 0;
+      t.ok(bal > 0, 'קו הבסיס אפס — הבדיקה אינה מוכיחה דבר');
+      t.eq(srv.b2CreditUsedAg(db, 'C1'), bal, '⛔ מנוע האשראי וספר החיובים התפצלו (R6)');
+    },
+
+    '⛔ כביסה פנימית נשארת בחיוב 0 גם בשני מחזורים': (t, { srv }) => {
+      const db = B70.db(srv, { internal: 'כן' });
+      B70.weigh(db, 25, '10:00');
+      B70.weigh(db, 35, '12:00');
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 0, '⛔ כביסה פנימית קיבלה חיוב');
+      t.eq(roll.net, 50, 'המשקל של הכביסה הפנימית לא נצבר — הוא המונה של הניצולת');
+    },
+
+    '⛔ תיקון בכביסה פנימית אינו יוצר חיוב': (t, { srv }) => {
+      const db = B70.db(srv, { internal: 'כן' });
+      const e1 = B70.weigh(db, 25, '10:00');
+      const r = srv.nobleWeighFix(db, { event_id: e1.id, gross_kg: 45, reason: 'תיקון משקל', mgr_pin: '999' }, 'המנהל');
+      t.ok(r.ok, 'התיקון נדחה: ' + r.error);
+      t.eq(srv.nobleWeighRollup(db, 'IK1').charge, 0, '⛔ תיקון בכביסה פנימית ייצר חיוב');
+      t.eq(srv.nobleWeighRollup(db, 'IK1').net, 40, 'המשקל המתוקן לא נשמר');
+    },
+
+    /* ---------- שומרים ---------- */
+
+    '⛔ העמודה ref_id קיימת בסכימה של laundry_events': (t, { srv }) => {
+      t.ok(srv.TABLES.laundry_events.indexOf('ref_id') > -1, 'ref_id חסרה — התיקון לא יכול להצביע על השקילה המקורית');
+      t.eq(srv.TABLES.laundry_events[srv.TABLES.laundry_events.length - 1], 'ref_id',
+        'ref_id אינה בסוף — המיגרציה של setupDatabase מוסיפה עמודות לסוף בלבד');
+    },
+
+    '⛔ nobleWeighFix אינה READ_ONLY — היא כותבת לגיליון': (t, { srv }) => {
+      t.no(srv.READ_ONLY_ACTIONS.indexOf('nobleWeighFix') > -1,
+        '⛔ פעולה שכותבת לגיליון נכנסה ל-READ_ONLY_ACTIONS (R4)');
+    },
+
+    '⛔ אין writeTable על laundry_events בשום מקום': (t, { H }) => {
+      const code = H.stripComments(H.serverSrc());
+      t.no(/writeTable\s*\(\s*['"]laundry_events['"]/.test(code),
+        '⛔ laundry_events הוא append-only — writeTable עליו מוחק את היומן');
+    },
+
+    'b70Seq מציג 01/02/03 ולא 1/2/3': (t, { srv }) => {
+      t.eq(srv.b70Seq(1), '01', 'מספר שקילה חד-ספרתי אינו מרופד');
+      t.eq(srv.b70Seq(2), '02', 'מספר שקילה 2 שגוי');
+      t.eq(srv.b70Seq(12), '12', 'מספר שקילה דו-ספרתי רופד בטעות');
+    },
+
+    '⛔ lastByCart לא חזר לקוד — זה בדיוק הבאג של WASH-03': (t, { H }) => {
+      const code = H.stripComments(H.serverSrc());
+      t.no(/lastByCart\s*\[/.test(code),
+        '⛔ הדפוס lastByCart חזר לקוד השרת. הוא מוחק חיובים בשקט');
+    },
+
+    'nobleCartInfo מחזיר את שורות השקילה ואת דגל השקילה החסרה': (t, { srv }) => {
+      const db = B70.db(srv);
+      B70.weigh(db, 25, '10:00');
+      B70.weigh(db, 35, '12:00');
+      const r = srv.nobleCartInfo(db, { barcode: 'CA1' });
+      t.ok(r.ok, 'nobleCartInfo נכשל: ' + r.error);
+      t.eq(r.weighs.length, 2, 'מסך הרצפה לא מקבל את שתי השקילות');
+      t.eq(r.weighs[0].seq, 1, 'מספור השקילות לא הגיע למסך');
+      t.no(r.needs_weigh, 'דגל השקילה החסרה נדלק בטעות');
+    },
+
+    'לוח המכבסה מציג את החיוב המצטבר': (t, { srv }) => {
+      const db = B70.db(srv);
+      B70.weigh(db, 25, '10:00');
+      B70.weigh(db, 35, '12:00');
+      const b = srv.nobleBoard(db);
+      const ik = (b.intakes || []).find(x => x.id === 'IK1');
+      t.ok(ik, 'הקליטה לא הופיעה בלוח');
+      t.eq(ik.charge, 500, '⛔ הלוח מציג חיוב חלקי — שקילה נמחקה');
+    }
+
+  }
+});
+
+
+SPECS.push({
+  file: 't16b-b70-wash03-ui',
+  title: 'B70 / WASH-03 — טבלת השקילות ברצפת הייצור (ממשק)',
+  needs: 'ui',
+  requires: ['b70Seq', 'b70Hm', 'b70WeighsHtml', 'floorFixWeigh', 'floorFixGo', 'b70CancelToggle',
+             'floorRenderInfo', 'floorWeigh', 'el', 'openModal', 'closeModal', 'b61Tests', 'ils'],
+
+  tests: {
+
+    'b70Seq ו-b70Hm בממשק זהים לשרת': (t, { w }) => {
+      t.eq(w.b70Seq(1), '01', 'מספר שקילה חד-ספרתי אינו מרופד בממשק');
+      t.eq(w.b70Seq(11), '11', 'מספר שקילה דו-ספרתי שגוי בממשק');
+      t.eq(w.b70Hm('2026-08-01 14:35:00'), '14:35', 'השעה לא חולצה מחותמת הזמן');
+      t.eq(w.b70Hm(''), '', 'חותמת ריקה החזירה משהו');
+    },
+
+    '⭐ שלוש שקילות מוצגות עם השעה, המספר והחיוב': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      const html = w.b70WeighsHtml({
+        intake: { id: 'IK1', internal: '' },
+        weighed: { net: 60, charge: 600, count: 3 },
+        weighs: [
+          { id: 'E1', ts: '2026-08-01 10:00:00', cart_id: 'CA1', seq: 1, net_kg: 20, charge: 200, fixed: false, cancelled: false },
+          { id: 'E2', ts: '2026-08-01 12:00:00', cart_id: 'CA1', seq: 2, net_kg: 30, charge: 300, fixed: false, cancelled: false },
+          { id: 'E3', ts: '2026-08-01 15:00:00', cart_id: 'CA1', seq: 3, net_kg: 10, charge: 100, fixed: false, cancelled: false }
+        ]
+      });
+      ['(01)', '(02)', '(03)', '10:00', '12:00', '15:00'].forEach(x =>
+        t.has(html, x, 'חסר בטבלת השקילות: ' + x));
+      t.has(html, 'שקילות העגלה בקליטה הזו (3)', 'כותרת הטבלה אינה אומרת כמה שקילות יש');
+    },
+
+    'שקילה מבוטלת מוצגת כמבוטלת ובלי כפתור תיקון': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      const html = w.b70WeighsHtml({
+        intake: { id: 'IK1', internal: '' },
+        weighed: { net: 30, charge: 300, count: 2 },
+        weighs: [
+          { id: 'E1', ts: '2026-08-01 10:00:00', cart_id: 'CA1', seq: 1, net_kg: 0, charge: 0, fixed: true, cancelled: true, fix_note: 'ביטול שקילה · כפילות', fix_by: 'המנהל', fix_ts: '2026-08-01 16:00:00' },
+          { id: 'E2', ts: '2026-08-01 12:00:00', cart_id: 'CA1', seq: 2, net_kg: 30, charge: 300, fixed: false, cancelled: false }
+        ]
+      });
+      t.has(html, 'בוטלה', 'שקילה מבוטלת אינה מסומנת');
+      t.has(html, 'כפילות', 'סיבת הביטול אינה מוצגת');
+      t.eq((html.match(/floorFixWeigh/g) || []).length, 1, 'כפתור תיקון הוצג לשורה מבוטלת');
+    },
+
+    '⛔ אין טבלה כשאין שקילות': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      t.eq(w.b70WeighsHtml({ intake: { id: 'IK1' }, weighed: { net: 0, charge: 0, count: 0 }, weighs: [] }), '',
+        'הוצגה טבלה ריקה');
+    },
+
+    '⭐ עגלה שסיימה מחזור וטרם נשקלה — אין כפתור "מוכן למשלוח" (R7)': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      w.go('floor');
+      w.FLOOR_INFO = {
+        ok: true, cart: { id: 'CA1', tare_kg: 5, status: 'בשימוש' },
+        intake: { id: 'IK1', status: 'באריזה', internal: '' },
+        customer_name: 'לקוח', bound_carts: ['CA1'], opens: [], machines: [],
+        weighed: { net: 20, charge: 200, count: 1 },
+        weighs: [{ id: 'E1', ts: '2026-08-01 10:00:00', cart_id: 'CA1', seq: 1, net_kg: 20, charge: 200, fixed: false, cancelled: false }],
+        needs_weigh: true
+      };
+      w.floorRenderInfo();
+      const box = w.el('floorInfo').innerHTML;
+      t.no(box.indexOf('floorReady()') > -1, '⛔ כפתור "מוכן למשלוח" הוצג בזמן שמחזור שלם לא נשקל');
+      t.has(box, 'סיימה מחזור נוסף', 'אין הסבר למה הכפתור נעלם');
+      w.FLOOR_INFO.needs_weigh = false;
+      w.floorRenderInfo();
+      t.ok(w.el('floorInfo').innerHTML.indexOf('floorReady()') > -1, 'הכפתור לא חזר אחרי שהעגלה נשקלה');
+    },
+
+    'מודל התיקון דורש סיבה, מספר אישי, ומאפשר ביטול': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      w.floorFixWeigh('EVT-1', 25);
+      const m = w.el('modal').innerHTML;
+      ['f_b70reason', 'f_b70pin', 'f_b70cancel', 'f_b70gross'].forEach(id =>
+        t.has(m, id, 'שדה חסר במודל התיקון: ' + id));
+      t.has(m, 'אינו מוחק', 'המודל אינו מסביר שהתיקון נרשם כשורה חדשה');
+      w.el('f_b70cancel').checked = true;
+      w.b70CancelToggle();
+      t.ok(w.el('f_b70gross').disabled, 'סימון ביטול לא נעל את שדה המשקל');
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-03 אינו נוגע ביכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n);
+      t.no(names.some(n => /שקיל|B70/.test(n)), '⛔ נוספה טענה לכרטיס הבדיקה העצמית — WASH-03 אינו יכולת דפדפן');
     }
 
   }
