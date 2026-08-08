@@ -118,6 +118,19 @@
 //                   ⛔ נרמול להשוואה בלבד. הערך בגיליון אינו משתנה — יש בדיקה.
 //                   ⛔ לא הוחל על כסף, על משקל ועל מזהים.
 //                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
+//             B70 — WASH-03: עגלה שחוזרת לאותה קליטה שומרת את החיוב — canary v4.70-B70
+//                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
+//                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
+//                     שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת
+//                     (10:00 · 12:00 · 15:00) — והחיובים הקודמים נעלמו.
+//                   • כל שקילה היא שורת חיוב בפני עצמה. הסיכום מצטבר.
+//                   • תיקון שקילה — מנהל בלבד (b38VerifyManagerPin), סיבה חובה,
+//                     נרשם כשורה חדשה עם ref_id לשורה המתוקנת. אין דריסה,
+//                     laundry_events נשאר append-only.
+//                   • nobleMarkReady חוסמת עגלה שסיימה מחזור נוסף וטרם נשקלה
+//                     עליו (b70CartNeedsWeigh) — הדלת האחורית של אותו באג.
+//                   ⛔ שינוי סכימה: עמודה אחת — laundry_events.ref_id.
+//                     ⚠⚠ יש להריץ setupDatabase פעם אחת אחרי הפריסה.
 //  אצווה C1: עמודות חדשות · מספר הזמנה רץ · משמרת לילה
 //  אצווה C2: אימיילים אוטומטיים (פגישות, אישור/אספקת הזמנה, הזמנה מהאתר)
 //  אצווה C3: מדפים ממוספרים · ברקוד אריזה · צילום נהג באספקה
@@ -314,7 +327,7 @@ var TABLES = {
   laundry_intakes: ['id', 'customer_id', 'internal', 'status', 'net_weight_kg', 'price_per_kg', 'total_charge', 'intake_ts', 'delivered_ts', 'delivery_id', 'notes', 'created_by', 'invoice_id', 'order_id', 'ready_ts'],
   intake_carts: ['id', 'intake_id', 'cart_id', 'bind_ts', 'release_ts', 'active'],
   // B39b: portion_kg — כמה ק"ג מהעגלה נכנסו למכונה הזו (פיצול עגלה בין מכונות). עמודה חדשה בסוף.
-  laundry_events: ['id', 'ts', 'intake_id', 'customer_id', 'cart_id', 'machine_id', 'stage', 'event_type', 'worker_id', 'worker_name', 'gross_kg', 'tare_kg', 'net_kg', 'price_per_kg', 'charge', 'note', 'portion_kg'],
+  laundry_events: ['id', 'ts', 'intake_id', 'customer_id', 'cart_id', 'machine_id', 'stage', 'event_type', 'worker_id', 'worker_name', 'gross_kg', 'tare_kg', 'net_kg', 'price_per_kg', 'charge', 'note', 'portion_kg', 'ref_id'],
   shelves: ['id', 'code', 'barcode', 'location', 'warehouse_id', 'notes', 'active'],
   links: ['id', 'from_type', 'from_id', 'to_type', 'to_id', 'note', 'created', 'user'],
   // B39: location — מיקום המכונה, נבחר מרשימת מיקומים נשלטת. עמודה חדשה בסוף.
@@ -4446,6 +4459,7 @@ function handle(action, p, db, user) {
     case 'nobleBoard': return nobleBoard(db); // תיקון: הפונקציה קיימת אך לא הייתה מחוברת למתג הפעולות
     case 'nobleCartInfo': return nobleCartInfo(db, p);
     case 'nobleIntake': return nobleIntake(db, p, user);
+    case 'nobleWeighFix': return nobleWeighFix(db, p, user);
     case 'nobleStageStart': return nobleStageStart(db, p, user);
     case 'nobleStageEnd': return nobleStageEnd(db, p, user);
     case 'nobleWeigh': return nobleWeigh(db, p, user);
@@ -6857,20 +6871,71 @@ function nobleMachineLoad(db) {
   });
   return out;
 }
-// חישוב סיכום שקילות מהיומן: השקילה האחרונה של כל עגלה קובעת (שקילה חוזרת מחליפה)
+/* ⛔⛔ B70 / WASH-03 — כל שקילה היא שורת חיוב בפני עצמה.
+   עד B70 נספרה **השקילה האחרונה של כל עגלה** (lastByCart), וכל שקילה
+   שקדמה לה נמחקה בשקט. בפועל עגלה שסיימה מחזור, התרוקנה וחזרה לקלוט
+   כביסה נוספת מאותה הזמנה — נשקלת שוב באותו יום בשעה אחרת (10:00,
+   12:00, 15:00), וכל אחת מהן היא כביסה אמיתית שהלקוח חייב עליה.
+   ⛔ אין דריסה, ואין מנגנון "סיבובים" נגזר: היומן כבר מכיל את הכל.
+   תיקון של מנהל אינו דורס אלא מוסיף שורה חדשה (B70_FIX_EVENT) עם
+   ref_id לשורה המתוקנת — laundry_events נשאר append-only. */
+var B70_FIX_EVENT = 'תיקון שקילה';
+
+// כל השקילות התקפות של קליטה (או של עגלה אחת בתוכה), לפי סדר היומן
+function b70Weighs(db, intakeId, cartId) {
+  var evs = nobleEventsOf(db, intakeId);
+  var fixBy = {};
+  evs.forEach(function (e) {
+    if (sVal(e.event_type) !== B70_FIX_EVENT) return;
+    var ref = String(e.ref_id || '');
+    if (ref) fixBy[ref] = e;   // תיקון מאוחר יותר גובר על מוקדם
+  });
+  var seq = {}, out = [];
+  evs.forEach(function (e) {
+    if (sVal(e.event_type) !== 'שקילה') return;
+    var cid = String(e.cart_id || '');
+    seq[cid] = (seq[cid] || 0) + 1;   // המונה סופר שקילות בלבד — התיקון יורש את מספר השורה שהוא מתקן
+    if (cartId !== undefined && cid !== String(cartId)) return;
+    var cur = e, fix = null, guard = 0;
+    while (fixBy[cur.id] && guard++ < 50) { fix = fixBy[cur.id]; cur = fix; }  // שרשרת תיקונים
+    var netV = Number(cur.net_kg) || 0;
+    out.push({
+      id: e.id, ts: e.ts, cart_id: cid, seq: seq[cid],
+      gross_kg: Number(cur.gross_kg) || 0, tare_kg: Number(cur.tare_kg) || 0,
+      net_kg: netV, price_per_kg: Number(cur.price_per_kg) || 0,
+      charge: Number(cur.charge) || 0,
+      fixed: !!fix, cancelled: !!fix && !(netV > 0),
+      fix_ts: fix ? fix.ts : '', fix_by: fix ? String(fix.worker_name || '') : '',
+      fix_note: fix ? String(fix.note || '') : ''
+    });
+  });
+  return out;
+}
+
+/* עגלה שסיימה מחזור במכונה **אחרי** השקילה האחרונה שלה — טרם נשקלה על
+   המחזור הזה. בלי הבדיקה הזו הכביסה נוסעת ללקוח בלי חיוב (אותו באג,
+   דלת אחורית: nobleMarkReady שאלה "נשקלה אי פעם" ולא "נשקלה על זה"). */
+function b70CartNeedsWeigh(db, intakeId, cartId) {
+  var lastWeigh = -1, lastEnd = -1;
+  nobleEventsOf(db, intakeId, cartId).forEach(function (e, i) {
+    var et = sVal(e.event_type);
+    if (et === 'שקילה') lastWeigh = i;
+    else if (et === 'סיום') lastEnd = i;
+  });
+  return lastEnd > lastWeigh;
+}
+
+// חישוב סיכום שקילות מהיומן: **סכום כל השקילות התקפות** (B70)
 function nobleWeighRollup(db, intakeId) {
-  var lastByCart = {};
-  nobleEventsOf(db, intakeId).forEach(function (e) {
-    if (sVal(e.event_type) === 'שקילה') lastByCart[e.cart_id] = e;
+  var ws = b70Weighs(db, intakeId);
+  var net = 0, charge = 0, seen = {}, weighedCarts = [];
+  ws.forEach(function (x) {
+    net += x.net_kg;
+    charge += x.charge;
+    // ⛔ עגלה נחשבת "נשקלה" רק אם נותר לה משקל תקף — שקילה שבוטלה אינה נחשבת
+    if (x.net_kg > 0 && !seen[x.cart_id]) { seen[x.cart_id] = 1; weighedCarts.push(x.cart_id); }
   });
-  var net = 0, charge = 0, count = 0, weighedCarts = [];
-  Object.keys(lastByCart).forEach(function (c) {
-    net += Number(lastByCart[c].net_kg) || 0;
-    charge += Number(lastByCart[c].charge) || 0;
-    count++;
-    weighedCarts.push(c);
-  });
-  return { net: nRound2(net), charge: nRound2(charge), count: count, carts: weighedCarts };
+  return { net: nRound2(net), charge: nRound2(charge), count: ws.length, carts: weighedCarts, weighs: ws };
 }
 
 // --- פעולת קריאה: מידע לעגלה סרוקה (למסך הרצפה) ---
@@ -6902,7 +6967,10 @@ function nobleCartInfo(db, p) {
         var kg = 0; lo.forEach(function (x) { kg += x.portion_kg; });
         return { id: m.id, type: m.type, status: m.status, auto_stage: m.auto_stage, capacity: Number(m.capacity) || 0, load_kg: nRound2(kg), load_count: lo.length };
       }),
-    weighed: roll
+    weighed: roll,
+    // ⛔ B70: כל שקילות העגלה בקליטה הזו, עם השעה — הבסיס לתצוגה ולתיקון
+    weighs: b70Weighs(db, intake.id, cart.id),
+    needs_weigh: b70CartNeedsWeigh(db, intake.id, cart.id)
   };
 }
 
@@ -7103,13 +7171,63 @@ function nobleWeigh(db, p, user) {
     stage: 'באריזה', event_type: 'שקילה', worker_id: w.id, worker_name: w.name,
     gross_kg: gross, tare_kg: tare, net_kg: net, price_per_kg: price, charge: charge
   });
-  var roll = nobleWeighRollup(db, intake.id); // שקילה חוזרת של אותה עגלה מחליפה את הקודמת
+  /* ⛔ B70: השקילה מצטברת ואינה דורסת. שקילה שגויה אינה נמחקת ואינה
+     נשקלת מחדש — מנהל מתקן אותה ב-nobleWeighFix, עם סיבה ותיעוד. */
+  var roll = nobleWeighRollup(db, intake.id);
+  var mine = b70Weighs(db, intake.id, cart.id);
   intake.net_weight_kg = roll.net;
   intake.total_charge = roll.charge;
   intake.price_per_kg = price;
   if (['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול'].indexOf(sVal(intake.status)) > -1) intake.status = 'באריזה';
   writeTable('laundry_intakes', db.laundryIntakes);
-  return { ok: true, net_kg: net, tare_kg: tare, charge: charge, intake_total_net: roll.net, intake_total_charge: roll.charge, auditNote: 'שקילה ' + cart.id + ' · נטו ' + net + ' ק"ג · ₪' + charge };
+  return { ok: true, net_kg: net, tare_kg: tare, charge: charge, cart_seq: mine.length, cart_weighs: mine.length,
+    intake_total_net: roll.net, intake_total_charge: roll.charge,
+    auditNote: 'שקילה ' + cart.id + ' (' + b70Seq(mine.length) + ') · נטו ' + net + ' ק"ג · ₪' + charge };
+}
+
+// תווית מספר השקילה לעגלה: 01, 02, 03 — תצוגה בלבד
+function b70Seq(n) { n = Number(n) || 1; return n < 10 ? '0' + n : String(n); }
+
+/* ⛔ B70 — תיקון שקילה: מנהל בלבד, סיבה חובה, מתועד ביומן ובאודיט.
+   שורה חדשה עם ref_id לשקילה המקורית. אין נגיעה בשורה קיימת. */
+function nobleWeighFix(db, p, user) {
+  var w = nobleWorker(db, p, user); if (!w.ok) return w;
+  var reason = String(p.reason || '').trim();
+  if (reason.length < 3) return { ok: false, error: 'יש לציין סיבה לתיקון — היא נשמרת ביומן לצד שם המתקן' };
+  var ev = db.laundryEvents.find(function (e) { return String(e.id) === String(p.event_id); });
+  if (!ev) return { ok: false, error: 'שורת השקילה לא נמצאה' };
+  if (sVal(ev.event_type) !== 'שקילה') return { ok: false, error: 'הרשומה שנבחרה אינה שקילה' };
+  var intake = nobleIntakeById(db, ev.intake_id);
+  if (!intake) return { ok: false, error: 'הקליטה של השקילה לא נמצאה' };
+  if (['במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1)
+    return { ok: false, error: 'הקליטה כבר ' + intake.status + ' — לאחר שיצאה ללקוח תיקון נעשה בחשבונית ולא בשקילה' };
+  var v = b38VerifyManagerPin(db, p.mgr_pin, user); if (!v.ok) return v;
+  var cancel = p.cancel === true || p.cancel === 'כן';
+  var tare = Number(ev.tare_kg) || 0, price = Number(ev.price_per_kg) || 0;
+  var gross = '', net = 0, charge = 0;
+  if (!cancel) {
+    gross = Number(p.gross_kg);
+    if (!(gross > 0)) return { ok: false, error: 'יש להזין משקל ברוטו תקין (ק"ג), או לסמן ביטול שקילה' };
+    net = nRound2(gross - tare);
+    if (!(net > 0)) return { ok: false, error: 'משקל נטו אינו חיובי (ברוטו ' + gross + ' − משקל עצמי ' + tare + ')' };
+    charge = nRound2(net * price);   // ⛔ המחיר מוקפא באירוע המקורי — תיקון לא מחיל מחירון חדש
+  }
+  nobleEvent(db, {
+    intake_id: ev.intake_id, customer_id: ev.customer_id, cart_id: ev.cart_id,
+    stage: ev.stage, event_type: B70_FIX_EVENT, worker_id: w.id, worker_name: w.name,
+    gross_kg: gross, tare_kg: tare, net_kg: net, price_per_kg: price, charge: charge,
+    note: (cancel ? 'ביטול שקילה · ' : 'תיקון משקל · ') + reason, ref_id: ev.id
+  });
+  var roll = nobleWeighRollup(db, ev.intake_id);
+  intake.net_weight_kg = roll.net;
+  intake.total_charge = roll.charge;
+  writeTable('laundry_intakes', db.laundryIntakes);
+  return {
+    ok: true, cancelled: cancel, net_kg: net, charge: charge,
+    intake_total_net: roll.net, intake_total_charge: roll.charge,
+    auditNote: (cancel ? 'ביטול שקילה · ' : 'תיקון שקילה · ') + ev.cart_id + ' · ' + ev.id +
+      ' → נטו ' + net + ' ק"ג · ₪' + charge + ' · סיבה: ' + reason
+  };
 }
 
 // --- סימון "מוכן למשלוח" (אחרי שקילה) ---
@@ -7126,6 +7244,10 @@ function nobleMarkReady(db, p, user) {
   // תיקון באג כספי: לוודא ששקלו את כל העגלות הפעילות, לא רק שלפחות אחת נשקלה
   var unweighed = activeCartIds.filter(function (cid) { return roll.carts.indexOf(cid) === -1; });
   if (unweighed.length) return { ok: false, error: 'יש עגלות שטרם נשקלו: ' + unweighed.join(', ') + ' — יש לשקול את כל העגלות לפני סימון מוכן' };
+  /* ⛔ B70: עגלה שנשקלה בבוקר וסיימה מחזור נוסף אחר הצהריים — טרם נשקלה
+     על המחזור הזה. בלי הבדיקה הזו הכביסה נוסעת ללקוח בלי חיוב. */
+  var stale = activeCartIds.filter(function (cid) { return b70CartNeedsWeigh(db, intake.id, cid); });
+  if (stale.length) return { ok: false, error: 'עגלות שסיימו מחזור נוסף וטרם נשקלו עליו: ' + stale.join(', ') + ' — יש לשקול אותן לפני סימון מוכן' };
   // B39b: בודקים כל המנות הפתוחות בכל המכונות, לא רק את הראשונה
   var openCarts = [];
   activeCartIds.forEach(function (cid) {
