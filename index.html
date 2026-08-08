@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.69-B69 · 08.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.70-B70 · 08.08.2026</div>
   </div>
 </div>
 
@@ -7339,7 +7339,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.69-B69';
+var B61_CANARY = 'v4.70-B70';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -13408,6 +13408,8 @@ function floorRenderInfo(){
     (r.weighed.count?'<div class="muted" style="margin-top:4px">נשקל: '+r.weighed.net+' ק"ג נטו'+(Number(r.weighed.charge)?' · לחיוב '+ils(r.weighed.charge):'')+'</div>':'')+
     '</div><span class="chip" style="background:'+chipClr+';font-size:14px">'+esc(ik.status)+'</span></div></div>';
 
+  h += b70WeighsHtml(r);
+
   if(work){
     /* B39b: המנות הפתוחות — אחת לכל מכונה. עגלה יכולה להתחלק בין כמה
        מכונות, ולכן לכל מנה יש כפתור סיום משלה. */
@@ -13444,7 +13446,8 @@ function floorRenderInfo(){
         : 'המערכת תחסיר את המשקל העצמי של העגלה ('+esc(r.cart.tare_kg!==''&&r.cart.tare_kg!=null?r.cart.tare_kg:'לא הוגדר!')+' ק"ג)')+
         ' ותחשב חיוב לפי מחיר לק"ג'+(sVal(r.intake.internal)==='כן'?' — כביסה פנימית, ללא חיוב':'')+'</div>'+
       '<button class="btn grow" '+big+' style="width:100%" onclick="floorWeigh()">שקילה</button></div>';
-    if(r.weighed.count) h += '<button class="btn grow" '+big+' style="width:100%;background:var(--teal)" onclick="floorReady()">הכל ארוז ושקול — מוכן למשלוח</button>';
+    if(r.weighed.count && !r.needs_weigh) h += '<button class="btn grow" '+big+' style="width:100%;background:var(--teal)" onclick="floorReady()">הכל ארוז ושקול — מוכן למשלוח</button>';
+    else if(r.needs_weigh) h += '<div class="card" style="border-right:4px solid var(--amber)"><b>העגלה סיימה מחזור נוסף וטרם נשקלה עליו</b><div class="muted">שקול אותה כדי שהכביסה הזו תיכנס לחיוב. אחר כך אפשר לסמן מוכן למשלוח.</div></div>';
   } else if(ikSt==='מוכן'){
     h += '<button class="btn grow" '+big+' style="width:100%;font-size:17px;padding:16px" onclick="floorDriver()">סריקת נהג — העמסה למשלוח</button>';
   } else if(ikSt==='במשלוח'){
@@ -13455,6 +13458,67 @@ function floorRenderInfo(){
     h += '<button class="btn ghost" style="width:100%;margin-top:10px" onclick="floorRelease(false)">'+(b49bIsVirtual(r.cart)?'סגור את הקליטה הידנית (שחרור)':'שחרר את העגלה מהקליטה')+'</button>'+
          '<div class="muted" style="font-size:11.5px;text-align:center;margin-top:4px">העגלות משתחררות אוטומטית ב"'+esc(setting('noble_release_carts_on')||'מוכן')+'". אפשר לשחרר ידנית בכל רגע.</div>';
   box.innerHTML = h;
+}
+/* ⛔⛔ B70 / WASH-03 — טבלת השקילות של העגלה בקליטה הזו.
+   עגלה שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת, וכל
+   שקילה היא שורת חיוב בפני עצמה. המספר (01/02/03) הוא תצוגה בלבד.
+   שקילה שגויה אינה נשקלת מחדש — מנהל מתקן אותה עם סיבה, וזה מתועד. */
+function b70Seq(n){ n = Number(n)||1; return n<10 ? '0'+n : String(n); }
+function b70Hm(ts){ var m = /\d\d:\d\d/.exec(String(ts||'')); return m? m[0] : ''; }
+function b70WeighsHtml(r){
+  var ws = r.weighs || [];
+  if(!ws.length) return '';
+  var rows = ws.map(function(x){
+    var money = Number(x.charge)? ils(x.charge) : (sVal(r.intake.internal)==='כן'? 'פנימי — ללא חיוב' : '₪0');
+    return '<div class="row" style="align-items:center;border-top:1px solid var(--line);padding:8px 0'+
+      (x.cancelled?';opacity:.55':'')+'">'+
+      '<div class="grow"><b>('+b70Seq(x.seq)+')</b> '+esc(b70Hm(x.ts))+' · '+
+      (x.cancelled? '<span style="color:var(--danger)">בוטלה</span>' : x.net_kg+' ק"ג נטו · '+money)+
+      (x.fixed? '<div class="muted" style="font-size:11.5px">'+esc(x.fix_note)+(x.fix_by?' · '+esc(x.fix_by):'')+(x.fix_ts?' · '+esc(b70Hm(x.fix_ts)):'')+'</div>' : '')+
+      '</div>'+
+      (x.cancelled?'':'<button class="btn ghost sm" onclick="floorFixWeigh(\''+esc(x.id)+'\','+(Number(x.gross_kg)||0)+')">תיקון</button>')+
+      '</div>';
+  }).join('');
+  return '<div class="card"><h3 style="margin:0 0 4px">שקילות העגלה בקליטה הזו ('+ws.length+')</h3>'+
+    '<div class="muted" style="font-size:12px">כל שקילה היא חיוב נפרד. תיקון נעשה על ידי מנהל בלבד, עם סיבה, ונשמר ביומן.</div>'+
+    rows+
+    '<div class="row" style="border-top:2px solid var(--line);padding-top:8px;margin-top:4px"><div class="grow"><b>סך הקליטה</b></div>'+
+    '<b>'+r.weighed.net+' ק"ג · '+ils(r.weighed.charge)+'</b></div></div>';
+}
+function floorFixWeigh(evId, gross){
+  openModal('<h2 style="margin:0 0 10px">תיקון שקילה</h2>'+
+    '<div class="muted" style="margin-bottom:10px">התיקון אינו מוחק את השקילה — הוא נרשם כשורה חדשה ביומן עם הסיבה ושם המתקן.</div>'+
+    '<div class="frow"><label>משקל ברוטו מתוקן (ק"ג)</label>'+
+    '<input id="f_b70gross" type="number" inputmode="decimal" min="0" step="0.1" value="'+(Number(gross)||'')+'"></div>'+
+    '<label class="row" style="gap:6px;align-items:center;margin:6px 0"><input type="checkbox" id="f_b70cancel" onchange="b70CancelToggle()"> <span>ביטול השקילה כולה (נרשמה בטעות)</span></label>'+
+    '<div class="frow"><label>סיבת התיקון (חובה)</label>'+
+    '<input id="f_b70reason" placeholder="לדוגמה: הוזן ברוטו במקום נטו"></div>'+
+    '<div class="frow"><label>מספר אישי של מנהל</label>'+
+    '<input id="f_b70pin" type="password" inputmode="numeric" autocomplete="off"></div>'+
+    '<div class="row"><button class="btn" onclick="floorFixGo(\''+esc(evId)+'\')">בצע תיקון</button>'+
+    '<button class="btn ghost" onclick="closeModal()">ביטול</button></div>');
+  setTimeout(function(){ var i=el('f_b70reason'); if(i) i.focus(); }, 60);
+}
+function b70CancelToggle(){
+  var c = el('f_b70cancel'), g = el('f_b70gross');
+  if(c && g){ g.disabled = c.checked; if(c.checked) g.value=''; }
+}
+async function floorFixGo(evId){
+  var cancel = el('f_b70cancel') && el('f_b70cancel').checked;
+  var reason = el('f_b70reason') ? String(el('f_b70reason').value||'').trim() : '';
+  var pin = el('f_b70pin') ? String(el('f_b70pin').value||'').trim() : '';
+  var gross = el('f_b70gross') ? String(el('f_b70gross').value||'').trim() : '';
+  if(reason.length < 3) return toast('יש לציין סיבה לתיקון', true);
+  if(!pin) return toast('הזן מספר אישי של מנהל', true);
+  if(!cancel && !(Number(gross)>0)) return toast('הזן משקל ברוטו מתוקן, או סמן ביטול', true);
+  var pl = {event_id:evId, reason:reason, mgr_pin:pin, cancel:cancel};
+  if(!cancel) pl.gross_kg = gross;
+  var r = await floorAct('nobleWeighFix', pl);
+  if(!r) return;
+  closeModal();
+  toast(r.cancelled? 'השקילה בוטלה · סך הקליטה '+ils(r.intake_total_charge)
+                   : 'תוקן · נטו '+r.net_kg+' ק"ג · סך הקליטה '+ils(r.intake_total_charge));
+  floorRefresh();
 }
 async function floorRefresh(){ if(FLOOR_BC){ var r = await apiBusy('nobleCartInfo',{barcode:FLOOR_BC}); if(r && r.ok){ FLOOR_INFO=r; floorRenderInfo(); } } }
 /* B49b: פתיחת קליטה ידנית מהרשימה — אותו מסלול בדיוק כמו סריקה, רק בלי ברקוד */
@@ -13509,8 +13573,12 @@ async function floorRelease(force){
 async function floorWeigh(){
   var g = el('fl_gross') ? el('fl_gross').value : '';
   if(!g || !(Number(g)>0)) return toast('הזן משקל ברוטו בק"ג', true);
+  /* ⛔ B70: שקילה נוספת לאותה עגלה **מתווספת** לחיוב ואינה דורסת. אם זו
+     טעות הקלדה ולא מחזור נוסף — התיקון הוא דרך מנהל, לא שקילה חוזרת. */
+  var prev = (FLOOR_INFO && FLOOR_INFO.weighs) ? FLOOR_INFO.weighs.filter(function(x){ return !x.cancelled; }).length : 0;
+  if(prev && !confirm('העגלה כבר נשקלה '+prev+' פעמים בקליטה הזו.\n\nזו שקילה נוספת שתתווסף לחיוב (מחזור נוסף).\nלתיקון של שקילה קודמת — סגור וסמן "תיקון" בשורה שלה.\n\nלהמשיך?')) return;
   var r = await floorAct('nobleWeigh',{cart_barcode:FLOOR_BC,gross_kg:g});
-  if(r){ toast('נטו '+r.net_kg+' ק"ג'+(Number(r.charge)?' · לחיוב '+ils(r.charge):'')); floorRefresh(); }
+  if(r){ toast('שקילה ('+b70Seq(r.cart_seq)+') · נטו '+r.net_kg+' ק"ג'+(Number(r.charge)?' · לחיוב '+ils(r.charge):'')); floorRefresh(); }
 }
 async function floorReady(){
   var r = await floorAct('nobleMarkReady',{cart_barcode:FLOOR_BC},'הקליטה מוכנה למשלוח');
