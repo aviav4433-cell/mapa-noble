@@ -121,6 +121,7 @@
 //             B70 — WASH-03: עגלה שחוזרת לאותה קליטה שומרת את החיוב — canary v4.70-B70
 //             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg)
 //             B73 — WASH-18: קליטת NOBLE נראית בלוח הכביסה + w18Advance — canary v4.73-B73
+//             B74 — WASH-20: סוג הזמנה מלוכלך חייב שורות כביסה ככסף — canary v4.74-B74
 //                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
 //                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
 //                     שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת
@@ -5143,6 +5144,19 @@ var STAGES = ['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקי
 var ORDER_TYPES = ['השכרה', 'כביסה'];
 var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
 
+/* ============================================================
+   ⭐⭐ B74 / WASH-20 — "האם ההזמנה היא כביסה" · נקודת אמת אחת
+   ------------------------------------------------------------
+   השורש: b54Ledger ו-b54RawOrderTotalAg השוו String(o.type)!=='כביסה'
+   בהשוואה **גולמית**. הזמנת כביסה שסוגה בגיליון מלוכלך (רווח קשיח ·
+   סימן כיוון · רווח נגרר) נפלה לצד ההשכרה — ושורות ההזמנה שלה,
+   שהן אומדן כמותי בלבד (C5), נספרו ככסף.
+   ⛔ הפונקציה זהה תו-בתו ל-w17IsWash ב-index.html (B72). יש בדיקה
+   שמשווה את שני הגופים ונכשלת אם הם התפצלו — בדיוק כמו sVal/sPick.
+   ⛔ סוג שאינו ברשימה נשאר בצד ההשכרה, כמו היום. אין ריכוך.
+   ============================================================ */
+function w17IsWash(o){ return !!o && sVal(o.type)==='כביסה'; }
+
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
    ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
    רווח כפול, רווח קשיח (\u00A0) או תו כיווניות RTL בלתי נראה
@@ -5942,7 +5956,8 @@ function b54Ledger(db) {
   orders.forEach(function (o) {
     var c = byOrder[o.id];
     // C5: הזמנת כביסה — השורות הן אומדן כמותי. אינן כסף ואינן נספרות.
-    if (String(o.type) !== 'כביסה') {
+    // ⭐ B74/WASH-20: היה כאן String(o.type) גולמי — סוג מלוכלך חייב ככסף.
+    if (!w17IsWash(o)) {
       var linesIls = (db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
         .reduce(function (s, l) { return s + Number(l.qty) * Number(l.unit_price); }, 0);
       var linesAg = toAg(linesIls);
@@ -6146,7 +6161,7 @@ function b54LedgerAudit(db, p) {
   var out = {
     counts: {
       orders: (db.orders || []).length,
-      orders_wash: (db.orders || []).filter(function (o) { return String(o.type) === 'כביסה'; }).length,
+      orders_wash: (db.orders || []).filter(function (o) { return w17IsWash(o); }).length,   /* B74 */
       intakes: (db.laundryIntakes || []).length,
       invoices: (db.invoices || []).length,
       payments: (db.payments || []).length,
@@ -6157,12 +6172,15 @@ function b54LedgerAudit(db, p) {
     intake_after_invoice: { count: 0, rows: [] },
     synthetic_invoices: { count: 0, rows: [] },
     pay_no_status: { count: 0, amount: 0 },
-    pending_intakes: { count: 0, amount: 0 }
+    pending_intakes: { count: 0, amount: 0 },
+    /* ⭐ B74/WASH-20 */
+    dirty_type: { count: 0, moved: 0, rows: [] },
+    unknown_type: { count: 0, rows: [] }
   };
 
   // (א) הזמנות כביסה עם שורות מתומחרות — החוב השווא שנעלם עם B54
   (db.orders || []).filter(function (o) {
-    return String(o.type) === 'כביסה' && B54_SKIP_ORDER.indexOf(o.status) === -1;
+    return w17IsWash(o) && B54_SKIP_ORDER.indexOf(o.status) === -1;   /* B74/WASH-20 */
   }).forEach(function (o) {
     var s = (db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
       .reduce(function (a, l) { return a + Number(l.qty) * Number(l.unit_price); }, 0);
@@ -6216,9 +6234,52 @@ function b54LedgerAudit(db, p) {
     out.pending_intakes.amount = Math.round((out.pending_intakes.amount + agIls(r.amount_ag)) * 100) / 100;
   });
 
+  // (ז) ⭐ B74/WASH-20: הזמנות שסוג ההזמנה שלהן אינו קנוני בגיליון.
+  //     כביסה מלוכלכת = ההזמנה שחויבה בטעות לפני התיקון. 'moved' הוא
+  //     הסכום שהפסיק להיספר כחוב — אפס כשקיימת חשבונית פעילה, כי אז
+  //     סכום המסמך גובר (C4א) ורק פירוט השורות בספר מתחלף.
+  (db.orders || []).forEach(function (o) {
+    if (B54_SKIP_ORDER.indexOf(o.status) > -1) return;
+    var raw = String(o.type == null ? '' : o.type);
+    var canon = sPick(o.type, ORDER_TYPES);
+    if (canon !== '' && raw === canon) return;          // נקי — הרוב המוחלט
+    var c = (db.customers || []).find(function (x) { return x.id === o.customer_id; });
+    if (canon === '') {
+      if (sVal(o.type) === '') return;                  // סוג ריק — התנהגות ותיקה, לא ממצא
+      out.unknown_type.count++;
+      if (out.unknown_type.rows.length < 30)
+        out.unknown_type.rows.push({ order: o.order_number || o.id, customer: c ? c.name : '', raw: raw, marks: w20TypeMarks(raw), status: o.status });
+      return;
+    }
+    var lines = (db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
+      .reduce(function (a, l) { return a + Number(l.qty) * Number(l.unit_price); }, 0);
+    var inv = (db.invoices || []).find(function (v) { return v.order_id === o.id && v.status !== 'בוטלה'; });
+    var moved = (canon === 'כביסה' && !inv) ? lines : 0;
+    out.dirty_type.count++;
+    out.dirty_type.moved = Math.round((out.dirty_type.moved + moved) * 100) / 100;
+    if (out.dirty_type.rows.length < 30)
+      out.dirty_type.rows.push({
+        order: o.order_number || o.id, customer: c ? c.name : '', canon: canon, raw: raw,
+        marks: w20TypeMarks(raw), lines: Math.round(lines * 100) / 100,
+        invoice: inv ? (inv.number || inv.id) : '', moved: Math.round(moved * 100) / 100, status: o.status
+      });
+  });
+
   out.ledger_rows = b54Ledger(db).length;
   out.ok = true;
   return out;
+}
+
+/* ⭐ B74/WASH-20: מה בדיוק מלכלך את הערך — לתצוגה בלבד, בעברית.
+   בלי זה אבי רואה 'כביסה' מול 'כביסה' ולא מבין למה זו שורה בדוח. */
+function w20TypeMarks(raw) {
+  var m = [];
+  if (/\u00A0/.test(raw)) m.push('רווח קשיח');
+  if (/[\u200E\u200F\u200B\uFEFF]/.test(raw)) m.push('סימן כיוון בלתי נראה');
+  if (/^\s/.test(raw)) m.push('רווח מוביל');
+  if (/\s$/.test(raw)) m.push('רווח נגרר');
+  if (/\S\s\s+\S/.test(raw)) m.push('רווח כפול');
+  return m;
 }
 
 // ------------------------------------------------------------
@@ -6228,7 +6289,7 @@ function b54LedgerAudit(db, p) {
 // ------------------------------------------------------------
 function b54RawOrderTotalAg(db, o) {
   var ag = 0;
-  if (String(o.type) !== 'כביסה') {
+  if (!w17IsWash(o)) {   /* ⭐ B74/WASH-20 — היה String(o.type) גולמי */
     ag += toAg((db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
       .reduce(function (s, l) { return s + Number(l.qty) * Number(l.unit_price); }, 0));
   }
