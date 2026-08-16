@@ -119,7 +119,7 @@
 //                   ⛔ לא הוחל על כסף, על משקל ועל מזהים.
 //                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
 //             B70 — WASH-03: עגלה שחוזרת לאותה קליטה שומרת את החיוב — canary v4.70-B70
-//             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg) — canary v4.71-B71
+//             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg) — canary v4.72-B72
 //                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
 //                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
 //                     שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת
@@ -2199,6 +2199,15 @@ function handle(action, p, db, user) {
       if (p.table === 'order_lines') {
         var po = db.orders.find(function (x) { return x.id === row.order_id; });
         if (!po) return { ok: false, error: 'הזמנה לא נמצאה' };
+        /* ⛔ WASH-17 (B72) — המלאי הוא של המכבסה (הכרעת אבי 09.08.2026).
+           בהזמנת כביסה אין שורות פריטים — לקוח שמביא וילונות משלו
+           אינו אמור להופיע בספירת המלאי של MAPA. הבורר הוסר מהממשק,
+           וזה השומר בשרת — על כל הקשרי הריצה (צוות · פורטל · חנות · קיוסק).
+           התיאור החופשי שהחליף אותו נכנס ל-orders.notes — אין שינוי סכימה.
+           ⛔ כסף: השורות האלה ממילא לא היו כסף (b54RawOrderTotalAg מדלגת
+           על שורות כשהסוג 'כביסה') — החסימה אינה מזיזה אף סכום. */
+        if (sPick(po.type, ORDER_TYPES) === 'כביסה')
+          return { ok: false, error: 'בהזמנת כביסה אין שורות פריטים — המלאי שייך למכבסה. רשום תיאור חופשי בכרטיס ההזמנה' };
         if (po.status !== 'טיוטה' && po.status !== 'הצעת מחיר') return { ok: false, error: 'מוסיפים פריטים רק בטיוטה או בהצעת מחיר' };
         if (!(Number(row.qty) > 0)) return { ok: false, error: 'כמות חייבת להיות גדולה מאפס' };
         if (row.unit_price === '' || row.unit_price === undefined)
@@ -5518,8 +5527,14 @@ function b40SplitLaundry(db, p, todayStr, genIdFn, user) {
   var q = Math.round(Number(p.qty) || 0);
   if (!(q > 0)) return { ok: false, error: 'כמות לפיצול חייבת להיות גדולה מאפס' };
   if (q >= Number(t.qty)) return { ok: false, error: 'הכמות לפיצול חייבת להיות קטנה מהכמות במשימה (' + t.qty + ')' };
+  /* ⛔ WASH-14 (B72) — הבאג של B64a התרבה בכל פיצול: השלב הועתק
+     כמחרוזת גולמית מהגיליון (רווח קשיח, סימן כיוון, רווח נגרר), והילדה
+     נולדה עם ערך מלוכלך שאינו שווה לאף עמודה בלוח. כאן נכתב הערך
+     הקנוני מ-STAGES. שלב שאינו ברשימה כלל עדיין עובר ניקוי sVal —
+     מוטב ערך נקי מאשר מחרוזת ריקה שמאבדת את המשימה מהלוח. */
+  var ntStage = sPick(t.stage, STAGES) || sVal(t.stage);
   var nt = {
-    id: genIdFn('WASH'), order_id: t.order_id, item_id: t.item_id, qty: q, stage: t.stage,
+    id: genIdFn('WASH'), order_id: t.order_id, item_id: t.item_id, qty: q, stage: ntStage,
     cart_id: '', machine_id: '', worker: t.worker || '', in_date: t.in_date || todayStr, done_date: '',
     warehouse_id: t.warehouse_id || '', target_date: t.target_date || '', package_barcode: '',
     link_note: '', parent_task_id: t.parent_task_id || t.id, release_mode: '', shelf_code: '',
