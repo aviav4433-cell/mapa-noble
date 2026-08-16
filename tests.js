@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.70-B70', 'ה-canary לא עודכן ל-B70');
+      t.eq(inJs, 'v4.71-B71', 'ה-canary לא עודכן ל-B71');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -5017,6 +5017,276 @@ function makeT() {
   };
   return t;
 }
+
+
+/* ==================== t17 — B71 / WASH-10: כסף הכביסה באגורות שלמות ====================
+   ⛔ הבאג שנסגר כאן: nRound2 היא Math.round(n*100)/100, והיא מפילה אגורה
+   כשהתוצאה נופלת בדיוק על חצי אגורה, בגלל הייצוג הבינארי של המספר.
+   0.59 ק"ג × 8.5 ₪ = 5.015 → 5.015*100 הוא 501.49999999999994 → 5.01.
+   הסטייה תמיד לרעת העסק. נמדד: 1.9% מהשקילות, 0.4% מסכומי המע"מ.
+   ⛔ הכרעת אבי 09.08.2026: חיובים היסטוריים נשארים כפי שהם. משקל אינו כסף. */
+
+const B71 = {
+  /* אותה קליטה של B70, אבל במחיר 8.5 ₪ לק"ג וטרה 5 — המחיר שמייצר את חצי האגורה */
+  db(srv, over) {
+    over = over || {};
+    const db = B70.db(srv, over);
+    if (!over.internal) db.customers[0].price_per_kg = over.price === undefined ? 8.5 : over.price;
+    db.laundryIntakes[0].price_per_kg = over.price === undefined ? 8.5 : over.price;
+    return db;
+  },
+  /* סכום החיובים של הקליטה, מחושב באגורות שלמות ישירות מהיומן — מקור עצמאי */
+  sumAg(db, intakeId) {
+    return (db.laundryEvents || [])
+      .filter(e => String(e.intake_id) === intakeId && String(e.event_type) === 'שקילה')
+      .reduce((s, e) => s + Math.round(Number((Number(e.charge || 0) * 100).toFixed(6))), 0);
+  }
+};
+
+SPECS.push({
+  file: 't17-b71-wash10-srv',
+  title: 'B71 / WASH-10 — כסף הכביסה באגורות שלמות (שרת)',
+  needs: 'server',
+  requires: ['w10Cent', 'w10MulAg', 'w10PctAg', 'fromAg', 'toAg', 'nRound2',
+             'nobleWeigh', 'nobleWeighFix', 'nobleWeighRollup', 'nobleCreateInvoice',
+             'b70Weighs', 'b70CartNeedsWeigh', 'b70Seq', 'nobleMarkReady',
+             'b54Ledger', 'b54Bump', 'b48BalancesAg', 'b2CreditUsedAg',
+             'b38VerifyManagerPin', 'TABLES', 'VAT_RATE', 'sVal', 'handle', 'READ_ONLY_ACTIONS'],
+
+  tests: {
+
+    /* ---------- ⛔ הסטייה עצמה. הבדיקה הזו מוכיחה שהבאג היה אמיתי ---------- */
+
+    '⭐⭐ סטיית העיגול לפני התיקון — 0.59 ק"ג × 8.5 ₪ נכתב 5.01 במקום 5.02': (t, { srv }) => {
+      // הצד השבור: כך המערכת חישבה עד B71. הבדיקה מקבעת את קיום הסטייה.
+      t.eq(srv.nRound2(0.59 * 8.5), 5.01,
+        'nRound2 כבר אינה מייצרת את הסטייה — הבדיקה איבדה את קו הבסיס שלה');
+      // הצד המתוקן: חשבון באגורות שלמות
+      t.eq(srv.w10MulAg(0.59, 8.5), 502, '⛔ החישוב באגורות שלמות אינו מחזיר 502 אגורות');
+      t.eq(srv.fromAg(srv.w10MulAg(0.59, 8.5)), 5.02, '⛔ ההמרה חזרה לשקלים שגויה');
+      // ⛔ וזה מה שנכתב בפועל ליומן, דרך המסלול האמיתי
+      const db = B71.db(srv);
+      const r = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 5.59 }, 'עובד');
+      t.ok(r.ok, 'השקילה נדחתה: ' + r.error);
+      t.eq(r.net_kg, 0.59, 'המשקל הנטו השתנה — משקל אינו כסף, אסור היה לגעת בו');
+      t.eq(r.charge, 5.02, '⛔⛔ אגורה נטושה: החיוב שנכתב ליומן הוא 5.01 ולא 5.02');
+      t.eq(db.laundryIntakes[0].total_charge, 5.02, '⛔ total_charge של הקליטה נשאר עם האגורה החסרה');
+    },
+
+    '⭐ 100 שקילות קטנות — הסכום זהה לחישוב באגורות שלמות': (t, { srv }) => {
+      const db = B71.db(srv);
+      let expectAg = 0;
+      for (let i = 0; i < 100; i++) {
+        const gross = 5 + (5 + i) / 100;                 // נטו 0.05 … 1.04 ק"ג
+        const r = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: gross }, 'עובד');
+        t.ok(r.ok, 'שקילה ' + (i + 1) + ' נדחתה: ' + r.error);
+        expectAg += srv.w10MulAg(r.net_kg, 8.5);
+      }
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(srv.b70Weighs(db, 'IK1').length, 100, '⛔ לא כל 100 השקילות נספרו — צבירת B70 נשברה');
+      t.eq(srv.w10Cent(roll.charge), expectAg,
+        '⛔⛔ סכום 100 השקילות אינו שווה לסכום באגורות שלמות — נותרה נטישת אגורות');
+      t.eq(srv.w10Cent(db.laundryIntakes[0].total_charge), expectAg,
+        '⛔ total_charge שנכתב לקליטה אינו הסכום באגורות שלמות');
+      // הסכום המצטבר אינו "נכון במקרה": הוא זהה לחישוב עצמאי מהיומן
+      t.eq(B71.sumAg(db, 'IK1'), expectAg, '⛔ היומן והסיכום התפצלו');
+    },
+
+    '⛔ intake.total_charge שווה לסכום שספר החיובים מכיר בו': (t, { srv }) => {
+      const db = B71.db(srv);
+      [5.59, 7.33, 6.05, 9.87].forEach(g => srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: g }, 'עובד'));
+      db.laundryIntakes[0].status = 'נמסר';
+      db.laundryIntakes[0].delivered_ts = '2026-08-02 10:00';
+      srv.b54Bump();
+      const rows = srv.b54Ledger(db).filter(r => r.intake_id === 'IK1');
+      t.ok(rows.length > 0, 'ספר החיובים לא הכיר בקליטה בכלל');
+      const ledgerAg = rows.reduce((s, r) => s + Number(r.net_ag || 0), 0);
+      t.eq(ledgerAg, srv.toAg(db.laundryIntakes[0].total_charge),
+        '⛔⛔ ספר החיובים ו-total_charge התפצלו — לקוח יחויב בסכום אחר ממה שנשקל');
+      t.eq(ledgerAg, srv.w10Cent(srv.nobleWeighRollup(db, 'IK1').charge),
+        '⛔ הסיכום מהיומן וספר החיובים אינם זהים');
+    },
+
+    '⛔ כסף: שלושת מקורות היתרה מחזירים אותו מספר (R6)': (t, { srv }) => {
+      const db = B71.db(srv);
+      [5.59, 7.33, 6.05].forEach(g => srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: g }, 'עובד'));
+      db.laundryIntakes[0].status = 'נמסר';
+      db.laundryIntakes[0].delivered_ts = '2026-08-02 10:00';
+      // החשבונית נוצרת דרך המסלול האמיתי — היא שהופכת את הקליטה ליתרה פתוחה
+      const inv = srv.nobleCreateInvoice(db, { customer_id: 'C1' }, 'מנהל');
+      t.ok(inv.ok, 'החשבונית נדחתה: ' + inv.error);
+      t.eq(srv.toAg(inv.invoice.subtotal), 502 + 1981 + 893,
+        '⛔ סכום החשבונית אינו חיבור שלוש השקילות באגורות שלמות');
+      srv.b54Bump();
+      const bal = srv.b48BalancesAg(db)['C1'] || 0;
+      t.ok(bal > 0, 'קו הבסיס אפס — הבדיקה אינה מוכיחה דבר');
+      t.eq(srv.b2CreditUsedAg(db, 'C1'), bal, '⛔ מנוע האשראי וספר החיובים התפצלו (R6)');
+      const ledgerAg = srv.b54Ledger(db)
+        .filter(r => r.customer_id === 'C1')
+        .reduce((s, r) => s + Number(r.open_ag || 0), 0);
+      t.eq(ledgerAg, bal, '⛔ b54Ledger ו-b48BalancesAg התפצלו (R6)');
+    },
+
+    /* ---------- החשבונית והמע"מ (כלל B45 · מלכודת 4) ---------- */
+
+    '⭐ החשבונית: מע"מ באגורות שלמות, והסה"כ הוא חיבור מדויק ולא עיגול שלישי': (t, { srv }) => {
+      const db = B71.db(srv);
+      db.laundryIntakes[0].status = 'נמסר';
+      db.laundryIntakes[0].delivered_ts = '2026-08-02 10:00';
+      db.laundryIntakes[0].total_charge = 1.25;     // 1.25 × 0.18 = 0.225 — בדיוק חצי אגורה
+      db.laundryIntakes[0].net_weight_kg = 0.15;
+      const r = srv.nobleCreateInvoice(db, { customer_id: 'C1' }, 'מנהל');
+      t.ok(r.ok, 'החשבונית נדחתה: ' + r.error);
+      t.eq(r.invoice.subtotal, 1.25, 'סכום החשבונית שגוי');
+      t.eq(r.invoice.vat, 0.23, '⛔⛔ המע"מ הוא 0.22 — אגורה נטושה בעיגול המע"מ');
+      t.eq(r.invoice.total, 1.48, '⛔ הסה"כ אינו סכום מדויק של הנטו והמע"מ');
+      t.eq(srv.toAg(r.invoice.total), srv.toAg(r.invoice.subtotal) + srv.toAg(r.invoice.vat),
+        '⛔ הסה"כ עוגל בנפרד ואינו שווה לחיבור שני רכיביו');
+    },
+
+    'חשבונית על כמה קליטות — הסכום הוא חיבור אגורות ולא סכימת שברים': (t, { srv }) => {
+      const db = B71.db(srv);
+      const base = db.laundryIntakes[0];
+      const mk = (id, amt) => ({
+        id: id, customer_id: 'C1', internal: '', status: 'נמסר', net_weight_kg: 1,
+        price_per_kg: 8.5, total_charge: amt, intake_ts: '2026-08-01 08:00',
+        delivered_ts: '2026-08-02 10:00', delivery_id: '', notes: '', created_by: '',
+        invoice_id: '', order_id: '', ready_ts: ''
+      });
+      base.status = 'נמסר'; base.delivered_ts = '2026-08-02 10:00'; base.total_charge = 5.02;
+      db.laundryIntakes.push(mk('IK2', 7.19), mk('IK3', 0.03));
+      const r = srv.nobleCreateInvoice(db, { customer_id: 'C1' }, 'מנהל');
+      t.ok(r.ok, 'החשבונית נדחתה: ' + r.error);
+      t.eq(r.count, 3, 'לא כל הקליטות נכללו');
+      t.eq(srv.toAg(r.invoice.subtotal), 502 + 719 + 3, '⛔ סכום החשבונית אינו חיבור אגורות שלמות');
+      t.eq(srv.toAg(r.invoice.total), srv.toAg(r.invoice.subtotal) + srv.toAg(r.invoice.vat),
+        '⛔ הסה"כ אינו חיבור מדויק');
+    },
+
+    /* ---------- ⛔ מה שאסור היה להישבר ---------- */
+
+    '⛔ כביסה פנימית נשארת בחיוב 0 בכל מסלול': (t, { srv }) => {
+      const db = B71.db(srv, { internal: 'כן' });
+      const r1 = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 5.59 }, 'עובד');
+      t.ok(r1.ok, 'שקילה פנימית נדחתה: ' + r1.error);
+      t.eq(r1.charge, 0, '⛔ כביסה פנימית קיבלה חיוב');
+      const r2 = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 7.33 }, 'עובד');
+      t.eq(r2.charge, 0, '⛔ המחזור השני של כביסה פנימית קיבלה חיוב');
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 0, '⛔ הסיכום של כביסה פנימית אינו אפס');
+      t.eq(db.laundryIntakes[0].total_charge, 0, '⛔ total_charge של כביסה פנימית אינו אפס');
+      t.ok(roll.net > 0, 'המשקל של הכביסה הפנימית לא נצבר — הוא המונה של הניצולת');
+      srv.b54Bump();
+      t.eq(srv.b54Ledger(db).filter(r => r.intake_id === 'IK1').length, 0,
+        '⛔ כביסה פנימית נכנסה לספר החיובים');
+    },
+
+    '⛔ שתי שקילות ויותר לאותה עגלה — הצבירה של B70 לא נשברה': (t, { srv }) => {
+      const db = B71.db(srv, { price: 10 });
+      db.customers[0].price_per_kg = 10;
+      const r1 = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 25 }, 'עובד');
+      const r2 = srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 35 }, 'עובד');
+      t.eq(r1.cart_seq, 1, 'מספר השקילה הראשונה אינו 1');
+      t.eq(r2.cart_seq, 2, '⛔ שקילה שנייה לא נספרה — מחזור נוסף הוא מציאות אמיתית');
+      const roll = srv.nobleWeighRollup(db, 'IK1');
+      t.eq(roll.charge, 500, '⛔⛔ החיוב אינו סכום שתי השקילות — הצבירה של B70 נשברה');
+      t.eq(roll.net, 50, '⛔ המשקל אינו סכום שתי השקילות');
+      t.eq(roll.carts.length, 1, 'העגלה נספרה יותר מפעם אחת');
+      t.eq(db.laundryIntakes[0].total_charge, 500, '⛔ total_charge אינו סכום שתי השקילות');
+    },
+
+    '⛔ תיקון שקילה — עדיין מחזיר את אותו סכום, ובאגורות שלמות': (t, { srv }) => {
+      const db = B71.db(srv);
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 5.59 }, 'עובד');   // 5.02
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 7.33 }, 'עובד');
+      const evs = db.laundryEvents.filter(e => String(e.event_type) === 'שקילה');
+      const before = srv.nobleWeighRollup(db, 'IK1').charge;
+      const fx = srv.nobleWeighFix(db, {
+        event_id: evs[0].id, gross_kg: 5.59, reason: 'נשקל מחדש על אותו משקל', mgr_pin: '999'
+      }, 'המנהל');
+      t.ok(fx.ok, 'התיקון נדחה: ' + fx.error);
+      t.eq(fx.net_kg, 0.59, 'המשקל בתיקון השתנה');
+      t.eq(fx.charge, 5.02, '⛔ החיוב בתיקון אינו באגורות שלמות');
+      t.eq(srv.nobleWeighRollup(db, 'IK1').charge, before,
+        '⛔ תיקון על אותו משקל שינה את הסכום הכולל');
+      // התיקון הוא שורה חדשה, לא דריסה
+      t.eq(db.laundryEvents.filter(e => String(e.event_type) === 'תיקון שקילה').length, 1,
+        '⛔ התיקון לא נרשם כשורה חדשה');
+      t.eq(String(db.laundryEvents[db.laundryEvents.length - 1].ref_id), String(evs[0].id),
+        '⛔ ה-ref_id של התיקון אינו מצביע על השקילה המקורית');
+    },
+
+    'ביטול שקילה — מסיר את מלוא האגורות שלה ולא יותר': (t, { srv }) => {
+      const db = B71.db(srv);
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 5.59 }, 'עובד');   // 5.02
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 7.33 }, 'עובד');
+      const evs = db.laundryEvents.filter(e => String(e.event_type) === 'שקילה');
+      const second = srv.w10Cent(evs[1].charge);
+      const fx = srv.nobleWeighFix(db, {
+        event_id: evs[0].id, cancel: true, reason: 'נשקלה עגלה לא נכונה', mgr_pin: '999'
+      }, 'המנהל');
+      t.ok(fx.ok, 'הביטול נדחה: ' + fx.error);
+      t.eq(srv.w10Cent(srv.nobleWeighRollup(db, 'IK1').charge), second,
+        '⛔ אחרי הביטול נותר סכום שאינו בדיוק השקילה השנייה');
+    },
+
+    /* ---------- שומרי קוד מקור ---------- */
+
+    '⛔ אין writeTable על laundry_events בשום מקום — append-only': (t, { H }) => {
+      const src = H.stripComments(H.serverSrc());
+      t.hasNot(src, "writeTable('laundry_events'", '⛔⛔ laundry_events נדרס — הוא append-only');
+      t.hasNot(src, 'writeTable("laundry_events"', '⛔⛔ laundry_events נדרס — הוא append-only');
+    },
+
+    '⛔ lastByCart לא חזר לקוד — זה הבאג של WASH-03': (t, { H }) => {
+      t.hasNot(H.stripComments(H.serverSrc()), 'lastByCart',
+        '⛔⛔ הדפוס שמחק חיובים בשקט חזר לקוד');
+    },
+
+    '⛔ מסלול הכסף של הכביסה כבר אינו עובר ב-nRound2': (t, { H }) => {
+      const src = H.stripComments(H.serverSrc());
+      ['nRound2(net * price)', 'nRound2(charge)', 'nRound2(sub * VAT_RATE)', 'nRound2(sub + vat)'
+      ].forEach(bad => t.hasNot(src, bad,
+        '⛔ נקודת נטישת אגורה חזרה למסלול הכביסה: ' + bad));
+    },
+
+    '⛔ toAg לא נגע — הוא משרת את מנוע האשראי ואת ספר החיובים (R4)': (t, { srv, H }) => {
+      t.has(H.stripComments(H.serverSrc()), 'function toAg(n) { return Math.round(Number(n || 0) * 100); }',
+        '⛔⛔ toAg שונה — הוא מזיז יתרות היסטוריות בכל המערכת');
+      t.eq(srv.toAg(12.34), 1234, 'toAg שינה התנהגות');
+    },
+
+    '⛔ אין שינוי סכימה — שתי הטבלאות לא זזו': (t, { srv }) => {
+      t.eq(srv.TABLES.laundry_events.join(','),
+        'id,ts,intake_id,customer_id,cart_id,machine_id,stage,event_type,worker_id,worker_name,gross_kg,tare_kg,net_kg,price_per_kg,charge,note,portion_kg,ref_id',
+        '⛔ סכימת laundry_events השתנתה — נדרש אישור אבי והרצת setupDatabase');
+      t.eq(srv.TABLES.laundry_intakes.join(','),
+        'id,customer_id,internal,status,net_weight_kg,price_per_kg,total_charge,intake_ts,delivered_ts,delivery_id,notes,created_by,invoice_id,order_id,ready_ts',
+        '⛔ סכימת laundry_intakes השתנתה — נדרש אישור אבי והרצת setupDatabase');
+    },
+
+    'העוזרים החדשים עומדים בפני עצמם — 0, ריק ושלילי': (t, { srv }) => {
+      t.eq(srv.w10Cent(''), 0, 'ערך ריק לא הוחזר כאפס');
+      t.eq(srv.w10Cent(null), 0, 'null לא הוחזר כאפס');
+      t.eq(srv.w10Cent(1.005), 101, '⛔ הבאג הבינארי שרד — 1.005 חייב להיות 101 אגורות');
+      t.eq(srv.w10MulAg(0, 8.5), 0, 'מכפלה באפס אינה אפס');
+      t.eq(srv.w10MulAg(2, 0), 0, 'מחיר אפס אינו מייצר חיוב אפס');
+      t.eq(srv.w10PctAg(125, 0.18), 23, '⛔ חישוב המע"מ באגורות שגוי');
+      t.eq(srv.fromAg(0), 0, 'fromAg על אפס');
+      t.eq(srv.fromAg(502), 5.02, 'fromAg שגוי');
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-10 אינו נוגע ביכולת דפדפן': (t, { H }) => {
+      const ui = H.stripComments(H.uiScript());
+      const m = ui.match(/function b61Tests\(\)[\s\S]*?\n\}/);
+      t.ok(!!m, 'b61Tests נעלמה מהממשק');
+      t.hasNot(m[0], 'WASH',
+        '⛔ נוספה טענה ל-b61Tests למרות שהאצווה אינה נוגעת ביכולת דפדפן');
+    }
+
+  }
+});
+
 
 /* ---------- מניעת ריקבון ---------- */
 function checkRequires(spec, scope, label) {
