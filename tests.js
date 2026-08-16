@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.71-B71', 'ה-canary לא עודכן ל-B71');
+      t.eq(inJs, 'v4.72-B72', 'ה-canary לא עודכן ל-B72');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -3171,16 +3171,22 @@ SPECS.push({
         'B65_TYPES בממשק ו-ORDER_TYPES בשרת התפצלו');
     },
 
-    '⭐ כרטיס הזמנת כביסה אומר במפורש שהשורות אינן חובה': (t, { w, srv, H }) => {
+    /* ⛔ B72/WASH-17 עדכן את הבדיקה הזו. הכוונה של B66 נשמרת במלואה — הזמנת
+       כביסה אינה דורשת שורות ואפשר לאשר אותה ריקה (נאכף ב-approveOrder ונבדק
+       ב-t18) — אבל הניסוח "אומדן כמותי" והבורר עצמו הוסרו: המלאי הוא של
+       המכבסה, ולקוח שמביא וילונות משלו אינו נספר בו. */
+    '⭐ כרטיס הזמנת כביסה — תיאור חופשי במקום בורר מלאי (B66 + WASH-17)': (t, { w, srv, H }) => {
       H.login(w, 'מנהל', srv);
       w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
       w.DB.orders = [{ id: 'O1', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
                        start_date: '2026-09-01', end_date: '2026-09-03' }];
       w.openOrder('O1');
       const html = w.el('modal').innerHTML;
-      t.has(html, 'אומדן כמותי (לא חובה)', 'הכותרת אינה אומרת שהשורות אינן חובה');
-      t.has(html, 'אפשר לאשר הזמנת כביסה גם בלי אף שורה', 'ההסבר על אישור בלי שורות חסר');
-      t.has(html, '+ הוסף פריט', '⛔ מקטע הפריטים הוסתר — אבי ביקש שיישאר אפשרי');
+      t.has(html, 'תיאור הכביסה', 'מקטע התיאור החופשי חסר בכרטיס הזמנת הכביסה');
+      t.has(html, 'החיוב לפי משקל בקליטה', 'ההסבר שהחיוב מגיע מהשקילה נעלם');
+      t.has(html, 'w17DescForm(', 'אין דרך לפתוח את טופס התיאור');
+      t.hasNot(html, '+ הוסף פריט', '⛔⛔ WASH-17: הבורר חזר להזמנת כביסה');
+      t.hasNot(html, 'addLineForm(', '⛔⛔ WASH-17: קריאה ל-addLineForm נשארה בכרטיס כביסה');
       w.closeModal();
     },
 
@@ -3191,8 +3197,11 @@ SPECS.push({
                        start_date: '2026-09-01', end_date: '2026-09-03' }];
       w.openOrder('O1');
       const html = w.el('modal').innerHTML;
-      t.hasNot(html, 'אומדן כמותי (לא חובה)', 'הזמנת השכרה קיבלה שפת אומדן');
       t.hasNot(html, 'מחיר (אומדן)', 'עמודת המחיר בהשכרה סומנה כאומדן');
+      t.hasNot(html, 'תיאור הכביסה', 'הזמנת השכרה קיבלה את מקטע הכביסה');
+      /* ⛔ WASH-17: הבורר בהשכרה חייב להישאר בדיוק כמו שהיה */
+      t.has(html, '+ הוסף פריט', '⛔⛔ WASH-17 הסיר את הבורר גם מהשכרה — רגרסיה');
+      t.has(html, "addLineForm('O1')", '⛔ הכפתור בהשכרה כבר אינו קורא ל-addLineForm');
       w.closeModal();
     },
 
@@ -3202,14 +3211,19 @@ SPECS.push({
       w.DB.orders = [{ id: 'O1', type: ' כביסה\u00A0', customer_id: 'C1', status: 'טיוטה',
                        start_date: '2026-09-01', end_date: '2026-09-03' }];
       w.openOrder('O1');
-      t.has(w.el('modal').innerHTML, 'אומדן כמותי (לא חובה)',
-        'סוג עם רווח קיבל שפת השכרה בזמן שהשרת מאשר אותו כביסה — אי-אחידות');
+      const dirty = w.el('modal').innerHTML;
+      t.has(dirty, 'תיאור הכביסה',
+        'סוג עם רווח קיבל כרטיס השכרה בזמן שהשרת מאשר אותו כביסה — אי-אחידות');
+      t.hasNot(dirty, '+ הוסף פריט',
+        '⛔⛔ סוג מלוכלך עוקף את WASH-17 והבורר חוזר — בדיוק הבאג של B64a');
       w.closeModal();
     },
 
     '⛔ ההודעה אחרי שמירת הזמנה אינה דורשת פריטים בכביסה': (t, { w, H }) => {
       const src = H.stripComments(H.uiScript());
-      t.has(src, 'אפשר להוסיף אומדן כמותי (לא חובה)', 'הודעת הכביסה לא נוספה');
+      /* WASH-17: אין יותר "אומדן כמותי" בכביסה — ההודעה מפנה לתיאור החופשי */
+      t.has(src, 'אפשר להוסיף תיאור קצר (לא חובה)', 'הודעת הכביסה לא נוספה');
+      t.hasNot(src, 'אפשר להוסיף אומדן כמותי', 'הניסוח הישן של B66 נשאר לצד החדש');
       t.has(src, "'נשמר — הוסף פריטים'", 'הודעת ההשכרה נמחקה במקום להישאר לצד הודעת הכביסה');
       t.has(src, 'act(\'create\',{table:\'orders\'', 'עוגן createOrder השתנה');
       t.has(src, '}},b66Msg)', 'ההודעה עדיין קבועה ואינה נגזרת מהסוג');
@@ -5301,6 +5315,387 @@ function checkRequires(spec, scope, label) {
 }
 
 /* ---------- ראשי ---------- */
+
+/* ============================================================
+   t18 — B72: WASH-17 · WASH-19 · WASH-14
+   ------------------------------------------------------------
+   שלושת הפריטים יושבים במסך הקליטה ובכרטיס ההזמנה. אף אחד מהם
+   אינו כסף ואף אחד אינו נוגע בסכימה — ולכן חלק גדול מהבדיקות כאן
+   הן בדיקות **שלא זז כלום**: הכסף, השריון והרגרסיות של B66/B70/B71.
+   ============================================================ */
+
+const B72 = {
+  /* לקוח אחד, פריט אחד, שתי הזמנות: כביסה והשכרה. בלי כסף כביסה. */
+  db(srv) {
+    const db = H.emptyDb(srv);
+    db.employees = [{ id: 'E9', name: 'המנהל', pin: '999', active: 'כן', role: 'מנהל' }];
+    db.customers = [{ id: 'C1', name: 'לקוח', active: 'כן', price_per_kg: 10 }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', prefix: 'MG', barcode: 'MG-001' }];
+    db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 100, date: '2026-07-01', warehouse_id: '' }];
+    db.orders = [
+      { id: 'OW', type: 'כביסה', customer_id: 'C1', status: 'טיוטה', order_number: 1001,
+        start_date: '2026-09-01', end_date: '2026-09-03', delivery_fee: 0, notes: '' },
+      { id: 'OR', type: 'השכרה', customer_id: 'C1', status: 'טיוטה', order_number: 1002,
+        start_date: '2026-09-01', end_date: '2026-09-03', delivery_fee: 0, notes: '' }
+    ];
+    return db;
+  },
+  line(orderId) { return { table: 'order_lines', row: { order_id: orderId, item_id: 'IT1', qty: 3 } }; },
+  /* משימת כביסה עם שלב שאפשר ללכלך */
+  task(stage) {
+    return { id: 'W1', order_id: 'OR', item_id: 'IT1', qty: 10, stage: stage,
+      cart_id: '', machine_id: '', worker: '', in_date: '2026-09-01', done_date: '',
+      warehouse_id: '', target_date: '2026-09-05', package_barcode: '', link_note: '',
+      parent_task_id: '', release_mode: '', shelf_code: '', intake_id: '' };
+  }
+};
+
+SPECS.push({
+  file: 't18-b72-wash-srv',
+  title: 'B72 / WASH-17 + WASH-14 — השרת: אין שורות בכביסה, שלב קנוני בפיצול',
+  needs: 'server',
+  requires: ['handle', 'ORDER_TYPES', 'STAGES', 'sVal', 'sPick', 'b40SplitLaundry',
+             'approveOrder', 'b54RawOrderTotalAg', 'availableQty', 'reservedQty',
+             'b48BalancesAg', 'b2CreditUsedAg', 'b54Ledger', 'TABLES', 'toAg',
+             'w10Cent', 'w10MulAg', 'w10PctAg', 'fromAg', 'nRound2'],
+
+  tests: {
+
+    /* ---------- WASH-17 ---------- */
+
+    '⛔⛔ WASH-17: אי אפשר להוסיף שורת פריט להזמנת כביסה': (t, { srv }) => {
+      const db = B72.db(srv);
+      const r = srv.handle('create', B72.line('OW'), db, 'המנהל');
+      t.no(r.ok, '⛔⛔ שורת מלאי נוספה להזמנת כביסה — הבורר חזר דרך השרת');
+      t.has(r.error, 'המלאי שייך למכבסה', 'ההודעה אינה מסבירה למה נחסם');
+      t.eq(db.orderLines.length, 0, '⛔ השורה נכתבה בכל זאת ל-DB');
+    },
+
+    '⛔ WASH-17 + B64a: סוג מלוכלך אינו עוקף את החסימה': (t, { srv }) => {
+      [' כביסה', 'כביסה ', ' כביסה\u00A0', '\u200Fכביסה'].forEach((ty, i) => {
+        const db = B72.db(srv);
+        db.orders[0].type = ty;
+        const r = srv.handle('create', B72.line('OW'), db, 'המנהל');
+        t.no(r.ok, i + ' — ⛔⛔ סוג מלוכלך עקף את WASH-17 והשורה נוספה');
+        t.eq(db.orderLines.length, 0, i + ' — השורה נכתבה ל-DB למרות הדחייה');
+      });
+    },
+
+    '⛔ רגרסיה: הזמנת השכרה ממשיכה לקבל שורות בדיוק כמו היום': (t, { srv }) => {
+      const db = B72.db(srv);
+      const r = srv.handle('create', B72.line('OR'), db, 'המנהל');
+      t.ok(r.ok, '⛔⛔ WASH-17 חסם גם את ההשכרה: ' + r.error);
+      t.eq(db.orderLines.length, 1, 'השורה לא נוספה להזמנת ההשכרה');
+      t.eq(Number(db.orderLines[0].qty), 3, 'הכמות השתנתה');
+      t.ok(db.orderLines[0].unit_price !== undefined, 'המחיר האוטומטי (linePrice) הפסיק לפעול');
+    },
+
+    '⛔ רגרסיה B66: הזמנת כביסה מאושרת בלי אף שורה': (t, { srv }) => {
+      const db = B72.db(srv);
+      const r = srv.approveOrder(db, 'OW');
+      t.ok(r.ok, '⛔ הזמנת כביסה ריקה נחסמה לאישור — רגרסיה של B66: ' + r.error);
+      t.eq(db.orders[0].status, 'מאושרת', 'הסטטוס לא התקדם');
+    },
+
+    '⛔ הזמנת השכרה בלי שורות נשארת חסומה': (t, { srv }) => {
+      const db = B72.db(srv);
+      const r = srv.approveOrder(db, 'OR');
+      t.no(r.ok, '⛔ השכרה ריקה אושרה — שם השורות הן הכסף');
+    },
+
+    '⛔ כסף: b54RawOrderTotalAg לא זזה — שורות כביסה היסטוריות עדיין 0': (t, { srv }) => {
+      const db = B72.db(srv);
+      /* שורה היסטורית שנוצרה לפני WASH-17 — נשארת בגיליון ואסור שתייצר כסף */
+      db.orderLines = [{ id: 'L1', order_id: 'OW', item_id: 'IT1', qty: 3, unit_price: 25, returned_qty: '' }];
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 0,
+        '⛔⛔ שורת כביסה היסטורית הפכה לכסף — b54RawOrderTotalAg זזה');
+      /* ולהשכרה — אותו סכום בדיוק כמו לפני האצווה */
+      db.orderLines.push({ id: 'L2', order_id: 'OR', item_id: 'IT1', qty: 3, unit_price: 25, returned_qty: '' });
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[1]), srv.toAg(75),
+        '⛔ הכסף של הזמנת ההשכרה השתנה');
+    },
+
+    '⛔ מלאי: שורת כביסה היסטורית אינה משריינת ואינה מפחיתה זמינות': (t, { srv }) => {
+      const db = B72.db(srv);
+      const base = srv.availableQty(db, 'IT1', '2026-09-01', '2026-09-03');
+      db.orderLines = [{ id: 'L1', order_id: 'OW', item_id: 'IT1', qty: 3, unit_price: 25, returned_qty: '' }];
+      db.orders[0].status = 'מאושרת';
+      t.eq(srv.availableQty(db, 'IT1', '2026-09-01', '2026-09-03'), base,
+        '⛔⛔ הזמנת כביסה משריינת מלאי — זה בדיוק הבאג שדווח');
+      t.eq(srv.reservedQty(db, 'IT1', '2026-09-01', '2026-09-03'), 0,
+        '⛔ reservedQty ספרה הזמנת כביסה');
+    },
+
+    '⛔ R6: שלושת מקורות היתרה מחזירים אותו מספר': (t, { srv }) => {
+      const db = B72.db(srv);
+      db.orderLines = [{ id: 'L2', order_id: 'OR', item_id: 'IT1', qty: 3, unit_price: 25, returned_qty: '' }];
+      db.orders[1].status = 'סופקה';
+      db.invoices = [{ id: 'INV1', number: 1001, order_id: 'OR', customer_id: 'C1',
+        date: '2026-09-04', subtotal: 75, vat_rate: 0.18, vat: 13.5, total: 88.5, status: 'פתוחה' }];
+      const bal = srv.b48BalancesAg(db)['C1'] || 0;
+      t.ok(bal > 0, 'קו הבסיס אפס — הבדיקה אינה מוכיחה דבר');
+      t.eq(srv.b2CreditUsedAg(db, 'C1'), bal, '⛔ מנוע האשראי וספר החיובים התפצלו (R6)');
+    },
+
+    /* ---------- WASH-14 ---------- */
+
+    '⛔⛔ WASH-14: הילדה בפיצול נולדת עם שלב קנוני מ-sPick': (t, { srv }) => {
+      [' בכביסה', 'בכביסה ', 'בכביסה\u00A0', '\u200Fבכביסה '].forEach((dirty, i) => {
+        const db = B72.db(srv);
+        db.laundryTasks = [B72.task(dirty)];
+        const r = srv.b40SplitLaundry(db, { task_id: 'W1', qty: 4 }, '2026-09-02',
+          (p) => p + '-' + i, 'המנהל');
+        t.ok(r.ok, i + ' — הפיצול נדחה: ' + r.error);
+        t.eq(r.new_task.stage, 'בכביסה',
+          i + ' — ⛔⛔ הילדה נולדה עם שלב מלוכלך. הבאג של B64a מתרבה בכל פיצול');
+        t.ok(srv.STAGES.indexOf(r.new_task.stage) > -1,
+          i + ' — השלב של הילדה אינו אחד מ-STAGES');
+      });
+    },
+
+    '⛔ שלב שאינו ברשימה בכלל — מנוקה, ולא נמחק': (t, { srv }) => {
+      const db = B72.db(srv);
+      db.laundryTasks = [B72.task(' שלב לא מוכר\u00A0')];
+      const r = srv.b40SplitLaundry(db, { task_id: 'W1', qty: 4 }, '2026-09-02',
+        (p) => p + '-X', 'המנהל');
+      t.ok(r.ok, 'הפיצול נדחה: ' + r.error);
+      t.eq(r.new_task.stage, 'שלב לא מוכר',
+        '⛔ שלב לא מוכר אבד לגמרי — המשימה תיעלם מהלוח בלי עקבות');
+    },
+
+    '⛔ הפיצול עצמו לא נשבר — כמויות, אב, ושתי רשומות יומן': (t, { srv }) => {
+      const db = B72.db(srv);
+      db.laundryTasks = [B72.task('בייבוש')];
+      const before = db.laundryTaskEvents.length;
+      const r = srv.b40SplitLaundry(db, { task_id: 'W1', qty: 4 }, '2026-09-02',
+        (p) => p + '-N', 'המנהל');
+      t.ok(r.ok, 'הפיצול נדחה: ' + r.error);
+      t.eq(Number(r.task.qty), 6, 'כמות האב אחרי הפיצול שגויה');
+      t.eq(Number(r.new_task.qty), 4, 'כמות הילדה שגויה');
+      t.eq(r.new_task.parent_task_id, 'W1', 'הקישור לאב נשבר');
+      t.eq(r.new_task.order_id, 'OR', 'ההזמנה של הילדה השתנתה');
+      t.eq(db.laundryTaskEvents.length - before, 2, 'לא נרשמו שתי רשומות יומן לפיצול');
+    },
+
+    /* ---------- שומרי קוד מקור ---------- */
+
+    '⛔ אין שינוי סכימה — שלוש הטבלאות לא זזו': (t, { srv }) => {
+      t.eq(srv.TABLES.orders.indexOf('notes') > -1, true,
+        '⛔ orders.notes נעלם — התיאור החופשי של WASH-17 נשען עליו');
+      t.eq(JSON.stringify(srv.TABLES.order_lines),
+        JSON.stringify(['id', 'order_id', 'item_id', 'qty', 'unit_price', 'returned_qty', 'returned_weight']),
+        '⛔⛔ סכימת order_lines השתנתה — B72 הוגדר בלי שינוי סכימה');
+      t.ok(srv.TABLES.laundry_tasks.indexOf('stage') > -1, '⛔ laundry_tasks.stage נעלם');
+    },
+
+    '⛔ B71 לא נשבר — כסף הכביסה עדיין באגורות שלמות': (t, { srv, H }) => {
+      t.eq(srv.w10MulAg(0.59, 8.5), 502, '⛔⛔ החישוב באגורות שלמות נשבר');
+      t.eq(srv.fromAg(502), 5.02, '⛔ ההמרה חזרה לשקלים נשברה');
+      const src = H.stripComments(H.serverSrc());
+      t.hasNot(src, "writeTable('laundry_events'", '⛔⛔ laundry_events הוא append-only');
+      t.hasNot(src, 'lastByCart', '⛔⛔ הדפוס של WASH-03 חזר לקוד');
+    }
+
+  }
+});
+
+SPECS.push({
+  file: 't18-b72-wash-ui',
+  title: 'B72 / WASH-17 + WASH-19 + WASH-14 — הממשק',
+  needs: 'ui',
+  requires: ['openOrder', 'addLineForm', 'w17Desc', 'w17ItemsHtml', 'w17DescForm',
+             'floorIntakeTab', 'floorRenderCartList', 'floorRenderCartPick',
+             'w19FreeCarts', 'floorPickCart', 'floorAddCart', 'b49bIsVirtual',
+             'rLaundry', 'sVal', 'sPick', 'STAGES', 'go', 'el'],
+
+  tests: {
+
+    /* ---------- WASH-17 ---------- */
+
+    '⛔⛔ WASH-17: בהזמנת כביסה אין שום דרך להוסיף פריט מהמלאי': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+      w.DB.orders = [{ id: 'OW', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03', notes: '' }];
+      w.openOrder('OW');
+      const html = w.el('modal').innerHTML;
+      t.hasNot(html, '+ הוסף פריט', '⛔⛔ כפתור הבורר חזר לכרטיס הזמנת הכביסה');
+      t.hasNot(html, 'addLineForm(', '⛔⛔ קריאה ל-addLineForm נשארה בכרטיס כביסה');
+      t.has(html, 'תיאור הכביסה', 'מקטע התיאור החופשי חסר');
+      w.closeModal();
+      /* גם קריאה ישירה לבורר — השומר השני */
+      w.addLineForm('OW');
+      t.hasNot(w.el('modal').innerHTML, 'checkAvail(',
+        '⛔⛔ קריאה ישירה ל-addLineForm פתחה את בורר המלאי בהזמנת כביסה');
+    },
+
+    '⛔ רגרסיה: הבורר בהזמנת השכרה עובד בדיוק כמו היום': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', size: '', color: '' }];
+      w.DB.orders = [{ id: 'OR', type: 'השכרה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03', notes: '' }];
+      w.openOrder('OR');
+      t.has(w.el('modal').innerHTML, '+ הוסף פריט', '⛔⛔ WASH-17 הסיר את הבורר גם מהשכרה');
+      w.closeModal();
+      w.addLineForm('OR');
+      const form = w.el('modal').innerHTML;
+      t.has(form, 'checkAvail(', '⛔ בדיקת הזמינות נעלמה מהבורר של ההשכרה');
+      t.has(form, 'f_item', '⛔ בורר הפריטים נעלם מההשכרה');
+      t.has(form, 'מגבת', 'הפריט אינו מופיע בבורר');
+    },
+
+    '⭐ התיאור החופשי — רשות, ונחתך ב-20 תווים': (t, { w }) => {
+      t.eq(w.w17Desc(''), '', 'ריק אינו ערך תקין — התיאור אמור להיות רשות');
+      t.eq(w.w17Desc(null), '', 'null הפיל את החיתוך');
+      t.eq(w.w17Desc('חלוקים'), 'חלוקים', 'תיאור קצר השתנה');
+      t.eq(w.w17Desc('  וילונות  '), 'וילונות', 'רווחים מיותרים לא נוקו');
+      t.eq(w.w17Desc('\u200Fמעורב\u00A0'), 'מעורב', 'סימני כיוון ורווח קשיח לא נוקו (B64a)');
+      const long = 'אבגדהוזחטיכלמנסעפצקרשת';   /* 22 תווים */
+      t.eq(long.length, 22, 'קו הבסיס של הבדיקה השתנה');
+      t.eq(w.w17Desc(long).length, 20, '⛔ התיאור לא נחתך ב-20 תווים');
+      t.eq(w.w17Desc(long), long.slice(0, 20), 'החיתוך אינו מהתחלת המחרוזת');
+    },
+
+    '⭐ התיאור מוצג בכרטיס ונשמר ל-orders.notes': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.orders = [{ id: 'OW', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03', notes: 'חלוקים' }];
+      w.openOrder('OW');
+      t.has(w.el('modal').innerHTML, 'חלוקים', 'התיאור השמור אינו מוצג בכרטיס');
+      w.closeModal();
+      w.w17DescForm('OW');
+      const f = w.el('modal').innerHTML;
+      t.has(f, 'w17_desc', 'שדה התיאור חסר בטופס');
+      t.has(f, 'maxlength="20"', '⛔ אין תקרת 20 תווים על שדה הקלט');
+      t.has(f, 'w17SaveDesc(', 'אין כפתור שמירה');
+      w.closeModal();
+    },
+
+    '⛔ הזמנת כביסה בלי אף שורה נפתחת ונראית תקינה (רגרסיה B66)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.orders = [{ id: 'OW', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03', notes: '' }];
+      w.openOrder('OW');
+      const html = w.el('modal').innerHTML;
+      t.has(html, 'החיוב לפי משקל בקליטה', 'ההסבר שהחיוב מגיע מהשקילה נעלם');
+      t.has(html, 'אשר (בדיקת מלאי)', '⛔ כפתור האישור נעלם מהזמנת כביסה ריקה');
+      t.hasNot(html, 'שורות היסטוריות', 'הוצג מקטע שורות היסטוריות בלי שיש שורות');
+      w.closeModal();
+    },
+
+    '⭐ שורות היסטוריות בהזמנת כביסה — מוצגות לצפייה, בלי מחיר ובלי הוספה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+      w.DB.orders = [{ id: 'OW', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03', notes: '' }];
+      w.DB.orderLines = [{ id: 'L1', order_id: 'OW', item_id: 'IT1', qty: 3, unit_price: 25, returned_qty: '' }];
+      w.openOrder('OW');
+      const html = w.el('modal').innerHTML;
+      t.has(html, 'שורות היסטוריות', 'שורה היסטורית נעלמה מהמסך בלי הסבר');
+      t.has(html, 'מגבת', 'שם הפריט ההיסטורי אינו מוצג');
+      t.hasNot(html, '+ הוסף פריט', '⛔⛔ הבורר חזר דרך מסלול השורות ההיסטוריות');
+      w.closeModal();
+    },
+
+    /* ---------- WASH-19 ---------- */
+
+    '⭐⭐ WASH-19: רשימת עגלות פנויות לצד הסריקה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.carts = [
+        { id: 'CA1', barcode: 'CA1', status: 'פנויה', condition: 'תקינה', virtual: '' },
+        { id: 'CA2', barcode: 'CA2', status: 'בשימוש', condition: 'תקינה', virtual: '' },
+        { id: 'CA3', barcode: 'CA3', status: 'פנויה', condition: 'תקינה', virtual: 'כן' },
+        { id: 'CA4', barcode: 'CA4', status: ' פנויה\u00A0', condition: 'תקינה', virtual: '' }
+      ];
+      w.FLOOR_INTAKE_CARTS = [];
+      w.FLOOR_TAB = 'intake';
+      w.go('floor');
+      const ids = w.w19FreeCarts().map(c => c.id).join(',');
+      t.eq(ids, 'CA1,CA4', '⛔ רשימת העגלות הפנויות שגויה. התקבל: ' + ids);
+      const sel = w.el('fl_cartpick');
+      t.ok(!!sel, '⛔ הרשימה אינה קיימת במסך הקליטה');
+      t.has(sel.innerHTML, 'CA1', 'עגלה פנויה חסרה מהרשימה');
+      t.hasNot(sel.innerHTML, 'CA2', '⛔ עגלה בשימוש הוצעה לבחירה');
+      t.hasNot(sel.innerHTML, 'CA3', '⛔⛔ עגלה וירטואלית הוצעה לבחירה');
+    },
+
+    '⛔ WASH-19: הסריקה לא הוסרה — שדה הברקוד והמצלמה במקומם': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.FLOOR_INTAKE_CARTS = [];
+      w.FLOOR_TAB = 'intake';
+      w.go('floor');
+      const body = w.el('floorBody').innerHTML;
+      t.ok(!!w.el('fl_icart'), '⛔⛔ שדה סריקת הברקוד הוסר — זה המסלול המהיר ברצפה');
+      t.has(body, "floorCam('fl_icart'", '⛔⛔ כפתור הסריקה במצלמה הוסר');
+      t.has(body, 'floorAddCart()', '⛔ כפתור "הוסף עגלה" הידני הוסר');
+      t.eq(w.el('fl_icart').getAttribute('onkeydown').indexOf('floorAddCart') > -1, true,
+        '⛔ Enter בשדה הסריקה כבר אינו מוסיף עגלה');
+    },
+
+    '⭐ בחירה מהרשימה מזרימה לאותו מסלול של הסריקה (R7 · R8)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'פנויה', condition: 'תקינה', virtual: '' }];
+      w.FLOOR_INTAKE_CARTS = [];
+      w.FLOOR_TAB = 'intake';
+      w.go('floor');
+      /* floorAddCart פונה לשרת (nobleCartInfo) — כאן נבדק שהבחירה מגיעה אליו
+         דרך שדה הסריקה עצמו, ולא דרך מסלול שני. R7: אירוע change אמיתי. */
+      let got = '';
+      w.floorAddCart = function () { got = w.el('fl_icart').value; };
+      H.change(w, w.el('fl_cartpick'), 'CA1');
+      t.eq(got, 'CA1', '⛔ הבחירה לא הגיעה ל-floorAddCart דרך שדה הסריקה');
+      t.eq(w.el('fl_cartpick').value, '', 'הרשימה לא התאפסה אחרי הבחירה');
+    },
+
+    '⛔ עגלה שכבר ברשימת הקליטה יורדת מרשימת הבחירה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'פנויה', condition: 'תקינה', virtual: '' },
+                    { id: 'CA2', barcode: 'CA2', status: 'פנויה', condition: 'תקינה', virtual: '' }];
+      w.FLOOR_INTAKE_CARTS = ['CA1'];
+      t.eq(w.w19FreeCarts().map(c => c.id).join(','), 'CA2',
+        '⛔ עגלה שכבר נבחרה עדיין מוצעת שוב');
+    },
+
+    /* ---------- WASH-14 ---------- */
+
+    '⛔⛔ WASH-14: משימה עם שלב מלוכלך מופיעה בעמודה הנכונה בלוח': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+      w.DB.orders = [{ id: 'OR', type: 'השכרה', customer_id: 'C1', status: 'סופקה' }];
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.laundryTasks = [
+        { id: 'W1', order_id: 'OR', item_id: 'IT1', qty: 5, stage: 'בכביסה', cart_id: '', machine_id: '' },
+        { id: 'W2', order_id: 'OR', item_id: 'IT1', qty: 4, stage: ' בכביסה\u00A0', cart_id: '', machine_id: '' },
+        { id: 'W3', order_id: 'OR', item_id: 'IT1', qty: 3, stage: '\u200Fבייבוש ', cart_id: '', machine_id: '' }
+      ];
+      w.go('laundry');
+      const html = w.el('main').innerHTML;
+      t.has(html, 'בכביסה<span class="cnt">2</span>',
+        '⛔⛔ משימה עם שלב מלוכלך נעלמה מהלוח — הבאג של B64a');
+      t.has(html, 'בייבוש<span class="cnt">1</span>',
+        '⛔ משימה עם סימן כיוון נעלמה מעמודת הייבוש');
+    },
+
+    /* ---------- שכבה 2 ו-canary ---------- */
+
+    '⛔ שכבה 2 לא נגעה — B72 אינו נוגע ביכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n);
+      t.no(names.some(n => /WASH-1[479]|B72/.test(n)),
+        '⛔ נוספה טענה לכרטיס הבדיקה העצמית — B72 אינו יכולת דפדפן');
+    }
+
+  }
+});
+
 (function main() {
   const t0 = Date.now();
   console.log('\n' + '='.repeat(62));
