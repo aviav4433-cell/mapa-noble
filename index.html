@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.72-B72 · 09.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.73-B73 · 16.08.2026</div>
   </div>
 </div>
 
@@ -3165,11 +3165,16 @@ async function markPayLater(oid){
    כמה הוזמן מול כמה חזר, האם זו כל העגלה או חלק ממנה, פיצולים בין עגלות
    ומכונות, ויומן אירועים מלא. */
 function rLaundry(){
+  /* ⭐⭐ WASH-18 (B73): קליטת כביסה של לקוח מוצגת על אותו לוח — שכבת
+     תצוגה מ-laundry_intakes, ללא שום שורת laundry_tasks. ⛔ זה מה שמונע
+     מהקליטה לזלוג ל-inLaundryQty ולהזיז את המלאי. */
+  var w18All = w18BoardIntakes();
   var cols = STAGES.map(function(st){
+    var w18Iks = w18All.filter(function(ik){ return w18BoardCol(ik)===st; });
     /* ⛔ WASH-14 (B72): השלב נקרא מהגיליון ולכן עובר sPick — משימה
        שנולדה עם רווח נסתר (באג B64a) נעלמה מהלוח לגמרי. */
     var tasks = DB.laundryTasks.filter(t=>sPick(t.stage,STAGES)===st && (st!=='מוכן' || t.done_date>=ymdLocal(new Date(Date.now()-3*864e5))));
-    return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tasks.length+'</span></h3>'+
+    return '<div class="kcol"><h3>'+st+'<span class="cnt">'+(tasks.length+w18Iks.length)+'</span></h3>'+
       tasks.map(function(t){
         var sib = b40Siblings(t);
         return '<div class="ktask" style="cursor:pointer" title="לחץ להיסטוריה מלאה" onclick="if(!event.target.closest(\'button\'))openLaundryTask(\''+esc(t.id)+'\')">'+
@@ -3186,7 +3191,7 @@ function rLaundry(){
           '<button class="btn sm" onclick="advanceForm(\''+t.id+'\')">קדם ←</button>'+
           '<button class="btn ghost sm" onclick="laundrySplitForm(\''+t.id+'\')">פצל</button>'+
         '</div>':'')+'</div>';
-      }).join('')+'</div>';
+      }).join('')+w18Iks.map(w18CardHtml).join('')+'</div>';
   }).join('');
   /* B49d: לוח הכביסה הוא טקסטיל MAPA. כביסת לקוח נכנסת דרך קליטת NOBLE —
      קיצור אחד לכאן כדי שהעובד לא יחפש איפה פותחים אותה. */
@@ -3203,6 +3208,148 @@ function rLaundry(){
    רשימת תפקידים שנייה שתתפצל ממנה. */
 function b65CanNewOrder(){ return allowedViews().some(function(v){ return v[0]==='orders'; }); }
 function b65NewWashOrder(){ go('orders'); newOrderForm(false,'','כביסה'); }
+
+/* ============================================================
+   ⭐⭐ WASH-18 (B73) — קליטת כביסה של לקוח על לוח הכביסה
+   ------------------------------------------------------------
+   ללוח שני מקורות ולא שני מסכים: משימות טקסטיל (laundry_tasks)
+   וקליטות NOBLE (laundry_intakes). ⛔ אין כאן יצירת משימות מזויפות
+   לקליטה — זה היה מזיז את המלאי (WASH-17 מחדש).
+============================================================ */
+
+/* הכרעה 4א: קליטה שנפתחה מהחזרת טקסטיל (B49c) כבר מיוצגת על הלוח
+   דרך שורות המשימה שלה — הצגה שנייה הייתה מכפילה כל החזרה. */
+function w18HasTasks(iid){
+  return ((DB&&DB.laundryTasks)||[]).some(function(t){ return String(t.intake_id||'')===String(iid); });
+}
+/* באיזו עמודה יושבת הקליטה. '' = אינה על הלוח.
+   ל-NOBLE שמונה שלבים וללוח חמישה. "באריזה" אינו שלב בלוח אלא
+   שלב מכונה (אותה הכרעה של B59), ולכן הוא מוצג ב"בגיהוץ וקיפול".
+   ⛔ שלב שאינו מוכר אינו מעלים את הקליטה — זה בדיוק הלקח WASH-14. */
+function w18BoardCol(ik){
+  var st = sPick(ik.status, NOBLE_STAGES) || sVal(ik.status);
+  if(st==='במשלוח' || st==='נמסר') return '';
+  if(st==='באריזה') return 'בגיהוץ וקיפול';
+  if(st==='מוכן')
+    return (String(ik.ready_ts||'').slice(0,10) >= ymdLocal(new Date(Date.now()-3*864e5))) ? 'מוכן' : '';
+  return STAGES.indexOf(st)>-1 ? st : 'התקבל';
+}
+function w18BoardIntakes(){
+  return ((DB&&DB.laundryIntakes)||[]).filter(function(ik){
+    return !w18HasTasks(ik.id) && w18BoardCol(ik)!=='';
+  });
+}
+function w18Carts(iid){
+  return ((DB&&DB.intakeCarts)||[]).filter(function(b){
+    return b.intake_id===iid && sVal(b.active)==='כן';
+  });
+}
+/* בבואה של nobleOpenStarts בשרת — אותו מפתח מכונה|שלב, 'סיום' סוגר
+   את ההתחלה התואמת בלבד (B39b). לקריאה בלבד — הכתיבה כולה בשרת. */
+function w18CartOpens(iid,cid){
+  var by={};
+  ((DB&&DB.laundryEvents)||[]).forEach(function(e){
+    if(e.intake_id!==iid || String(e.cart_id)!==String(cid)) return;
+    var et=sVal(e.event_type);
+    if(et!=='התחלה' && et!=='סיום') return;
+    var k=String(e.machine_id||'')+'|'+sVal(e.stage);
+    if(et==='התחלה') by[k]=e; else delete by[k];
+  });
+  return Object.keys(by).map(function(k){ return by[k]; });
+}
+/* הכרעה 2א: קידום בלי סריקה — מנהל ומשרד בלבד. השרת אוכף
+   את זה שוב דרך b34OfficeOk — המסך רק מסתיר כפתור שיידחה בלאו הכי. */
+function w18CanManual(){ return ROLE==='מנהל' || ROLE==='משרד'; }
+
+function w18CartLabel(cid){
+  var c = ((DB&&DB.carts)||[]).find(function(x){ return x.id===cid; });
+  return b49bIsVirtual(c) ? 'ללא עגלה פיזית' : 'עגלה '+cid;
+}
+function w18CartLine(iid,cid){
+  var ops = w18CartOpens(iid,cid);
+  if(!ops.length) return esc(w18CartLabel(cid))+' — ממתינה לעבודה';
+  return esc(w18CartLabel(cid))+' — '+ops.map(function(o){
+    return esc(sVal(o.stage))+(o.machine_id? ' ב-'+esc(o.machine_id) : ' <span class="muted">(ידני)</span>');
+  }).join(' · ');
+}
+/* כרטיס הקליטה על הלוח. נראה שונה מכרטיס משימה במכוון — אלה
+   שתי ישויות שונות, וערבוב ביניהן הוא בדיוק מה שאסור. */
+function w18CardHtml(ik){
+  var carts = w18Carts(ik.id);
+  var isInt = sVal(ik.internal)==='כן';
+  var who = isInt ? 'פנימי MAPA' : cust(ik.customer_id);
+  var kg = Number(ik.net_weight_kg)||0;
+  var ord = ik.order_id ? ((DB&&DB.orders)||[]).find(function(o){ return o.id===ik.order_id; }) : null;
+  return '<div class="ktask" style="border-right:4px solid var(--teal)">'+
+    '<div class="t">🧺 '+esc(who)+
+      ' <span class="chip" style="background:var(--teal);font-size:10px">'+(isInt?'כביסה פנימית':'כביסת לקוח')+'</span></div>'+
+    '<div class="muted">'+esc(ik.id)+' · '+esc(sVal(ik.status))+
+      (kg? ' · '+kg+' ק"ג נטו':' · טרם נשקלה')+
+      (ord? '<br>הזמנה: <span class="lnk" onclick="openOrder(\''+esc(ord.id)+'\')">'+
+        (ord.order_number?'#'+esc(ord.order_number):esc(ord.id))+'</span>':'')+
+      (carts.length? '<br>'+carts.map(function(b){ return w18CartLine(ik.id,b.cart_id); }).join('<br>')
+                   : '<br><span style="color:var(--danger)">אין עגלה פעילה</span>')+
+    '</div>'+
+    '<div class="row" style="margin-top:8px">'+
+      ((w18CanManual()&&carts.length)?'<button class="btn sm" onclick="w18AdvanceForm(\''+esc(ik.id)+'\')">קדם ידנית ←</button>':'')+
+      '<button class="btn ghost sm" onclick="w18GoFloor(\''+esc(ik.id)+'\')">רצפת הייצור</button>'+
+    '</div></div>';
+}
+/* הכרעה 1א: המסלול הרגיל הוא סריקה ברצפת הייצור — וזו קפיצה
+   לאותו מסך, לא מסך שני (אותו דפוס של b49dGoIntake). */
+function w18GoFloor(iid){
+  if(!allowedViews().some(function(v){ return v[0]==='floor'; }))
+    return toast('אין לך הרשאה למסך רצפת הייצור', true);
+  closeModal();
+  FLOOR_TAB='board';
+  go('floor');
+}
+/* בורר שלב יעד — אותו דפוס של advanceForm/B59: דילוג קדימה
+   וחזרה אחורה מותרים, והמעבר נרשם ביומן.
+   ⛔ "מוכן" אינו עובר ב-w18Advance אלא ב-nobleMarkReady — רק שם נבדק
+   ששוקלו כל העגלות (B70/B71), והוא חייב לרוץ לפני כל כתיבה
+   כי laundry_events הוא append-only. */
+/* ⛔ אין רשימה שנייה: אלו בדיוק ארבעת שלבי העבודה של NOBLE
+   (NOBLE_WORK_STAGES בשרת זהה להם תו-בתו), והרשימה כבר קיימת בממשק. */
+function w18Targets(){ return NOBLE_MACHINE_STAGES.concat(['מוכן']); }
+function w18AdvanceForm(iid){
+  var ik = ((DB&&DB.laundryIntakes)||[]).find(function(x){ return x.id===iid; });
+  if(!ik) return toast('קליטה לא נמצאה', true);
+  if(!w18CanManual()) return toast('רק מנהל או משרד רשאים לקדם שלב ידנית', true);
+  var carts = w18Carts(iid);
+  if(!carts.length) return toast('אין עגלה פעילה בקליטה הזו', true);
+  var cur = sPick(ik.status, NOBLE_STAGES) || sVal(ik.status);
+  openModal('<h2>קידום ידני — '+esc(ik.id)+'</h2>'+
+    '<div class="muted" style="margin-bottom:10px">'+
+      esc(sVal(ik.internal)==='כן'?'פנימי MAPA':cust(ik.customer_id))+' · שלב נוכחי: '+esc(cur)+'</div>'+
+    '<div class="card" style="background:#FFF7E6;border-color:#E8A33D;padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
+      'קידום ידני נרשם ביומן בלי מכונה, ומיועד לבדיקות ולעובד חדש. '+
+      'בעבודה רגילה — סרוק עגלה ומכונה ברצפת הייצור.</div>'+
+    '<div class="frow"><label>עגלה <b style="color:var(--danger)">*</b></label>'+
+      '<select id="w18_cart">'+carts.map(function(b){
+        return '<option value="'+esc(b.cart_id)+'">'+esc(w18CartLabel(b.cart_id))+'</option>'; }).join('')+'</select>'+
+      '<div class="muted" style="font-size:12px">הקידום חל על העגלה הזו בלבד.</div></div>'+
+    '<div class="frow"><label>שלב יעד <b style="color:var(--danger)">*</b></label>'+
+      '<select id="w18_to">'+w18Targets().filter(function(st){ return st!==cur; }).map(function(st){
+        return '<option value="'+esc(st)+'">'+esc(st)+
+          (st==='באריזה'?' — מוצג בעמודת בגיהוץ וקיפול':'')+
+          (st==='מוכן'?' — דורש שכל העגלות נשקלו':'')+'</option>'; }).join('')+'</select>'+
+      '<div class="muted" style="font-size:12px">אפשר לדלג על שלבים או לחזור אחורה — המעבר נרשם ביומן הקליטה.</div></div>'+
+    '<div class="row" style="margin-top:6px">'+
+      '<button class="btn" onclick="w18DoAdvance(\''+esc(iid)+'\')">קדם</button>'+
+      '<button class="btn ghost" onclick="closeModal()">ביטול</button></div>');
+}
+async function w18DoAdvance(iid){
+  var c = el('w18_cart'), to = el('w18_to');
+  if(!c || !c.value) return toast('בחר עגלה', true);
+  if(!to || !to.value) return toast('בחר שלב יעד', true);
+  var r;
+  if(to.value==='מוכן')
+    r = await act('nobleMarkReady', {intake_id:iid}, 'הקליטה סומנה כמוכנה');
+  else
+    r = await act('w18Advance', {intake_id:iid, cart_id:c.value, to_stage:to.value}, 'קודם ל-'+to.value);
+  if(r) closeModal();
+}
 
 /* --- עוזרי היסטוריה --- */
 function b40Events(tid){
@@ -7395,7 +7542,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.72-B72';
+var B61_CANARY = 'v4.73-B73';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
