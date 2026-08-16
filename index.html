@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.71-B71 · 09.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.72-B72 · 09.08.2026</div>
   </div>
 </div>
 
@@ -2727,7 +2727,7 @@ async function createOrder(isQuote){
      בכביסה השורות אינן חובה, ולכן הודעה שדורשת אותן שולחת את המשתמש
      לחפש פריט בקטלוג ההשכרה בדיוק כמו התנאי שהוסר מהשרת. */
   var b66T = b65OrderTypeVal();
-  var b66Msg = b66T==='כביסה' ? 'נשמר — אפשר להוסיף אומדן כמותי (לא חובה)' : 'נשמר — הוסף פריטים';
+  var b66Msg = b66T==='כביסה' ? 'נשמר — אפשר להוסיף תיאור קצר (לא חובה)' : 'נשמר — הוסף פריטים';   /* WASH-17: אין עוד אומדן כמותי בכביסה */
   var r = await act('create',{table:'orders',row:{type:b66T,customer_id:el('f_cust').value,
     start_date:el('f_start').value,end_date:el('f_end').value,notes:el('f_notes').value,delivery_fee:Number(el('f_ofee').value)||0,ship_out:(el('f_shipout')?el('f_shipout').value:'משלוח'),ship_back:(el('f_shipback')?el('f_shipback').value:'משלוח'),warehouse_id:(el('f_owh')?el('f_owh').value:''),status:isQuote?'הצעת מחיר':'טיוטה'}},b66Msg);
   if(r){ closeModal(); openOrder(r.row.id); }
@@ -2912,16 +2912,10 @@ function openOrder(oid){
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
     docChainHtml(oid,'order')+
     '<div class="muted" style="margin-bottom:12px">'+(o.order_number?'הזמנה #'+esc(o.order_number)+' · ':'')+esc(o.type)+' · '+esc(o.start_date)+' ← '+esc(o.end_date)+(DB.warehouses.length?' · מחסן: '+esc(whn(o.warehouse_id)):'')+(o.notes?' · '+esc(o.notes):'')+'</div>'+
-    /* B66/BLD-15: בכביסה השורות הן אומדן כמותי **ואינן חובה** — approveOrder
-       כבר אינו חוסם הזמנת כביסה בלי שורות. הכותרת אומרת זאת מפורשות כדי
-       שמי שרואה מקטע ריק יבין שזו התנהגות תקינה ולא חוסר.
-       ⛔ B64a: הסוג נקרא מהגיליון ולכן עובר sVal — בדיוק כמו בשרת. */
-    '<h3>פריטים'+(sVal(o.type)==='כביסה'?' <span class="muted" style="font-size:12.5px;font-weight:400">— אומדן כמותי (לא חובה)</span>':'')+'</h3>'+
-    (sVal(o.type)==='כביסה'?'<div class="muted" style="font-size:12.5px;margin-bottom:4px">⚖ <b>אומדן — החיוב לפי משקל.</b> שורות הפריטים כאן הן אומדן כמותי בלבד, אינן חובה ואינן נספרות בחוב; החיוב בפועל מגיע מהשקילה בקליטה. אפשר לאשר הזמנת כביסה גם בלי אף שורה.</div>':'')+
-    '<table><tr><th>פריט</th><th>כמות</th><th>'+(sVal(o.type)==='כביסה'?'מחיר (אומדן)':'מחיר')+'</th><th>הוחזר</th></tr>'+
-    lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
-    '</table>'+
-    (editable?'<div style="margin:10px 0"><button class="btn ghost sm" onclick="addLineForm(\''+oid+'\')">+ הוסף פריט</button></div>':'')+
+    /* ⛔ WASH-17 (B72) — הקטע הזה עבר ל-w17ItemsHtml. בהזמנת כביסה אין
+       עוד בורר מקטלוג המלאי — המלאי הוא של המכבסה, ולקוח שמביא
+       כביסה משלו אינו אמור להופיע בספירת המלאי (הכרעת אבי 09.08.2026). */
+    w17ItemsHtml(o, oid, lines, editable)+
     '<h3 style="margin-top:14px">כספים</h3>'+
     b54OrderMoneyHtml(o)+   /* B54/C6: פילוח לפי מקור החיוב */
     '<div class="row" style="margin:6px 0"><div class="grow">'+
@@ -2991,7 +2985,67 @@ async function doInvoice(oid){
     b46AfterDoc(r, function(){ openOrder(oid); });
   }
 }
+/* ============================================================
+   WASH-17 (B72) — המלאי הוא של המכבסה
+   ------------------------------------------------------------
+   הבאג שדווח: בכרטיס הזמנת כביסה הכפתור "+ הוסף פריט" פתח בורר
+   מקטלוג המלאי של MAPA (checkAvail על availability). כביסה של לקוח —
+   וילונות, חלוקים — אינה רכוש של המכבסה ואינה אמורה להיספר במלאי.
+   במקום הבורר — תיאור חופשי קצר (רשות, עד 20 תווים) שנכנס ל-orders.notes
+   הקיים. ⛔ אין שינוי סכימה.
+   ⛔ כסף: שורות הזמנה בכביסה ממילא אינן כסף — b54RawOrderTotalAg מדלגת
+   עליהן כשהסוג 'כביסה', ו-reservedQty סופרת רק הזמנות 'השכרה'.
+   לכן ההסרה אינה מזיזה אף סכום ואף שריון.
+   ⛔ הזמנת השכרה לא נגעה כלל.
+   ============================================================ */
+function w17IsWash(o){ return !!o && sVal(o.type)==='כביסה'; }
+/* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
+var W17_DESC_MAX = 20;
+function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
+function w17ItemsHtml(o, oid, lines, editable){
+  if(!w17IsWash(o)){
+    /* השכרה — ההתנהגות הקיימת בדיוק, אותו בורר ואותה טבלה. */
+    return '<h3>פריטים</h3>'+
+      '<table><tr><th>פריט</th><th>כמות</th><th>מחיר</th><th>הוחזר</th></tr>'+
+      lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+ils(l.unit_price)+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
+      '</table>'+
+      (editable?'<div style="margin:10px 0"><button class="btn ghost sm" onclick="addLineForm(\''+oid+'\')">+ הוסף פריט</button></div>':'');
+  }
+  var d = w17Desc(o.notes);
+  return '<h3>תיאור הכביסה <span class="muted" style="font-size:12.5px;font-weight:400">— טקסט חופשי, לא חובה</span></h3>'+
+    '<div class="muted" style="font-size:12.5px;margin-bottom:6px">⚖ <b>החיוב לפי משקל בקליטה.</b> בהזמנת כביסה אין בחירת פריטים מהמלאי — המלאי שייך למכבסה, וכביסה של הלקוח אינה נספרת בו. אפשר לרשום כאן תיאור קצר ("חלוקים", "וילונות", "מעורב").</div>'+
+    '<div class="row" style="align-items:center;gap:8px;margin-bottom:4px"><div class="grow">'+
+      (d? '<b style="font-size:15px">'+esc(d)+'</b>' : '<span class="muted">לא הוזן תיאור</span>')+
+    '</div>'+
+    (editable?'<button class="btn ghost sm" onclick="w17DescForm(\''+oid+'\')">'+(d?'ערוך תיאור':'+ הוסף תיאור')+'</button>':'')+
+    '</div>'+
+    /* שורות היסטוריות — נוצרו לפני WASH-17. מוצגות לצפייה בלבד;
+       אינן נספרות בחיוב ואינן משריינות מלאי, ואין דרך להוסיף חדשות. */
+    (lines.length?
+      '<div class="muted" style="font-size:12.5px;margin-top:10px">שורות היסטוריות מלפני השינוי — לצפייה בלבד, אינן נספרות בחיוב ואינן משריינות מלאי</div>'+
+      '<table><tr><th>פריט</th><th>כמות</th><th>הוחזר</th></tr>'+
+      lines.map(l=>'<tr><td>'+esc(item(l.item_id))+'</td><td>'+l.qty+'</td><td>'+(l.returned_qty===''?'—':l.returned_qty)+'</td></tr>').join('')+
+      '</table>'
+    :'');
+}
+function w17DescForm(oid){
+  var o = DB.orders.find(x=>x.id===oid); if(!o) return;
+  if(!w17IsWash(o)) return;
+  openModal('<h2>תיאור הכביסה</h2>'+
+    '<p class="muted" style="margin-bottom:12px">רשות. עד '+W17_DESC_MAX+' תווים. למשל: חלוקים · וילונות · מעורב. אין כאן בחירה מהמלאי — המלאי של המכבסה.</p>'+
+    '<div class="frow"><label>תיאור</label><input id="w17_desc" maxlength="'+W17_DESC_MAX+'" value="'+esc(w17Desc(o.notes))+'" placeholder="לא חובה"></div>'+
+    '<button class="btn" onclick="w17SaveDesc(\''+oid+'\')">שמור</button>');
+}
+async function w17SaveDesc(oid){
+  var v = w17Desc(el('w17_desc')? el('w17_desc').value : '');
+  var r = await act('update',{table:'orders',id:oid,row:{notes:v}},'התיאור נשמר');
+  if(r){ closeModal(); openOrder(oid); }
+}
 function addLineForm(oid){
+  /* ⛔ WASH-17: שומר שני. הכפתור כבר אינו מוצג בהזמנת כביסה,
+     וגם קריאה ישירה (קיצור, קונסולה) לא תפתח את הבורר. */
+  var w17o = DB.orders.find(x=>x.id===oid);
+  if(w17IsWash(w17o)) return toast('בהזמנת כביסה אין בחירת פריטים מהמלאי — המלאי של המכבסה. רשום תיאור חופשי במקום', true);
   if(!DB.items.length) return toast('קודם צור פריט במסך פריטים', true);
   openModal('<h2>הוספת פריט</h2>'+
     '<div class="frow"><label>פריט</label><div class="row" style="gap:8px;align-items:center"><img id="lineItemImg" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--line);display:none;flex:none">'+
@@ -3112,7 +3166,9 @@ async function markPayLater(oid){
    ומכונות, ויומן אירועים מלא. */
 function rLaundry(){
   var cols = STAGES.map(function(st){
-    var tasks = DB.laundryTasks.filter(t=>t.stage===st && (st!=='מוכן' || t.done_date>=ymdLocal(new Date(Date.now()-3*864e5))));
+    /* ⛔ WASH-14 (B72): השלב נקרא מהגיליון ולכן עובר sPick — משימה
+       שנולדה עם רווח נסתר (באג B64a) נעלמה מהלוח לגמרי. */
+    var tasks = DB.laundryTasks.filter(t=>sPick(t.stage,STAGES)===st && (st!=='מוכן' || t.done_date>=ymdLocal(new Date(Date.now()-3*864e5))));
     return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tasks.length+'</span></h3>'+
       tasks.map(function(t){
         var sib = b40Siblings(t);
@@ -3163,7 +3219,7 @@ function b40Siblings(t){
 /* שותפות לעגלה — כדי לענות: זו כל העגלה או רק חלק ממנה */
 function b40CartMates(t){
   if(!t.cart_id) return [];
-  return (DB.laundryTasks||[]).filter(x=>x.cart_id===t.cart_id && x.stage!=='מוכן');
+  return (DB.laundryTasks||[]).filter(x=>x.cart_id===t.cart_id && sVal(x.stage)!=='מוכן');   /* WASH-14 */
 }
 function openLaundryTask(tid){
   var t = (DB.laundryTasks||[]).find(x=>x.id===tid); if(!t) return;
@@ -3176,7 +3232,7 @@ function openLaundryTask(tid){
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))[0];
   var mateOther = mates.filter(x=>x.id!==t.id);
   openModal('<h2>כביסה — '+esc(item(t.item_id))+' × '+esc(t.qty)+'</h2>'+
-    '<div class="hdr-band '+(t.stage==='מוכן'?'ok':'calm')+'" style="border-radius:7px;margin-bottom:12px">'+
+    '<div class="hdr-band '+(sVal(t.stage)==='מוכן'?'ok':'calm')+'" style="border-radius:7px;margin-bottom:12px">'+   /* WASH-14 */
       '<span class="hb-t">'+esc(t.stage)+'</span><span class="hb-s">'+esc(t.id)+'</span></div>'+
     '<h3>מאיפה הגיעה</h3>'+
     '<table>'+
@@ -3194,7 +3250,7 @@ function openLaundryTask(tid){
       '<tr><th>עגלה נוכחית</th><td>'+(t.cart_id?'<span class="lnk" onclick="closeModal();openCart(\''+esc(t.cart_id)+'\')">'+esc(t.cart_id)+'</span>':'<span style="color:var(--danger)">לא משויכת</span>')+'</td></tr>'+
       '<tr><th>מכונה נוכחית</th><td>'+(t.machine_id?'<span class="lnk" onclick="closeModal();openMach(\''+esc(t.machine_id)+'\')">'+esc(t.machine_id)+'</span>':'<span style="color:var(--danger)">לא משויכת</span>')+'</td></tr>'+
       '<tr><th>תפוסת העגלה</th><td>'+(!t.cart_id?'—':(mateOther.length? 'חלק מהעגלה — יחד עם עוד '+mateOther.length+' משימות ('+mateOther.map(x=>esc(item(x.item_id))+' ×'+x.qty).join(', ')+')' : 'כל העגלה — רק המשימה הזו עליה'))+'</td></tr>'+
-      (t.stage==='מוכן'?'<tr><th>שחרור</th><td>'+(t.release_mode==='מדף'?'מומדף במדף <b>'+esc(t.shelf_code||'')+'</b>':t.release_mode==='ללא מידוף'?'<b style="color:var(--amber)">ללא מידוף — רצפת ייצור</b>':'<span style="color:var(--danger)">לא נרשם</span>')+'</td></tr>':'')+
+      (sVal(t.stage)==='מוכן'?'<tr><th>שחרור</th><td>'   /* WASH-14 */+(t.release_mode==='מדף'?'מומדף במדף <b>'+esc(t.shelf_code||'')+'</b>':t.release_mode==='ללא מידוף'?'<b style="color:var(--amber)">ללא מידוף — רצפת ייצור</b>':'<span style="color:var(--danger)">לא נרשם</span>')+'</td></tr>':'')+
     '</table>'+
     (sib.length>1?'<h3 style="margin-top:14px">פיצול ההזמנה בין עגלות ומכונות</h3>'+
       '<table><tr><th>משימה</th><th>כמות</th><th>שלב</th><th>עגלה</th><th>מכונה</th></tr>'+
@@ -6376,7 +6432,7 @@ function b40ItemBreakdown(iid, wh){
     else if(B40_RESERVED_STATUSES.indexOf(String(o.status))>-1) reserved.push({line:l, order:o});
   });
   (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage!=='מוכן' && inWh(t.warehouse_id)).forEach(t=>laundry.push(t));
-  var ready = (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage==='מוכן' && inWh(t.warehouse_id) &&
+  var ready = (DB.laundryTasks||[]).filter(t=>t.item_id===iid && sVal(t.stage)==='מוכן' && inWh(t.warehouse_id) &&   /* WASH-14 */
     String(t.done_date||'')>=ymdLocal(new Date(Date.now()-7*864e5)));
   var sum = a=>a.reduce((s,x)=>s+Number((x.line?x.line.qty:x.qty)||0),0);
   var outQ=sum(out), resQ=sum(reserved), washQ=sum(laundry);
@@ -7339,7 +7395,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.71-B71';
+var B61_CANARY = 'v4.72-B72';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -13657,6 +13713,11 @@ function floorIntakeTab(){
     '<div class="frow"><label>סרוק עגלות לשיוך לקליטה</label><input id="fl_icart" class="scanbox" placeholder="ברקוד עגלה" onkeydown="if(event.key===\'Enter\')floorAddCart()"></div>'+
     '<div class="row" style="margin-bottom:10px"><button class="btn grow" onclick="floorCam(\'fl_icart\',floorAddCart)">סרוק במצלמה</button>'+
     '<button class="btn ghost grow" onclick="floorAddCart()">הוסף עגלה</button></div>'+
+    /* WASH-19 (B72): בחירה מרשימה לצד הסריקה. ⛔ הסריקה נשארת — היא
+       המסלול המהיר ברצפה. הבחירה מזרימה לאותו floorAddCart ולאותה
+       בדיקת nobleCartInfo — אין דפוס שני (R8). */
+    '<div class="frow" id="fl_pickwrap"><label>או בחר מרשימת העגלות הפנויות</label>'+
+    '<select id="fl_cartpick" style="font-size:16px" onchange="floorPickCart()"></select></div>'+
     '<div id="fl_cartlist" style="margin-bottom:10px"></div></div>'+
     '<div class="frow"><label>הערות (לא חובה)</label><input id="fl_inotes"></div>'+
     '<button class="btn grow" id="fl_savebtn" style="width:100%;font-size:17px;padding:14px" onclick="floorSaveIntake()">פתח קליטה</button></div>';
@@ -13700,6 +13761,44 @@ function floorRenderCartList(){
   b.innerHTML = FLOOR_INTAKE_CARTS.length?
     FLOOR_INTAKE_CARTS.map((bc,i)=>'<span class="chip" style="background:var(--teal);margin:2px;font-size:14px">'+esc(bc)+' <a style="cursor:pointer;color:#fff;font-weight:700" onclick="FLOOR_INTAKE_CARTS.splice('+i+',1);floorRenderCartList()">✕</a></span>').join(' ')
     : '<span class="muted">טרם נסרקו עגלות</span>';
+  floorRenderCartPick();   /* WASH-19: הרשימה מתעדכנת עם כל הוספה/הסרה */
+}
+/* ============================================================
+   WASH-19 (B72) — בחירת עגלה מרשימת הפנויות
+   ------------------------------------------------------------
+   עד כאן הדרך היחידה לשייך עגלה לקליטה הייתה להקליד או לסרוק
+   ברקוד. ⛔ הסריקה לא הוסרה — נוספה לצידה רשימה.
+   מי נכנס לרשימה: עגלה שסטטוסה 'פנויה' — בדיוק התנאי ש-nobleIntake
+   אוכף בשרת — ושאינה וירטואלית (b49bIsVirtual), ושאינה כבר ברשימה.
+   ⛔ וירטואלית מוסתרת — כמו בכל מסכי הציוד (B49b).
+   ============================================================ */
+function w19FreeCarts(){
+  var chosen = {};
+  FLOOR_INTAKE_CARTS.forEach(function(bc){ chosen[sVal(bc)] = 1; });
+  return ((DB&&DB.carts)||[]).filter(function(c){
+    if(b49bIsVirtual(c)) return false;
+    if(sVal(c.status)!=='פנויה') return false;
+    if(chosen[sVal(c.id)] || chosen[sVal(c.barcode)]) return false;
+    return true;
+  }).sort(function(a,b){ return String(a.id).localeCompare(String(b.id)); });
+}
+function floorRenderCartPick(){
+  var s = el('fl_cartpick'); if(!s) return;
+  var free = w19FreeCarts();
+  s.innerHTML = '<option value="">'+(free.length? '— בחר עגלה פנויה ('+free.length+') —' : '— אין עגלות פנויות —')+'</option>'+
+    free.map(function(c){
+      return '<option value="'+esc(String(c.barcode||c.id))+'">'+esc(c.id)+
+        (c.location? ' · '+esc(c.location):'')+
+        (c.condition && sVal(c.condition)!=='תקינה'? ' · '+esc(c.condition):'')+'</option>';
+    }).join('');
+}
+/* הבחירה מזינה את שדה הסריקה וקוראת לאותה פונקציה — אותן בדיקות בדיוק */
+function floorPickCart(){
+  var s = el('fl_cartpick'); if(!s || !s.value) return;
+  var bc = s.value; s.value = '';
+  var f = el('fl_icart'); if(!f) return;
+  f.value = bc;
+  floorAddCart();
 }
 async function floorAddCart(){
   var bc = el('fl_icart').value.trim();
