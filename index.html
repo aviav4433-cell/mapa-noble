@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.73-B73 · 16.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.74-B74 · 16.08.2026</div>
   </div>
 </div>
 
@@ -4894,7 +4894,7 @@ function b54LedgerFE(){
 
   orders.forEach(function(o){
     var c=byOrder[o.id];
-    if(String(o.type)!=='כביסה'){   /* C5 */
+    if(!w17IsWash(o)){   /* C5 · ⭐ B74/WASH-20 — היה String(o.type) גולמי */
       var linesIls=(DB.orderLines||[]).filter(function(l){ return l.order_id===o.id; })
         .reduce(function(s,l){ return s+Number(l.qty)*Number(l.unit_price); },0);
       var linesAg=toAg(linesIls);
@@ -5033,7 +5033,7 @@ function b54CustomerOpenAgFE(){
 /* סכום ההזמנה — נטו, ללא תלות במסמך. עובד גם על טיוטה/הצעת מחיר. */
 function b54RawOrderTotalAgFE(o){
   var ag=0;
-  if(String(o.type)!=='כביסה'){
+  if(!w17IsWash(o)){   /* ⭐ B74/WASH-20 — היה String(o.type) גולמי */
     ag+=toAg((DB.orderLines||[]).filter(function(l){ return l.order_id===o.id; })
       .reduce(function(s,l){ return s+Number(l.qty)*Number(l.unit_price); },0));
   }
@@ -5240,7 +5240,23 @@ async function b54RunAudit(){
     var b=el('b54AuditBtn'); if(b){ b.disabled=false; b.textContent='בדיקת נתוני חיובים'; }
   }
 }
+/* ⭐ B74/WASH-20: שורות הממצא. הערך הגולמי מוצג עם התווים הבלתי נראים
+   מסומנים בשמם — אחרת אבי רואה 'כביסה' מול 'כביסה' ואינו מבין למה. */
+function w20RowsHtml(rows){
+  if(!rows || !rows.length) return '';
+  return '<div style="font-size:12px;margin-top:4px">'+rows.map(function(x){
+    return '<div style="padding:2px 0;border-top:1px solid var(--line,#eee)">'+
+      '<b>'+esc(x.order||'')+'</b> · '+esc(x.customer||'')+
+      ' · סוג בגיליון: <code>"'+esc(x.raw||'')+'"</code>'+
+      ((x.marks&&x.marks.length)? ' <span class="muted">('+esc(x.marks.join(' · '))+')</span>' : '')+
+      (x.canon? ' ← נקרא כ<b>'+esc(x.canon)+'</b>' : '')+
+      (x.moved>0? ' · <b>ירד מהחוב: '+ils(x.moved)+'</b>' : (x.invoice? ' · חשבונית '+esc(x.invoice)+' — הסכום לא זז' : ''))+
+      '</div>';
+  }).join('')+'</div>';
+}
 function b54AuditHtml(r){
+  var d = r.dirty_type || {count:0, moved:0, rows:[]};
+  var u = r.unknown_type || {count:0, rows:[]};
   function sec(title, ok, body){
     return '<div class="card" style="padding:9px 11px;margin:6px 0;border-right:5px solid '+(ok?'var(--ok)':'var(--amber,#E8A33D)')+'">'+
       '<b>'+esc(title)+'</b><div style="font-size:12.5px;margin-top:3px">'+body+'</div></div>';
@@ -5260,6 +5276,15 @@ function b54AuditHtml(r){
       r.pay_no_status.count? (r.pay_no_status.count+' תשלומים · '+ils(r.pay_no_status.amount)+' — נספרים כנגבו (תאימות היסטורית, C10).') : 'כל התשלומים נושאים סטטוס.')+
     sec('קליטות חופשיות שממתינות לחשבונית מרוכזת', true,
       r.pending_intakes.count? (r.pending_intakes.count+' קליטות · '+ils(r.pending_intakes.amount)+' — מוצגות בספר, אינן חוב עד להפקת החשבונית (כמו לפני B54).') : 'אין.')+
+    /* ⭐ B74/WASH-20 */
+    sec('הזמנות שסוג ההזמנה שלהן מלוכלך בגיליון (WASH-20)', !d.count,
+      d.count? (d.count+' הזמנות. הכסף שהפסיק להיספר כחוב: <b>'+ils(d.moved)+'</b>.'+
+        '<div class="muted" style="font-size:11.5px;margin:2px 0 4px">הזמנה שכבר הופקה לה חשבונית — הסכום שלה לא זז, כי סכום המסמך גובר (C4א). רק פירוט השורות בספר מתחלף.</div>'+
+        w20RowsHtml(d.rows))
+        : 'לא נמצאו — סוג ההזמנה קנוני בכל ההזמנות. הכסף לא הושפע.')+
+    sec('הזמנות עם סוג שאינו מוכר', !u.count,
+      u.count? (u.count+' הזמנות עם סוג שאינו "השכרה" ואינו "כביסה". הן מטופלות כהשכרה, בדיוק כמו לפני התיקון.'+w20RowsHtml(u.rows))
+        : 'אין. כל סוג הזמנה במערכת מוכר.')+
     '</div>';
 }
 
@@ -7542,7 +7567,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.73-B73';
+var B61_CANARY = 'v4.74-B74';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
