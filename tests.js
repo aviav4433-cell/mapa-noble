@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.72-B72', 'ה-canary לא עודכן ל-B72');
+      t.eq(inJs, 'v4.73-B73', 'ה-canary לא עודכן ל-B73');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -5691,6 +5691,481 @@ SPECS.push({
       const names = w.b61Tests().map(x => x.n);
       t.no(names.some(n => /WASH-1[479]|B72/.test(n)),
         '⛔ נוספה טענה לכרטיס הבדיקה העצמית — B72 אינו יכולת דפדפן');
+    }
+
+  }
+});
+
+/* ============================================================
+   t19 — B73: WASH-18
+   ------------------------------------------------------------
+   קליטת כביסה של לקוח (NOBLE) לא הופיעה בלוח הכביסה, כי
+   הלוח קורא laundry_tasks בלבד ולקליטה אין שורת משימה.
+   ⛔ הבדיקות הכבדות כאן הן בדיקות **שלא זז כלום**: המלאי
+   (inLaundryQty/availableQty), הכסף (R6/B71), ו-append-only של
+   laundry_events. אלה בדיוק המלכודות שצוינו לפני האצווה.
+   ============================================================ */
+
+const B73 = {
+  /* קליטת לקוח פעילה עם עגלה CA1, מנהל ועובד מכבסה.
+     בנוסף — מלאי אמיתי של פריט IT1, כדי להוכיח שהוא לא זז. */
+  db(srv, over) {
+    over = over || {};
+    const db = H.emptyDb(srv);
+    db.employees = [{ id: 'E1', name: 'עובד', pin: '111', active: 'כן', role: 'מכבסה' },
+                    { id: 'E9', name: 'המנהל', pin: '999', active: 'כן', role: 'מנהל' },
+                    { id: 'E8', name: 'המשרד', pin: '888', active: 'כן', role: 'משרד' }];
+    db.customers = [{ id: 'C1', name: 'לקוח', active: 'כן', price_per_kg: 10 }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+    db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 100, date: '2026-07-01', warehouse_id: '' }];
+    db.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש', tare_kg: 5, condition: 'תקינה' },
+                { id: 'CA2', barcode: 'CA2', status: 'בשימוש', tare_kg: 5, condition: 'תקינה' }];
+    db.machines = [{ id: 'M1', barcode: 'M1', type: 'מכונת כביסה', status: 'פעילה', auto_stage: 'בכביסה', capacity: 50 }];
+    db.laundryIntakes = [{
+      id: 'IK1', customer_id: over.internal ? '' : 'C1', internal: over.internal || '',
+      status: over.status || 'התקבל', price_per_kg: 10, net_weight_kg: '', total_charge: '',
+      intake_ts: '2026-08-01 08:00', delivered_ts: '', delivery_id: '', order_id: '',
+      ready_ts: '', invoice_id: '', notes: ''
+    }];
+    db.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן', bind_ts: '', release_ts: '' }];
+    return db;
+  },
+  /* אירוע יומן ידני — השעון ברתמה מחזיר תאריך בלבד (לקח B70) */
+  ev(db, type, stage, machine, hhmm) {
+    const e = {
+      id: 'EVT-' + type + (db.laundryEvents.length + 1), ts: '2026-08-01 ' + (hhmm || '09:00') + ':00',
+      intake_id: 'IK1', customer_id: 'C1', cart_id: 'CA1', machine_id: machine || '',
+      stage: stage, event_type: type, worker_id: 'E1', worker_name: 'עובד',
+      gross_kg: '', tare_kg: '', net_kg: '', price_per_kg: '', charge: '', note: '', portion_kg: '', ref_id: ''
+    };
+    db.laundryEvents.push(e);
+    return e;
+  }
+};
+
+SPECS.push({
+  file: 't19-b73-wash18-srv',
+  title: 'B73 / WASH-18 — השרת: קידום ידני בלי סריקה, והמלאי לא זז',
+  needs: 'server',
+  requires: ['w18Advance', 'handle', 'nobleOpenStarts', 'nobleMachineLoad', 'nobleMarkReady',
+             'nobleStageStart', 'nobleIntake', 'nobleBoard', 'nobleWeigh', 'b49cAfterAdvance',
+             'b34OfficeOk', 'b49cWorkerRef', 'NOBLE_WORK_STAGES', 'NOBLE_STAGES', 'STAGES',
+             'inLaundryQty', 'availableQty', 'reservedQty', 'receiveReturn', 'TABLES',
+             'b48BalancesAg', 'b2CreditUsedAg', 'b54Ledger', 'w10MulAg', 'fromAg', 'toAg',
+             'sVal', 'sPick'],
+
+  tests: {
+
+    /* ---------- ⭐⭐ הפריט עצמו ---------- */
+
+    '⭐⭐ קידום ידני מקדם קליטת NOBLE בלי סריקת עגלה ומכונה': (t, { srv }) => {
+      const db = B73.db(srv);
+      const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'המנהל');
+      t.ok(r.ok, 'הקידום הידני נדחה: ' + r.error);
+      t.eq(db.laundryIntakes[0].status, 'בכביסה', '⛔⛔ סטטוס הקליטה לא התקדם');
+      t.eq(db.laundryEvents.length, 1, 'לא נרשם בדיוק אירוע התחלה אחד');
+      t.eq(srv.sVal(db.laundryEvents[0].event_type), 'התחלה', 'סוג האירוע שגוי');
+      t.eq(String(db.laundryEvents[0].machine_id), '', '⛔ נרשמה מכונה לקידום שלא נסרקה בו מכונה');
+      t.has(String(db.laundryEvents[0].note), 'קידום ידני', 'האירוע אינו מסומן כידני ביומן');
+      t.has(String(db.laundryEvents[0].worker_name), 'המנהל', 'שם המקדם לא נשמר ביומן');
+    },
+
+    '⭐ קידום סוגר את המנה הפתוחה של העגלה — בדיוק כמו b49cAfterAdvance': (t, { srv }) => {
+      const db = B73.db(srv, { status: 'בכביסה' });
+      B73.ev(db, 'התחלה', 'בכביסה', 'M1', '09:00');
+      t.eq(srv.nobleOpenStarts(db, 'IK1', 'CA1').length, 1, 'קו הבסיס שגוי — אין מנה פתוחה');
+      const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בייבוש' }, 'המנהל');
+      t.ok(r.ok, 'הקידום נדחה: ' + r.error);
+      const ends = db.laundryEvents.filter(e => srv.sVal(e.event_type) === 'סיום');
+      t.eq(ends.length, 1, '⛔ המנה הפתוחה במכונה לא נסגרה — המכונה תישאר תפוסה לנצח');
+      t.eq(String(ends[0].machine_id), 'M1', 'הסיום לא נרשם על המכונה שנפתחה');
+      const opens = srv.nobleOpenStarts(db, 'IK1', 'CA1');
+      t.eq(opens.length, 1, 'אחרי הקידום אמורה להיות מנה פתוחה אחת בלבד');
+      t.eq(srv.sVal(opens[0].stage), 'בייבוש', 'השלב הפתוח אינו שלב היעד');
+    },
+
+    '⭐ דילוג קדימה וחזרה אחורה — שניהם מותרים (הכרעת אבי 2)': (t, { srv }) => {
+      const db = B73.db(srv);
+      t.ok(srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'באריזה' }, 'המנהל').ok,
+        '⛔ דילוג קדימה נחסם');
+      t.eq(db.laundryIntakes[0].status, 'באריזה', 'הדילוג לא עדכן את הסטטוס');
+      t.ok(srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'המנהל').ok,
+        '⛔ חזרה אחורה נחסמה');
+      t.eq(db.laundryIntakes[0].status, 'בכביסה', 'החזרה אחורה לא עדכנה את הסטטוס');
+    },
+
+    'הפעולה מחוברת למתג הפעולות (handle)': (t, { srv }) => {
+      const db = B73.db(srv);
+      const r = srv.handle('w18Advance', { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, db, 'המנהל');
+      t.ok(r && r.ok, '⛔ הפעולה אינה מחוברת ל-handle: ' + (r && r.error));
+    },
+
+    /* ---------- ⛔ הכרעה 1א: "מוכן" אינו עוקף את השקילה ---------- */
+
+    '⛔⛔ "מוכן" אינו עובר בקידום הידני — ולא נכתב כלום': (t, { srv }) => {
+      const db = B73.db(srv, { status: 'באריזה' });
+      B73.ev(db, 'התחלה', 'באריזה', 'M1', '09:00');
+      const n = db.laundryEvents.length;
+      const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'מוכן' }, 'המנהל');
+      t.no(r.ok, '⛔⛔ קידום ידני העביר ל"מוכן" ועקף את חובת השקילה');
+      t.eq(db.laundryEvents.length, n, '⛔⛔ נכתב אירוע ליומן למרות הדחייה — laundry_events הוא append-only');
+      t.eq(db.laundryIntakes[0].status, 'באריזה', 'הסטטוס שונה למרות הדחייה');
+    },
+
+    '⛔ סוג מלוכלך של "מוכן" אינו עוקף את החסימה (B64a)': (t, { srv }) => {
+      [' מוכן', 'מוכן ', 'מוכן\u00A0', '\u200Fמוכן'].forEach((dirty, i) => {
+        const db = B73.db(srv);
+        const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: dirty }, 'המנהל');
+        t.no(r.ok, i + ' — ⛔⛔ "מוכן" מלוכלך עקף את החסימה');
+        t.eq(db.laundryEvents.length, 0, i + ' — נכתב אירוע למרות הדחייה');
+      });
+    },
+
+    '⛔ רגרסיה B70: nobleMarkReady עדיין חוסמת קליטה שלא נשקלה': (t, { srv }) => {
+      const db = B73.db(srv, { status: 'באריזה' });
+      const r = srv.nobleMarkReady(db, { intake_id: 'IK1', worker_pin: '999' }, 'המנהל');
+      t.no(r.ok, '⛔⛔ קליטה ללא שקילה סומנה כמוכנה — הכביסה תצא בלי חיוב');
+      t.has(r.error, 'שקילה', 'הודעת החסימה אינה מדברת על שקילה');
+    },
+
+    /* ---------- ⛔ הכרעה 2א: מנהל ומשרד בלבד ---------- */
+
+    '⛔ עובד מכבסה אינו רשאי לקדם ידנית — ולא נכתב כלום': (t, { srv }) => {
+      const db = B73.db(srv);
+      const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'עובד');
+      t.no(r.ok, '⛔⛔ עובד מכבסה עקף את הסריקה בשטח');
+      t.eq(db.laundryEvents.length, 0, '⛔ נכתב אירוע למרות דחיית ההרשאה');
+      t.eq(db.laundryIntakes[0].status, 'התקבל', 'הסטטוס השתנה למרות דחיית ההרשאה');
+    },
+
+    'משרד כן רשאי — אותו שער של b34OfficeOk': (t, { srv }) => {
+      const db = B73.db(srv);
+      t.ok(srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'המשרד').ok,
+        'משרד נחסם — השער אינו b34OfficeOk');
+    },
+
+    /* ---------- ⛔ מצבי קצה ---------- */
+
+    '⛔ עגלה שאינה משוייכת לקליטה — ועגלה ריקה': (t, { srv }) => {
+      const db = B73.db(srv);
+      t.no(srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA2', to_stage: 'בכביסה' }, 'המנהל').ok,
+        '⛔ קודמה עגלה שאינה שייכת לקליטה');
+      t.no(srv.w18Advance(db, { intake_id: 'IK1', cart_id: '', to_stage: 'בכביסה' }, 'המנהל').ok,
+        '⛔ קידום בלי עגלה התקבל');
+      t.eq(db.laundryEvents.length, 0, '⛔ נכתב אירוע למרות הדחייה');
+    },
+
+    '⛔ קליטה שכבר במשלוח או נמסרה — נחסמת': (t, { srv }) => {
+      ['במשלוח', 'נמסר'].forEach(st => {
+        const db = B73.db(srv, { status: st });
+        const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'המנהל');
+        t.no(r.ok, st + ' — ⛔ קליטה שעזבה את המפעל קודמה מלוח הכביסה');
+        t.eq(db.laundryEvents.length, 0, st + ' — נכתב אירוע למרות הדחייה');
+      });
+    },
+
+    '⛔ שלב יעד לא חוקי נדחה עם הודעה שמונה את המותרים': (t, { srv }) => {
+      const db = B73.db(srv);
+      const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'שלב לא מוכר' }, 'המנהל');
+      t.no(r.ok, '⛔ שלב לא מוכר התקבל');
+      t.has(r.error, 'בכביסה', 'ההודעה אינה מונה את השלבים החוקיים');
+      t.eq(db.laundryEvents.length, 0, 'נכתב אירוע למרות הדחייה');
+    },
+
+    'שלב יעד מלוכלך עובר דרך sPick ונשמר קנוני (B64a)': (t, { srv }) => {
+      [' בייבוש', 'בייבוש ', 'בייבוש\u00A0', '\u200Fבייבוש'].forEach((dirty, i) => {
+        const db = B73.db(srv);
+        const r = srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: dirty }, 'המנהל');
+        t.ok(r.ok, i + ' — שלב מלוכלך נדחה: ' + r.error);
+        t.eq(db.laundryIntakes[0].status, 'בייבוש', i + ' — ⛔ הסטטוס נשמר מלוכלך — הבאג של B64a מתרבה');
+        t.eq(srv.sVal(db.laundryEvents[0].stage), 'בייבוש', i + ' — השלב ביומן אינו קנוני');
+      });
+    },
+
+    /* ---------- ⛔⛔ המלכודת המרכזית: המלאי לא זז ---------- */
+
+    '⛔⛔ המלאי לא זז — inLaundryQty ו-availableQty זהים לפני ואחרי': (t, { srv }) => {
+      const db = B73.db(srv);
+      const inBefore = srv.inLaundryQty(db, 'IT1');
+      const avBefore = srv.availableQty(db, 'IT1', '2026-09-01', '2026-09-03');
+      const rsBefore = srv.reservedQty(db, 'IT1', '2026-09-01', '2026-09-03');
+      t.ok(srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'המנהל').ok, 'הקידום נדחה');
+      t.eq(srv.inLaundryQty(db, 'IT1'), inBefore,
+        '⛔⛔ קליטת NOBLE זלגה ל-inLaundryQty — נוצרו laundry_tasks מזויפות');
+      t.eq(srv.availableQty(db, 'IT1', '2026-09-01', '2026-09-03'), avBefore,
+        '⛔⛔ הזמינות השתנתה בגלל קליטת כביסה — זו בדיוק המלכודת של WASH-18');
+      t.eq(srv.reservedQty(db, 'IT1', '2026-09-01', '2026-09-03'), rsBefore, '⛔ השריון זז');
+      t.eq(db.laundryTasks.length, 0, '⛔⛔ נוצרה שורת laundry_tasks לקליטת NOBLE');
+    },
+
+    '⛔ גם קליטה דרך nobleIntake אינה מייצרת שורת משימה': (t, { srv }) => {
+      const db = B73.db(srv);
+      db.carts[1].status = 'פנויה';
+      const before = srv.availableQty(db, 'IT1', '2026-09-01', '2026-09-03');
+      const r = srv.nobleIntake(db, { customer_id: 'C1', cart_barcodes: ['CA2'], worker_pin: '111' }, 'עובד');
+      t.ok(r.ok, 'הקליטה נדחתה: ' + r.error);
+      t.eq(db.laundryTasks.length, 0, '⛔⛔ nobleIntake התחילה ליצור laundry_tasks');
+      t.eq(srv.availableQty(db, 'IT1', '2026-09-01', '2026-09-03'), before, '⛔⛔ קליטה חדשה הזיזה את המלאי');
+    },
+
+    /* ---------- ⛔ לא מזדהם ולא שובר ---------- */
+
+    '⛔ קידום ידני אינו מזדהם את תצוגת המכונות': (t, { srv }) => {
+      const db = B73.db(srv);
+      srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בכביסה' }, 'המנהל');
+      const load = srv.nobleMachineLoad(db);
+      t.eq(Object.keys(load).length, 0,
+        '⛔ מנה בלי מכונה נכנסה לעומס המכונות — הלוח החי יציג מכונה תפוסה שריקה');
+      const b = srv.nobleBoard(db);
+      t.ok(b.ok, 'הלוח החי נשבר אחרי קידום ידני: ' + b.error);
+      t.eq(b.intakes.length, 1, 'הקליטה נעלמה מהלוח החי');
+    },
+
+    '⛔ סריקה רגילה ברצפת הייצור ממשיכה לעבוד אחרי קידום ידני': (t, { srv }) => {
+      const db = B73.db(srv);
+      srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בייבוש' }, 'המנהל');
+      const r = srv.nobleStageStart(db, { cart_barcode: 'CA1', machine_barcode: 'M1', worker_pin: '111' }, 'עובד');
+      t.ok(r.ok, '⛔⛔ הסריקה הרגילה נשברה אחרי קידום ידני: ' + r.error);
+      t.eq(r.stage, 'בכביסה', 'השלב נקבע על ידי המכונה — וזה לא השתנה');
+    },
+
+    '⛔ מסלול הטקסטיל של MAPA לא נגע — receiveReturn עדיין יוצר משימות': (t, { srv }) => {
+      const db = B73.db(srv);
+      db.orders = [{ id: 'OR', type: 'השכרה', customer_id: 'C1', status: 'סופקה',
+                     start_date: '2026-09-01', end_date: '2026-09-03', delivery_fee: 0 }];
+      db.orderLines = [{ id: 'L1', order_id: 'OR', item_id: 'IT1', qty: 4, unit_price: 25, returned_qty: '' }];
+      const r = srv.receiveReturn(db, 'OR', [{ line_id: 'L1', qty: 4 }], '2026-09-04',
+        (p) => p + '-R', 'המנהל');
+      t.ok(r.ok, '⛔⛔ החזרת טקסטיל נשברה: ' + r.error);
+      t.ok(db.laundryTasks.length > 0, '⛔⛔ receiveReturn הפסיק ליצור laundry_tasks — מסלול MAPA נהרס');
+      t.ok(db.laundryTasks.every(x => String(x.item_id) !== ''), '⛔ נוצרה משימה בלי פריט');
+    },
+
+    /* ---------- ⛔ כסף וסכימה ---------- */
+
+    '⛔ הכסף לא זז — קידום ידני אינו מחייב ואינו מבטל חיוב': (t, { srv }) => {
+      const db = B73.db(srv, { status: 'באריזה' });
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 25, worker_pin: '111' }, 'עובד');
+      const chargeBefore = db.laundryIntakes[0].total_charge;
+      const netBefore = db.laundryIntakes[0].net_weight_kg;
+      srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בייבוש' }, 'המנהל');
+      t.eq(db.laundryIntakes[0].total_charge, chargeBefore, '⛔⛔ החיוב השתנה בקידום שלב');
+      t.eq(db.laundryIntakes[0].net_weight_kg, netBefore, '⛔ המשקל הנטו השתנה בקידום שלב');
+    },
+
+    '⛔ R6: שלושת מקורות היתרה מחזירים אותו מספר אחרי קידום ידני': (t, { srv }) => {
+      const db = B73.db(srv, { status: 'באריזה' });
+      srv.nobleWeigh(db, { cart_barcode: 'CA1', gross_kg: 25, worker_pin: '111' }, 'עובד');
+      db.laundryIntakes[0].invoice_id = 'INV1';
+      db.invoices = [{ id: 'INV1', number: 1001, order_id: '', customer_id: 'C1',
+        date: '2026-08-02', subtotal: 200, vat_rate: 0.18, vat: 36, total: 236, status: 'פתוחה' }];
+      srv.b54Bump();
+      const bal = srv.b48BalancesAg(db)['C1'] || 0;
+      t.ok(bal > 0, 'קו הבסיס אפס — הבדיקה אינה מוכיחה דבר');
+      srv.w18Advance(db, { intake_id: 'IK1', cart_id: 'CA1', to_stage: 'בייבוש' }, 'המנהל');
+      srv.b54Bump();
+      const after = srv.b48BalancesAg(db)['C1'] || 0;
+      t.eq(after, bal, '⛔⛔ יתרת הלקוח השתנתה בקידום שלב');
+      t.eq(srv.b2CreditUsedAg(db, 'C1'), after, '⛔ מנוע האשראי וספר החיובים התפצלו (R6)');
+    },
+
+    '⛔ אין שינוי סכימה — שלוש הטבלאות לא זזו': (t, { srv }) => {
+      t.eq(JSON.stringify(srv.TABLES.laundry_events),
+        JSON.stringify(['id', 'ts', 'intake_id', 'customer_id', 'cart_id', 'machine_id', 'stage',
+          'event_type', 'worker_id', 'worker_name', 'gross_kg', 'tare_kg', 'net_kg',
+          'price_per_kg', 'charge', 'note', 'portion_kg', 'ref_id']),
+        '⛔⛔ סכימת laundry_events השתנתה — B73 הוגדר בלי שינוי סכימה');
+      t.eq(srv.TABLES.laundry_tasks[srv.TABLES.laundry_tasks.length - 1], 'intake_id',
+        '⛔ סכימת laundry_tasks השתנתה');
+      t.ok(srv.TABLES.laundry_intakes.indexOf('status') > -1, '⛔ laundry_intakes.status נעלם');
+    },
+
+    '⛔⛔ laundry_events נשאר append-only והדפוס של WASH-03 לא חזר': (t, { H }) => {
+      const src = H.stripComments(H.serverSrc());
+      t.hasNot(src, "writeTable('laundry_events'", '⛔⛔ laundry_events נדרס — הוא append-only');
+      t.hasNot(src, 'writeTable("laundry_events"', '⛔⛔ laundry_events נדרס — הוא append-only');
+      t.hasNot(src, 'lastByCart', '⛔⛔ הדפוס של WASH-03 חזר לקוד');
+    },
+
+    '⛔ B71 לא נשבר — כסף הכביסה עדיין באגורות שלמות': (t, { srv }) => {
+      t.eq(srv.w10MulAg(0.59, 8.5), 502, '⛔⛔ החישוב באגורות שלמות נשבר');
+      t.eq(srv.fromAg(502), 5.02, '⛔ ההמרה חזרה לשקלים נשברה');
+    },
+
+    '⛔ אין רשימת שלבים שנייה — הקידום נשען על NOBLE_WORK_STAGES': (t, { srv }) => {
+      t.eq(JSON.stringify(srv.NOBLE_WORK_STAGES),
+        JSON.stringify(['בכביסה', 'בייבוש', 'בגיהוץ וקיפול', 'באריזה']),
+        '⛔ רשימת שלבי העבודה השתנתה — הקידום הידני נשען עליה');
+    }
+
+  }
+});
+
+SPECS.push({
+  file: 't19-b73-wash18-ui',
+  title: 'B73 / WASH-18 — הממשק: הקליטה על לוח הכביסה',
+  needs: 'ui',
+  requires: ['rLaundry', 'w18BoardCol', 'w18BoardIntakes', 'w18HasTasks', 'w18Carts',
+             'w18CartOpens', 'w18CardHtml', 'w18CanManual', 'w18AdvanceForm', 'w18DoAdvance',
+             'w18GoFloor', 'w18Targets', 'go', 'el', 'sVal', 'sPick', 'STAGES', 'NOBLE_STAGES',
+             'NOBLE_MACHINE_STAGES', 'advanceForm', 'b49bIsVirtual'],
+
+  tests: {
+
+    /* ---------- ⭐⭐ הפריט עצמו ---------- */
+
+    '⭐⭐ WASH-18: קליטת כביסה של לקוח מופיעה על לוח הכביסה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן' }];
+      w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש' }];
+      w.DB.laundryIntakes = [{ id: 'IK1', customer_id: 'C1', internal: '', status: 'בכביסה',
+        intake_ts: '2026-08-16 08:00', ready_ts: '', order_id: '', net_weight_kg: '' }];
+      w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן' }];
+      w.go('laundry');
+      const h = w.el('main').innerHTML;
+      t.has(h, 'מלון הים', '⛔⛔ קליטת הלקוח אינה מופיעה בלוח — זה WASH-18 עצמו');
+      t.has(h, 'IK1', 'מזהה הקליטה אינו מוצג');
+      t.has(h, 'עגלה CA1', 'העגלה אינה מוצגת בכרטיס');
+      t.has(h, 'כביסת לקוח', 'הכרטיס אינו מסומן כקליטה — יבלבלו אותה עם משימת טקסטיל');
+    },
+
+    '⭐ הקליטה יושבת בעמודת השלב הנכון, ו"באריזה" בעמודת הגיהוץ': (t, { w }) => {
+      const mk = st => ({ id: 'IK1', customer_id: 'C1', internal: '', status: st, ready_ts: '' });
+      t.eq(w.w18BoardCol(mk('התקבל')), 'התקבל', 'עמודה שגויה ל"התקבל"');
+      t.eq(w.w18BoardCol(mk('בייבוש')), 'בייבוש', 'עמודה שגויה ל"בייבוש"');
+      t.eq(w.w18BoardCol(mk('באריזה')), 'בגיהוץ וקיפול',
+        '⛔ "באריזה" אינו עמודה בלוח — הוא אמור להופיע בגיהוץ וקיפול');
+      t.eq(w.w18BoardCol(mk('במשלוח')), '', '⛔ קליטה שיצאה למשלוח נשארה על הלוח');
+      t.eq(w.w18BoardCol(mk('נמסר')), '', '⛔ קליטה שנמסרה נשארה על הלוח');
+    },
+
+    '⛔ שלב מלוכלך או לא מוכר — הקליטה לא נעלמת (לקח WASH-14)': (t, { w }) => {
+      const mk = st => ({ id: 'IK1', customer_id: 'C1', internal: '', status: st, ready_ts: '' });
+      [' בכביסה', 'בכביסה ', 'בכביסה ', '‏בכביסה'].forEach((dirty, i) => {
+        t.eq(w.w18BoardCol(mk(dirty)), 'בכביסה', i + ' — ⛔⛔ שלב מלוכלך העלים את הקליטה');
+      });
+      t.eq(w.w18BoardCol(mk('שלב לא מוכר')), 'התקבל',
+        '⛔ שלב לא מוכר העלים את הקליטה מהלוח לגמרי');
+    },
+
+    /* ---------- ⛔ הכרעה 4א: אין כפילות ---------- */
+
+    '⛔⛔ קליטה שיש לה משימות (החזרת טקסטיל B49c) אינה מוצגת פעמיים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.laundryIntakes = [{ id: 'IK1', customer_id: '', internal: 'כן', status: 'בכביסה', ready_ts: '' }];
+      w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'VCART-001', active: 'כן' }];
+      w.DB.laundryTasks = [{ id: 'W1', order_id: 'OR', item_id: 'IT1', qty: 4, stage: 'בכביסה',
+        cart_id: 'VCART-001', intake_id: 'IK1', done_date: '' }];
+      t.ok(w.w18HasTasks('IK1'), 'הזיהוי של קליטה עם משימות נכשל');
+      t.eq(w.w18BoardIntakes().length, 0,
+        '⛔⛔ החזרת טקסטיל תוצג פעמיים בלוח — גם כמשימה וגם כקליטה');
+    },
+
+    'כביסה פנימית בלי משימות — כן מוצגת, עם תג מפורש': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש' }];
+      w.DB.laundryIntakes = [{ id: 'IK2', customer_id: '', internal: 'כן', status: 'בייבוש', ready_ts: '' }];
+      w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK2', cart_id: 'CA1', active: 'כן' }];
+      t.eq(w.w18BoardIntakes().length, 1, 'כביסה פנימית ידנית נעלמה מהלוח');
+      t.has(w.w18CardHtml(w.DB.laundryIntakes[0]), 'פנימי MAPA',
+        '⛔ כביסה פנימית אינה מסומנת — תיראה כאילו היא של לקוח');
+    },
+
+    /* ---------- ⛔ הכרעה 2א: מי רואה כפתור קידום ידני ---------- */
+
+    '⛔ כפתור הקידום הידני — למנהל ולמשרד בלבד': (t, { w, srv, H }) => {
+      const seed = () => {
+        w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש' }];
+        w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+        w.DB.laundryIntakes = [{ id: 'IK1', customer_id: 'C1', internal: '', status: 'בכביסה', ready_ts: '' }];
+        w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן' }];
+      };
+      H.login(w, 'מנהל', srv); seed();
+      t.has(w.w18CardHtml(w.DB.laundryIntakes[0]), 'w18AdvanceForm(', 'מנהל אינו רואה את כפתור הקידום');
+      H.login(w, 'משרד', srv); seed();
+      t.has(w.w18CardHtml(w.DB.laundryIntakes[0]), 'w18AdvanceForm(', 'משרד אינו רואה את כפתור הקידום');
+      H.login(w, 'מכבסה', srv); seed();
+      const h = w.w18CardHtml(w.DB.laundryIntakes[0]);
+      t.hasNot(h, 'w18AdvanceForm(', '⛔⛔ עובד מכבסה רואה קידום ידני — הכרעה 2א הופרה');
+      t.has(h, 'w18GoFloor(', '⛔ עובד מכבסה אינו רואה אפילו קיצור לרצפת הייצור');
+    },
+
+    '⛔ טופס הקידום — בורר עגלה (3ב) + בורר שלב עם אזהרת "מוכן"': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש' },
+                    { id: 'CA2', barcode: 'CA2', status: 'בשימוש' }];
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.laundryIntakes = [{ id: 'IK1', customer_id: 'C1', internal: '', status: 'בכביסה', ready_ts: '' }];
+      w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן' },
+                          { id: 'IC2', intake_id: 'IK1', cart_id: 'CA2', active: 'כן' }];
+      w.w18AdvanceForm('IK1');
+      const f = w.el('modal').innerHTML;
+      t.has(f, 'w18_cart', '⛔ אין בורר עגלה — הכרעה 3ב הופרה');
+      t.has(f, 'CA2', 'העגלה השנייה אינה בבורר');
+      t.has(f, 'w18_to', 'אין בורר שלב יעד');
+      t.has(f, 'בייבוש', 'שלב עבודה חסר בבורר');
+      t.hasNot(f, '>בכביסה<', 'השלב הנוכחי אמור לרדת מרשימת היעדים');
+      t.has(f, 'דורש שכל העגלות נשקלו',
+        '⛔⛔ "מוכן" מוצג בלי האזהרה שהוא דורש שקילה');
+      w.closeModal();
+    },
+
+    '⛔⛔ "מוכן" בממשק זורם ל-nobleMarkReady ולא ל-w18Advance': (t, { w, H }) => {
+      const src = H.stripComments(H.uiScript());
+      const m = src.match(/async function w18DoAdvance\(\)[\s\S]*?\n\}/) ||
+                src.match(/async function w18DoAdvance\([\s\S]*?\n\}/);
+      t.ok(!!m, 'w18DoAdvance נעלמה מהממשק');
+      t.has(m[0], 'nobleMarkReady',
+        '⛔⛔ "מוכן" אינו עובר דרך nobleMarkReady — חובת השקילה נעקפה');
+      t.has(m[0], 'w18Advance', 'קידום שלב רגיל אינו נשלח ל-w18Advance');
+    },
+
+    /* ---------- ⛔ רגרסיות ---------- */
+
+    '⛔ משימות הטקסטיל של MAPA ממשיכות להופיע בדיוק כמו היום': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+      w.DB.orders = [{ id: 'OR', type: 'השכרה', customer_id: 'C1', status: 'סופקה' }];
+      w.DB.laundryTasks = [{ id: 'W1', order_id: 'OR', item_id: 'IT1', qty: 4, stage: 'בכביסה',
+        cart_id: 'CA9', machine_id: 'M9', done_date: '', intake_id: '' }];
+      w.go('laundry');
+      const h = w.el('main').innerHTML;
+      t.has(h, 'מגבת', '⛔⛔ משימת הטקסטיל נעלמה מהלוח');
+      t.has(h, 'advanceForm(', '⛔ כפתור הקידום של משימת טקסטיל נעלם');
+      t.has(h, 'laundrySplitForm(', '⛔ כפתור הפיצול נעלם');
+    },
+
+    '⛔ מונה העמודה סופר את שני המקורות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+      w.DB.carts = [{ id: 'CA1', barcode: 'CA1', status: 'בשימוש' }];
+      w.DB.orders = [{ id: 'OR', type: 'השכרה', customer_id: 'C1', status: 'סופקה' }];
+      w.DB.laundryTasks = [{ id: 'W1', order_id: 'OR', item_id: 'IT1', qty: 4, stage: 'בכביסה',
+        cart_id: 'CA9', machine_id: 'M9', done_date: '', intake_id: '' }];
+      w.DB.laundryIntakes = [{ id: 'IK1', customer_id: 'C1', internal: '', status: 'בכביסה', ready_ts: '' }];
+      w.DB.intakeCarts = [{ id: 'IC1', intake_id: 'IK1', cart_id: 'CA1', active: 'כן' }];
+      w.go('laundry');
+      t.has(w.el('main').innerHTML, 'בכביסה<span class="cnt">2</span>',
+        '⛔ מונה העמודה אינו סופר את שני המקורות');
+    },
+
+    '⛔ רגרסיה B72: אין דרך להוסיף פריט להזמנת כביסה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'לקוח', active: 'כן' }];
+      w.DB.orders = [{ id: 'OW', type: 'כביסה', customer_id: 'C1', status: 'טיוטה',
+                       start_date: '2026-09-01', end_date: '2026-09-03', notes: '' }];
+      w.openOrder('OW');
+      t.hasNot(w.el('modal').innerHTML, '+ הוסף פריט', '⛔⛔ בורר המלאי חזר להזמנת כביסה (B72)');
+      w.closeModal();
+    },
+
+    '⛔ שכבה 2 לא נגעה — B73 אינו נוגע ביכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n);
+      t.no(names.some(n => /WASH-18|B73/.test(n)),
+        '⛔ נוספה טענה לכרטיס הבדיקה העצמית — B73 אינו יכולת דפדפן');
     }
 
   }
