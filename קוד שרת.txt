@@ -119,7 +119,8 @@
 //                   ⛔ לא הוחל על כסף, על משקל ועל מזהים.
 //                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
 //             B70 — WASH-03: עגלה שחוזרת לאותה קליטה שומרת את החיוב — canary v4.70-B70
-//             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg) — canary v4.72-B72
+//             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg)
+//             B73 — WASH-18: קליטת NOBLE נראית בלוח הכביסה + w18Advance — canary v4.73-B73
 //                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
 //                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
 //                     שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת
@@ -4478,6 +4479,7 @@ function handle(action, p, db, user) {
     case 'nobleDeliver': return nobleDeliver(db, p, user);
     case 'nobleReleaseCart': return nobleReleaseCart(db, p, user); // B39b
     case 'b49dAddCarts': return b49dAddCarts(db, p, user);         // B49d (L2): הוספת עגלות לקליטה פתוחה
+    case 'w18Advance': return w18Advance(db, p, user);             // B73 (WASH-18): קידום שלב ידני מלוח הכביסה
     case 'nobleCreateInvoice': return nobleCreateInvoice(db, p, user);
 
     // ---- B54: ספר החיובים ----
@@ -7536,6 +7538,86 @@ function nobleEtaMin(db, intake, avgs) {
     if (m > eta) eta = m;
   });
   return Math.round(eta);
+}
+
+/* ============================================================
+   ⭐⭐ WASH-18 (B73) — קידום שלב ידני לקליטת NOBLE מלוח הכביסה
+   ------------------------------------------------------------
+   השורש של WASH-18: שני מודלים מקבילים לאותו מסך.
+     · טקסטיל MAPA — laundry_tasks (item_id + qty), נוצר רק ב-receiveReturn.
+     · כביסת לקוח NOBLE — laundry_intakes + intake_carts + laundry_events,
+       נוצר רק ב-nobleIntake. אין לה פריט, ולכן אין לה שורת משימה.
+   ⛔ הפתרון **אינו** יצירת laundry_tasks מזויפות לקליטת NOBLE — זה
+   היה מזליג אותה ל-inLaundryQty ומשם ל-availableQty, ומוליד את WASH-17
+   מחדש. הלוח מציג את הקליטה כשכבת תצוגה בלבד — המלאי לא זז.
+
+   הכרעות אבי 16.08.2026:
+     1א — קידום ידני בלי סריקה פיזית (בדיקות · עובד חדש), אבל
+          "מוכן" **אינו עוקף** את nobleMarkReady ואת חובת השקילה.
+     2  — בורר שלב יעד עם דילוג וחזרה אחורה — אותו דפוס של B59.
+     3ב — הקידום חל על **עגלה נבחרת** בתוך הקליטה, לא על כולה.
+     4א — קליטה שיש לה laundry_tasks (החזרת טקסטיל B49c) אינה מוצגת שוב.
+
+   ⛔ אין דפוס שני (R8): הכתיבה כאן זהה ל-b49cAfterAdvance — סגירת המנות
+   הפתוחות ב'סיום' ופתיחת השלב החדש ב'התחלה'. ההבדל היחיד:
+   machine_id ריק, כי לא נסרקה מכונה. nobleMachineLoad מדלגת על אירוע בלי
+   מכונה, ולכן תצוגת המכונות בלוח החי אינה מזדהמת.
+   ⛔ laundry_events נשאר append-only — nobleEvent בלבד, אין writeTable עליו.
+   ⛔ השלבים המותרים הם NOBLE_WORK_STAGES הקיימים — אין רשימה שנייה.
+============================================================ */
+var W18_MANUAL_NOTE = 'קידום ידני מלוח הכביסה — בלי סריקת מכונה';
+
+function w18Advance(db, p, user) {
+  /* הכרעה 2א: קידום בלי סריקה הוא עקיפה של הבקרה בשטח — מנהל ומשרד בלבד.
+     b34OfficeOk הוא אותו שער שבו משתמש b49fDeclareGate — אין רשימת תפקידים שנייה. */
+  if (!b34OfficeOk(db, user))
+    return { ok: false, error: 'רק מנהל או משרד רשאים לקדם שלב ידנית מלוח הכביסה. בשטח — סרוק עגלה ומכונה במסך רצפת הייצור' };
+  var ik = nobleIntakeById(db, String(p.intake_id || '').trim());
+  if (!ik) return { ok: false, error: 'קליטה לא נמצאה' };
+  if (['במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1)
+    return { ok: false, error: 'הקליטה כבר ' + ik.status + ' — אין לקדם אותה מלוח הכביסה' };
+  var cartId = String(p.cart_id || '').trim();
+  if (!cartId) return { ok: false, error: 'יש לבחור עגלה' };
+  var bind = db.intakeCarts.find(function (b) {
+    return b.intake_id === ik.id && String(b.cart_id) === cartId && sVal(b.active) === 'כן';
+  });
+  if (!bind) return { ok: false, error: 'העגלה ' + cartId + ' אינה משוייכת לקליטה ' + ik.id };
+  /* ⛔⛔ הכרעה 1א: "מוכן" אינו עובר כאן. nobleMarkReady הוא השומר היחיד
+     שמוודא ששוקלו כל העגלות הפעילות (B70/B71), והוא חייב לרוץ **לפני**
+     כל כתיבה — laundry_events הוא append-only ואי-אפשר לבטל 'סיום' שכבר נכתב.
+     לכן הממשק שולח "מוכן" ישירות ל-nobleMarkReady, וכאן רק נחסם. */
+  if (sPick(p.to_stage, NOBLE_STAGES) === 'מוכן')
+    return { ok: false, error: 'סימון "מוכן" נעשה בפעולה שלו — היא בודקת ששוקלו כל העגלות לפני שהכביסה יוצאת' };
+  var to = sPick(p.to_stage, NOBLE_WORK_STAGES);
+  if (to === '')
+    return { ok: false, error: 'שלב יעד לא חוקי: "' + String(p.to_stage || '(ריק)') + '". המותרים: ' + NOBLE_WORK_STAGES.join(' · ') };
+  var w = b49cWorkerRef(db, user);
+  var from = String(ik.status || '');
+  /* 1. סגירת כל המנות הפתוחות של העגלה הנבחרת — בדיוק כמו b49cAfterAdvance */
+  var closed = [];
+  nobleOpenStarts(db, ik.id, cartId).forEach(function (o) {
+    nobleEvent(db, {
+      intake_id: ik.id, customer_id: ik.customer_id, cart_id: cartId, machine_id: o.machine_id,
+      stage: o.stage, event_type: 'סיום', worker_id: w.id, worker_name: w.name,
+      portion_kg: o.portion_kg || '', note: W18_MANUAL_NOTE
+    });
+    closed.push(o.stage + (o.machine_id ? ' · ' + o.machine_id : ''));
+  });
+  /* 2. פתיחת השלב החדש לאותה עגלה. machine_id ריק — לא נסרקה מכונה. */
+  nobleEvent(db, {
+    intake_id: ik.id, customer_id: ik.customer_id, cart_id: cartId, machine_id: '',
+    stage: to, event_type: 'התחלה', worker_id: w.id, worker_name: w.name,
+    note: W18_MANUAL_NOTE
+  });
+  /* 3. סטטוס הקליטה עוקב אחרי הפעולה האחרונה — בדיוק כמו
+     nobleStageStart ו-b49cAfterAdvance. אין כאן שדה חדש ואין שינוי סכימה. */
+  if (sVal(ik.status) !== to) { ik.status = to; writeTable('laundry_intakes', db.laundryIntakes); }
+  return {
+    ok: true, intake_id: ik.id, cart_id: cartId, stage: to, from: from, closed: closed,
+    auditNote: 'WASH-18 קידום ידני · ' + ik.id + ' · ' + cartId + ' · ' +
+      (from || 'ללא שלב') + ' ← ' + to +
+      (closed.length ? ' · נסגרו: ' + closed.join(', ') : '') + ' · בלי סריקת מכונה'
+  };
 }
 
 // --- פעולת קריאה: תמונת מצב מלאה ללוח החי ---
