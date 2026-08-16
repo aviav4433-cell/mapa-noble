@@ -119,6 +119,7 @@
 //                   ⛔ לא הוחל על כסף, על משקל ועל מזהים.
 //                   ⚠ אין שינוי סכימה — אין להריץ setupDatabase.
 //             B70 — WASH-03: עגלה שחוזרת לאותה קליטה שומרת את החיוב — canary v4.70-B70
+//             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg) — canary v4.71-B71
 //                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
 //                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
 //                     שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת
@@ -6751,6 +6752,30 @@ var NOBLE_MACHINE_STAGES = ['בכביסה', 'בייבוש', 'בגיהוץ וקי
 
 function nRound2(n) { return Math.round(Number(n) * 100) / 100; }
 
+/* ============================================================
+   ⛔ B71 / WASH-10 — הכסף במסלול הכביסה באגורות שלמות
+   ============================================================
+   הבאג שנסגר כאן: nRound2 היא Math.round(n*100)/100, והיא מפילה אגורה
+   כשהתוצאה נופלת בדיוק על חצי אגורה — בגלל ייצוג בינארי של המספר.
+   דוגמה אמיתית: נטו 0.59 ק"ג × 8.5 ₪ = 5.015, אבל 5.015*100 הוא
+   501.49999999999994, ולכן נכתב 5.01 במקום 5.02. הסטייה **תמיד לרעת
+   העסק**. נמדד על טווח מלא: 1.9% מהשקילות ו-0.4% מסכומי המע"מ.
+   הפתרון: כל חשבון הכסף במסלול הכביסה נעשה **באגורות שלמות** (integer),
+   וההמרה חזרה לשקלים נעשית פעם אחת בלבד, בזמן הכתיבה, דרך fromAg.
+   ⛔ אין לגעת ב-toAg — הוא משרת את מנוע האשראי, את ספר החיובים ואת
+   b48BalancesAg (R6). שינוי שלו יזיז יתרות היסטוריות.
+   ⛔ הכרעת אבי 09.08.2026: חיובים היסטוריים בגיליון **נשארים כפי שהם**.
+   התיקון חל על שקילות ועל חשבוניות מכאן והלאה בלבד.
+   ⛔ משקל אינו כסף: nRound2(gross - tare) נשאר כפי שהוא (הכרעת אבי). */
+
+// המרה בטוחה למאיות (ק"ג → מאיות ק"ג · שקלים → אגורות), בלי שגיאת השבר הבינארי
+function w10Cent(v) { return Math.round(Number((Number(v || 0) * 100).toFixed(6))); }
+// מכפלה של שני ערכים עשרוניים → אגורות שלמות, בחשבון שלמים בלבד
+function w10MulAg(a, b) { return Math.round(w10Cent(a) * w10Cent(b) / 100); }
+// שיעור (מע"מ) מסכום שכבר באגורות → אגורות שלמות
+function w10PctAg(ag, rate) { return Math.round((Math.round(Number(ag) || 0)) * w10Cent(rate) / 100); }
+function fromAg(ag){ return Math.round(Number(ag||0))/100; }
+
 // זיהוי העובד המבצע: קוד אישי (מצב טאבלט משותף) גובר על סשן אישי
 function nobleWorker(db, p, user) {
   if (p.worker_pin !== undefined && String(p.worker_pin) !== '') {
@@ -6928,14 +6953,17 @@ function b70CartNeedsWeigh(db, intakeId, cartId) {
 // חישוב סיכום שקילות מהיומן: **סכום כל השקילות התקפות** (B70)
 function nobleWeighRollup(db, intakeId) {
   var ws = b70Weighs(db, intakeId);
-  var net = 0, charge = 0, seen = {}, weighedCarts = [];
+  /* ⛔ B71/WASH-10: הצבירה נעשית בשלמים — מאיות ק"ג ואגורות. סכימת שברים
+     עשרוניים היא נכונה-במקרה, ואינה עומדת בכלל האגורות השלמות של המערכת.
+     ⛔ B70: הסיכום **מצטבר**. אין מפתח שדורס לפי עגלה. */
+  var netC = 0, chargeAg = 0, seen = {}, weighedCarts = [];
   ws.forEach(function (x) {
-    net += x.net_kg;
-    charge += x.charge;
+    netC += w10Cent(x.net_kg);
+    chargeAg += w10Cent(x.charge);
     // ⛔ עגלה נחשבת "נשקלה" רק אם נותר לה משקל תקף — שקילה שבוטלה אינה נחשבת
     if (x.net_kg > 0 && !seen[x.cart_id]) { seen[x.cart_id] = 1; weighedCarts.push(x.cart_id); }
   });
-  return { net: nRound2(net), charge: nRound2(charge), count: ws.length, carts: weighedCarts, weighs: ws };
+  return { net: fromAg(netC), charge: fromAg(chargeAg), count: ws.length, carts: weighedCarts, weighs: ws };
 }
 
 // --- פעולת קריאה: מידע לעגלה סרוקה (למסך הרצפה) ---
@@ -7165,7 +7193,8 @@ function nobleWeigh(db, p, user) {
     price = Number(cust && cust.price_per_kg) || 0;
     if (!(price > 0)) return { ok: false, error: 'ללקוח לא הוגדר מחיר לק"ג — עדכן בכרטיס הלקוח לפני שקילה' };
   }
-  var charge = nRound2(net * price); // פנימי: מחיר 0 → חיוב 0 (נספר במשקלים, לא בהכנסות)
+  /* ⛔ B71/WASH-10: החיוב מחושב באגורות שלמות ומומר לשקלים פעם אחת בלבד */
+  var charge = fromAg(w10MulAg(net, price)); // פנימי: מחיר 0 → חיוב 0 (נספר במשקלים, לא בהכנסות)
   nobleEvent(db, {
     intake_id: intake.id, customer_id: intake.customer_id, cart_id: cart.id,
     stage: 'באריזה', event_type: 'שקילה', worker_id: w.id, worker_name: w.name,
@@ -7210,7 +7239,7 @@ function nobleWeighFix(db, p, user) {
     if (!(gross > 0)) return { ok: false, error: 'יש להזין משקל ברוטו תקין (ק"ג), או לסמן ביטול שקילה' };
     net = nRound2(gross - tare);
     if (!(net > 0)) return { ok: false, error: 'משקל נטו אינו חיובי (ברוטו ' + gross + ' − משקל עצמי ' + tare + ')' };
-    charge = nRound2(net * price);   // ⛔ המחיר מוקפא באירוע המקורי — תיקון לא מחיל מחירון חדש
+    charge = fromAg(w10MulAg(net, price));   // ⛔ המחיר מוקפא באירוע המקורי — תיקון לא מחיל מחירון חדש (B71: אגורות שלמות)
   }
   nobleEvent(db, {
     intake_id: ev.intake_id, customer_id: ev.customer_id, cart_id: ev.cart_id,
@@ -7574,11 +7603,16 @@ function nobleCreateInvoice(db, p, user) {
     return true;
   });
   if (!open.length) return { ok: false, error: 'אין חיובי מכבסה פתוחים ללקוח זה (קליטה שנפתחה מהזמנה מחויבת דרך חשבונית ההזמנה)' };
-  var sub = nRound2(open.reduce(function (s2, i) { return s2 + Number(i.total_charge); }, 0));
-  var vat = nRound2(sub * VAT_RATE);
+  /* ⛔ B71/WASH-10 · כלל B45: הסכום, המע"מ והסה"כ נבנים באגורות שלמות.
+     הסה"כ הוא **חיבור מדויק** של השניים ואינו עיגול שלישי עצמאי. */
+  var subAg = 0;
+  open.forEach(function (i) { subAg += w10Cent(i.total_charge); });
+  var vatAg = w10PctAg(subAg, VAT_RATE);
+  var sub = fromAg(subAg);
+  var vat = fromAg(vatAg);
   var inv = {
     id: genId('INV'), number: nextNumber(db, 'invoice', 1001), order_id: '', customer_id: cust.id,
-    date: today(), subtotal: sub, vat_rate: VAT_RATE, vat: vat, total: nRound2(sub + vat), status: 'פתוחה'
+    date: today(), subtotal: sub, vat_rate: VAT_RATE, vat: vat, total: fromAg(subAg + vatAg), status: 'פתוחה'
   };
   db.invoices.push(inv);
   open.forEach(function (i) { i.invoice_id = inv.id; });
