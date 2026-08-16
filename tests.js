@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.73-B73', 'ה-canary לא עודכן ל-B73');
+      t.eq(inJs, 'v4.74-B74', 'ה-canary לא עודכן ל-B74');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -6168,6 +6168,384 @@ SPECS.push({
         '⛔ נוספה טענה לכרטיס הבדיקה העצמית — B73 אינו יכולת דפדפן');
     }
 
+  }
+});
+
+/* ==================== t20 — B74 / WASH-20: סוג הזמנה מלוכלך ====================
+   השורש: b54Ledger ו-b54RawOrderTotalAg (וצמד המראה שלהן בממשק) השוו
+   String(o.type) !== 'כביסה' בהשוואה **גולמית**. הזמנת כביסה שסוגה בגיליון
+   נושא רווח קשיח · סימן כיוון · רווח נגרר — נפלה לצד ההשכרה, ושורות
+   ההזמנה שלה נספרו ככסף בניגוד ל-C5.
+   ⭐ הממצא שקבע את היקף הבדיקות: כשקיימת חשבונית פעילה, baseAg הוא
+   toAg(inv.total) (C4א) — ולכן החוב **אינו זז**, רק פירוט השורות בספר.
+   החשיפה האמיתית היא הזמנה מלוכלכת **בלי** חשבונית. */
+
+const B74 = {
+  /* ארבע צורות לכלוך של אותו ערך. הראשונה נקייה — קו הבסיס. */
+  DIRTY: ['כביסה\u00A0', ' כביסה', 'כביסה ', '\u200Eכביסה'],
+
+  db(srv, type, over) {
+    over = over || {};
+    const db = H.emptyDb(srv);
+    db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 100000 }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+    db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 100, date: '2026-07-01', warehouse_id: '' }];
+    db.orders = [{
+      id: 'O1', order_number: 'הז-1', customer_id: 'C1', type: type,
+      status: over.status || 'מאושרת', start_date: '2026-08-01', end_date: '2026-08-05',
+      delivery_fee: over.fee === undefined ? 0 : over.fee, shortage_charge: 0,
+      warehouse_id: '', created_at: '2026-08-01'
+    }];
+    db.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 25 }];
+    if (over.invoice) {
+      db.invoices = [{ id: 'V1', number: 'INV-1', order_id: 'O1', customer_id: 'C1',
+        status: 'נשלחה', date: '2026-08-05', subtotal: 250, vat: 45, total: 295 }];
+    }
+    return db;
+  },
+
+  /* סך החוב של הלקוח לפי הספר — הצד שנבדק ב-R6 */
+  debt(srv, db) { return srv.b54CustomerOpenAg(db)['C1'] || 0; },
+
+  lineRow(srv, db) {
+    return srv.b54Ledger(db).filter(r => r.origin_type === 'order_lines');
+  }
+};
+
+SPECS.push({
+  file: 't20-b74-wash20-srv',
+  title: 'B74 / WASH-20 — השרת: סוג הזמנה מלוכלך אינו מחייב שורות כביסה',
+  needs: 'server',
+  requires: ['w17IsWash', 'w20TypeMarks', 'b54Ledger', 'b54RawOrderTotalAg', 'b54CustomerOpenAg',
+             'b48BalancesAg', 'b2CreditUsedAg', 'b54LedgerAudit', 'b54Bump', 'orderTotal',
+             'b2OrderBalanceAg', 'toAg', 'fromAg', 'sVal', 'sPick', 'ORDER_TYPES',
+             'availableQty', 'reservedQty', 'inLaundryQty', 'B54_SKIP_ORDER'],
+
+  tests: {
+
+    /* ---------- ⭐⭐ הפריט עצמו ---------- */
+
+    '⭐⭐ WASH-20: כביסה עם סוג מלוכלך בארבע צורות — הכסף הוא אפס': (t, { srv }) => {
+      B74.DIRTY.forEach(ty => {
+        const db = B74.db(srv, ty);
+        srv.b54Bump();
+        t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 0,
+          '⛔⛔ שורות ההזמנה נספרו ככסף על סוג "' + JSON.stringify(ty) + '" — זה WASH-20 עצמו');
+        t.eq(B74.lineRow(srv, db).length, 0,
+          '⛔⛔ נוצרה שורת "שורות הזמנה" בספר על סוג מלוכלך "' + JSON.stringify(ty) + '"');
+        t.eq(B74.debt(srv, db), 0, '⛔⛔ נוצר חוב שווא ללקוח על כביסה מלוכלכת');
+      });
+      srv.b54Bump();
+    },
+
+    '⛔ קו בסיס — כביסה נקייה הייתה אפס גם קודם, ולא השתנתה': (t, { srv }) => {
+      const db = B74.db(srv, 'כביסה');
+      srv.b54Bump();
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 0, 'כביסה נקייה חויבה — רגרסיה ב-C5');
+      t.eq(B74.debt(srv, db), 0, 'כביסה נקייה יצרה חוב');
+      srv.b54Bump();
+    },
+
+    '⛔ רגרסיה: הזמנת השכרה מחויבת בדיוק כמו היום': (t, { srv }) => {
+      const db = B74.db(srv, 'השכרה');
+      srv.b54Bump();
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 25000, '⛔ סכום ההשכרה זז — 10 × 25 ₪ = 250 ₪');
+      t.eq(B74.lineRow(srv, db).length, 1, '⛔ שורת ההשכרה נעלמה מהספר');
+      t.eq(B74.debt(srv, db), 25000, '⛔ חוב ההשכרה זז');
+      t.eq(srv.orderTotal(db, 'O1'), 250, 'orderTotal לא מחזיר 250 ₪');
+      srv.b54Bump();
+    },
+
+    '⛔ השכרה עם סוג מלוכלך — עדיין מחויבת (אין ריכוך לצד השני)': (t, { srv }) => {
+      const db = B74.db(srv, ' השכרה\u00A0');
+      srv.b54Bump();
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 25000, 'השכרה מלוכלכת הפסיקה להיות כסף — זו טעות בכיוון ההפוך');
+      srv.b54Bump();
+    },
+
+    '⛔ סוג שאינו מוכר ואינו ריק — מטופל כהשכרה, בדיוק כמו לפני התיקון': (t, { srv }) => {
+      const db = B74.db(srv, 'שירות');
+      srv.b54Bump();
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 25000, '⛔ סוג לא מוכר הפסיק להיחשב — התנהגות השתנתה בלי הכרעה');
+      srv.b54Bump();
+    },
+
+    '⛔ סוג ריק — מטופל כהשכרה, בדיוק כמו לפני התיקון': (t, { srv }) => {
+      const db = B74.db(srv, '');
+      srv.b54Bump();
+      t.eq(srv.b54RawOrderTotalAg(db, db.orders[0]), 25000, '⛔ הזמנה בלי סוג שינתה התנהגות');
+      srv.b54Bump();
+    },
+
+    /* ---------- ⭐ הממצא: חשבונית קיימת = הכסף לא זז ---------- */
+
+    '⭐⭐ כביסה מלוכלכת שכבר הופקה לה חשבונית — סך החוב אינו זז (C4א)': (t, { srv }) => {
+      const db = B74.db(srv, 'כביסה\u00A0', { invoice: 1, fee: 100 });
+      srv.b54Bump();
+      const rows = srv.b54Ledger(db);
+      t.eq(rows.reduce((s, r) => s + r.open_ag, 0), 29500,
+        '⛔⛔ סך החוב זז — סכום המסמך חייב לגבור על השורות (C4א)');
+      t.eq(B74.debt(srv, db), 29500, '⛔⛔ חוב הלקוח זז אף שקיימת חשבונית');
+      t.eq(B74.lineRow(srv, db).length, 0, '⛔ שורת שורות ההזמנה נשארה בפירוט הספר');
+      srv.b54Bump();
+    },
+
+    /* ---------- ⭐ R6 — שלושת המקורות ---------- */
+
+    '⛔⛔ R6: שלושת מקורות הכסף מחזירים אותו מספר — על נקי ועל מלוכלך': (t, { srv }) => {
+      [['השכרה', 25000], ['כביסה', 0], ['כביסה\u00A0', 0], [' השכרה ', 25000]].forEach(([ty, exp]) => {
+        const db = B74.db(srv, ty);
+        srv.b54Bump();
+        const led = srv.b54CustomerOpenAg(db)['C1'] || 0;
+        const bal = srv.b48BalancesAg(db)['C1'] || 0;
+        const cred = srv.b2CreditUsedAg(db, 'C1');
+        t.eq(led, exp, 'b54Ledger מחזיר ' + led + ' במקום ' + exp + ' על סוג ' + JSON.stringify(ty));
+        t.eq(bal, led, '⛔⛔ b48BalancesAg נבדל מהספר — R6 נשבר');
+        t.eq(cred, led, '⛔⛔ b2CreditUsedAg נבדל מהספר — מנוע האשראי נשבר');
+        srv.b54Bump();
+      });
+    },
+
+    '⛔ b2OrderBalanceAg על הזמנה שאינה בספר (טיוטה) — כביסה מלוכלכת היא אפס': (t, { srv }) => {
+      const db = B74.db(srv, 'כביסה\u00A0', { status: 'טיוטה' });
+      srv.b54Bump();
+      t.eq(srv.b2OrderBalanceAg(db, 'O1'), 0, '⛔ טיוטת כביסה מלוכלכת מחזיקה יתרה');
+      const db2 = B74.db(srv, 'השכרה', { status: 'טיוטה' });
+      srv.b54Bump();
+      t.eq(srv.b2OrderBalanceAg(db2, 'O1'), 25000, '⛔ טיוטת השכרה איבדה את יתרתה');
+      srv.b54Bump();
+    },
+
+    /* ---------- ⛔ המלאי לא זז ---------- */
+
+    '⛔ המלאי לא זז: availableQty · reservedQty · inLaundryQty': (t, { srv }) => {
+      const clean = B74.db(srv, 'כביסה');
+      const dirty = B74.db(srv, 'כביסה\u00A0');
+      ['reservedQty', 'inLaundryQty'].forEach(fn => {
+        const a = srv[fn](clean, 'IT1', '2026-08-01', '2026-08-05');
+        const b = srv[fn](dirty, 'IT1', '2026-08-01', '2026-08-05');
+        t.eq(String(b), String(a), '⛔ ' + fn + ' השתנה בין סוג נקי למלוכלך');
+      });
+      t.eq(srv.availableQty(dirty, 'IT1', '2026-08-01', '2026-08-05'),
+           srv.availableQty(clean, 'IT1', '2026-08-01', '2026-08-05'),
+           '⛔ availableQty השתנה — התיקון נגע במלאי');
+    },
+
+    /* ---------- ⭐ האבחון ---------- */
+
+    '⭐ האבחון מדווח על ההזמנה המלוכלכת ועל הכסף שירד מהחוב': (t, { srv }) => {
+      const db = B74.db(srv, 'כביסה\u00A0');
+      srv.b54Bump();
+      const r = srv.b54LedgerAudit(db, {});
+      t.eq(r.dirty_type.count, 1, '⛔ האבחון לא זיהה את ההזמנה המלוכלכת');
+      t.eq(r.dirty_type.moved, 250, '⛔ האבחון אינו מדווח את הסכום שירד מהחוב');
+      t.eq(r.dirty_type.rows[0].canon, 'כביסה', 'הסוג הקנוני אינו מדווח');
+      t.has(String(r.dirty_type.rows[0].marks.join(' ')), 'רווח קשיח', '⛔ סוג הלכלוך אינו מזוהה בשם');
+      t.eq(r.counts.orders_wash, 1, '⛔ מונה הזמנות הכביסה עדיין מפספס סוג מלוכלך');
+      t.eq(r.phantom.count, 1, '⛔ סעיף החוב השווא עדיין מפספס סוג מלוכלך');
+      srv.b54Bump();
+    },
+
+    '⭐ האבחון מדווח moved=0 כשקיימת חשבונית — הכסף לא זז': (t, { srv }) => {
+      const db = B74.db(srv, 'כביסה\u00A0', { invoice: 1 });
+      srv.b54Bump();
+      const r = srv.b54LedgerAudit(db, {});
+      t.eq(r.dirty_type.count, 1, 'ההזמנה לא דווחה');
+      t.eq(r.dirty_type.moved, 0, '⛔⛔ האבחון מדווח שכסף זז בזמן שהחשבונית גוברת (C4א)');
+      t.eq(String(r.dirty_type.rows[0].invoice), 'INV-1', 'מספר החשבונית אינו מדווח');
+      srv.b54Bump();
+    },
+
+    '⛔ האבחון שקט כשהכול נקי — אין ממצא שווא': (t, { srv }) => {
+      [['השכרה'], ['כביסה']].forEach(([ty]) => {
+        const db = B74.db(srv, ty);
+        srv.b54Bump();
+        const r = srv.b54LedgerAudit(db, {});
+        t.eq(r.dirty_type.count, 0, '⛔ ממצא שווא על סוג נקי ' + ty);
+        t.eq(r.unknown_type.count, 0, '⛔ סוג קנוני דווח כלא-מוכר');
+        srv.b54Bump();
+      });
+    },
+
+    '⛔ סוג ריק אינו ממצא · סוג לא מוכר כן': (t, { srv }) => {
+      const empty = B74.db(srv, '');
+      srv.b54Bump();
+      const r1 = srv.b54LedgerAudit(empty, {});
+      t.eq(r1.unknown_type.count, 0, '⛔ סוג ריק דווח כממצא — רעש');
+      t.eq(r1.dirty_type.count, 0, '⛔ סוג ריק דווח כמלוכלך');
+      const unk = B74.db(srv, 'שירות');
+      srv.b54Bump();
+      const r2 = srv.b54LedgerAudit(unk, {});
+      t.eq(r2.unknown_type.count, 1, '⛔ סוג שאינו מוכר אינו מדווח');
+      t.eq(r2.dirty_type.count, 0, '⛔ סוג לא מוכר נספר כמלוכלך');
+      srv.b54Bump();
+    },
+
+    '⛔ הזמנה בוטלה/טיוטה/הצעת מחיר אינה מדווחת באבחון': (t, { srv }) => {
+      ['בוטלה', 'טיוטה', 'הצעת מחיר'].forEach(st => {
+        const db = B74.db(srv, 'כביסה\u00A0', { status: st });
+        srv.b54Bump();
+        t.eq(srv.b54LedgerAudit(db, {}).dirty_type.count, 0, '⛔ ' + st + ' דווחה — היא מסוננת מהספר ממילא');
+        srv.b54Bump();
+      });
+    },
+
+    'w20TypeMarks מזהה את חמש צורות הלכלוך בשמן': (t, { srv }) => {
+      t.has(srv.w20TypeMarks('כביסה\u00A0').join(' '), 'רווח קשיח', 'רווח קשיח לא זוהה');
+      t.has(srv.w20TypeMarks('\u200Eכביסה').join(' '), 'סימן כיוון', 'סימן כיוון לא זוהה');
+      t.has(srv.w20TypeMarks(' כביסה').join(' '), 'רווח מוביל', 'רווח מוביל לא זוהה');
+      t.has(srv.w20TypeMarks('כביסה ').join(' '), 'רווח נגרר', 'רווח נגרר לא זוהה');
+      t.eq(srv.w20TypeMarks('כביסה').length, 0, 'ערך נקי סומן כמלוכלך');
+    },
+
+    /* ---------- ⛔ שומרי קוד מקור ---------- */
+
+    '⛔⛔ ההשוואה הגולמית לא חוזרת לנקודות הכסף בשרת': (t, { H }) => {
+      /* ⚠ הסריקה מצומצמת לגופי הכסף בכוונה. 19 אתרי תפעול/תצוגה
+         עדיין משווים גולמית — הם אינם כסף ואינם בהיקף (מוקצים ל-B75). */
+      const src = H.stripComments(H.serverSrc());
+      const body = n => {
+        const i = src.indexOf('function ' + n);
+        return i < 0 ? '' : src.slice(i, src.indexOf('\n}', i));
+      };
+      ['b54Ledger', 'b54RawOrderTotalAg', 'b54LedgerAudit'].forEach(fn => {
+        const b = body(fn);
+        t.ok(!!b, fn + ' לא נמצאה בקוד השרת');
+        t.eq((b.match(/String\(o\.type\)|o\.type\s*===|o\.type\s*!==/g) || []).length, 0,
+          '⛔⛔ חזרה השוואת סוג גולמית בתוך ' + fn + ' — זה בדיוק WASH-20');
+        t.has(b, 'w17IsWash', '⛔ ' + fn + ' אינה עוברת דרך w17IsWash');
+      });
+    },
+
+    '⛔⛔ w17IsWash זהה תו-בתו בין השרת לממשק': (t, { H }) => {
+      const grab = s => (s.match(/function w17IsWash\s*\([\s\S]*?\n?\}/) || [])[0] || '';
+      const a = grab(H.serverSrc()), b = grab(H.uiScript());
+      t.ok(!!a, 'w17IsWash לא נמצאה בקוד השרת');
+      t.ok(!!b, 'w17IsWash לא נמצאה בממשק');
+      t.eq(a.replace(/\s+/g, ' ').trim(), b.replace(/\s+/g, ' ').trim(),
+        '⛔⛔ שתי ההגדרות התפצלו — זו בדיוק מחלקת הכשל של B64a');
+    },
+
+    '⛔ toAg לא נגע (R4) · nRound2 לא חזר לנקודות הכסף של B71': (t, { H }) => {
+      const src = H.stripComments(H.serverSrc());
+      t.ok(/function toAg\s*\(\s*v\s*\)\s*\{\s*return\s+w10Cent\(/.test(src.replace(/\s+/g, ' ')) ||
+           /function toAg/.test(src), 'toAg נעלמה מקוד השרת');
+      t.eq((src.match(/nRound2\(\s*net\s*\*\s*price\s*\)/g) || []).length, 0,
+        '⛔⛔ nRound2(net*price) חזר — B71 נשבר');
+      t.eq((src.match(/nRound2\(\s*sub\s*\*\s*VAT_RATE\s*\)/g) || []).length, 0,
+        '⛔⛔ nRound2(sub*VAT_RATE) חזר — B71 נשבר');
+    }
+  }
+});
+
+SPECS.push({
+  file: 't20-b74-wash20-ui',
+  title: 'B74 / WASH-20 — הממשק: אותו מספר בדיוק כמו השרת',
+  needs: 'ui',
+  requires: ['w17IsWash', 'b54RawOrderTotalAgFE', 'b54LedgerFE', 'custBalance',
+             'b54AuditHtml', 'w20RowsHtml', 'toAg', 'fromAg', 'sVal', 'B65_TYPES'],
+
+  tests: {
+
+    /* ⚠⚠ הממשק מטמן את הספר ואת היתרות על אובייקט ה-DB עצמו
+       (DB._b54Ledger · DB._b48Bal). בלי delete לפני כל מדידה, בדיקה
+       שנייה מודדת את התוצאה של הראשונה ו"עוברת" בלי לבדוק כלום. */
+
+    '⭐⭐ b54RawOrderTotalAgFE — כביסה מלוכלכת בארבע צורות היא אפס': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['כביסה\u00A0', ' כביסה', 'כביסה ', '\u200Eכביסה'].forEach(ty => {
+        w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן' }];
+        w.DB.orders = [{ id: 'O1', order_number: 'הז-1', customer_id: 'C1', type: ty,
+          status: 'מאושרת', start_date: '2026-08-01', end_date: '2026-08-05',
+          delivery_fee: 0, shortage_charge: 0 }];
+        w.DB.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 25 }];
+        w.DB.invoices = []; w.DB.payments = []; w.DB.charges = []; w.DB.laundryIntakes = [];
+        delete w.DB._b54Ledger; delete w.DB._b48Bal;
+        t.eq(w.b54RawOrderTotalAgFE(w.DB.orders[0]), 0,
+          '⛔⛔ הממשק מחייב שורות כביסה על סוג ' + JSON.stringify(ty));
+        t.eq(w.b54LedgerFE().filter(r => r.origin_type === 'order_lines').length, 0,
+          '⛔⛔ שורת "שורות הזמנה" נוצרה בספר של הממשק');
+      });
+    },
+
+    '⛔⛔ הממשק והשרת מחזירים אותו מספר בדיוק': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      [['השכרה', 25000], ['כביסה\u00A0', 0], ['שירות', 25000], ['', 25000]].forEach(([ty, exp]) => {
+        const db = B74.db(srv, ty);
+        srv.b54Bump();
+        w.DB.customers = db.customers; w.DB.orders = db.orders; w.DB.orderLines = db.orderLines;
+        w.DB.invoices = []; w.DB.payments = []; w.DB.charges = []; w.DB.laundryIntakes = [];
+        delete w.DB._b54Ledger; delete w.DB._b48Bal;
+        const ui = w.b54RawOrderTotalAgFE(w.DB.orders[0]);
+        const sv = srv.b54RawOrderTotalAg(db, db.orders[0]);
+        t.eq(ui, sv, '⛔⛔ הממשק (' + ui + ') והשרת (' + sv + ') נבדלו על סוג ' + JSON.stringify(ty));
+        t.eq(ui, exp, 'הערך אינו ' + exp + ' על סוג ' + JSON.stringify(ty));
+        srv.b54Bump();
+      });
+    },
+
+    '⛔ רגרסיה: יתרת הלקוח בהשכרה לא זזה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן' }];
+      w.DB.orders = [{ id: 'O1', order_number: 'הז-1', customer_id: 'C1', type: 'השכרה',
+        status: 'מאושרת', start_date: '2026-08-01', end_date: '2026-08-05',
+        delivery_fee: 0, shortage_charge: 0 }];
+      w.DB.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 25 }];
+      w.DB.invoices = []; w.DB.payments = []; w.DB.charges = []; w.DB.laundryIntakes = [];
+      delete w.DB._b54Ledger; delete w.DB._b48Bal;
+      t.eq(w.custBalance('C1'), 250, '⛔ יתרת הלקוח בהשכרה זזה');
+      w.DB.orders[0].type = 'כביסה\u00A0';
+      delete w.DB._b54Ledger; delete w.DB._b48Bal;
+      t.eq(w.custBalance('C1'), 0, '⛔⛔ יתרת הלקוח על כביסה מלוכלכת אינה אפס');
+    },
+
+    '⛔⛔ ההשוואה הגולמית לא חוזרת לשתי נקודות הכסף בממשק': (t, { H }) => {
+      const src = H.stripComments(H.uiScript());
+      t.ok(/function b54RawOrderTotalAgFE[\s\S]{0,200}w17IsWash/.test(src),
+        '⛔ b54RawOrderTotalAgFE אינה עוברת דרך w17IsWash');
+      t.ok(/function b54LedgerFE\b[\s\S]{0,3000}w17IsWash/.test(src),
+        '⛔ b54LedgerFE אינה עוברת דרך w17IsWash');
+    },
+
+    '⭐ כרטיס האבחון מציג את הממצא החדש ואת הסכום': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const h = w.b54AuditHtml({
+        ok: 1, ledger_rows: 3,
+        counts: { orders: 1, orders_wash: 1, intakes: 0, invoices: 0, payments: 0, charges: 0 },
+        phantom: { count: 0, amount: 0, rows: [] },
+        intake_in_bulk: { count: 0, rows: [] }, intake_after_invoice: { count: 0, rows: [] },
+        synthetic_invoices: { count: 0, rows: [] }, pay_no_status: { count: 0, amount: 0 },
+        pending_intakes: { count: 0, amount: 0 },
+        dirty_type: { count: 1, moved: 250, rows: [{ order: 'הז-1', customer: 'מלון הים',
+          canon: 'כביסה', raw: 'כביסה\u00A0', marks: ['רווח קשיח'], lines: 250, invoice: '', moved: 250, status: 'מאושרת' }] },
+        unknown_type: { count: 0, rows: [] }
+      });
+      t.has(h, 'WASH-20', 'הסעיף החדש אינו מופיע בכרטיס האבחון');
+      t.has(h, 'הז-1', 'ההזמנה אינה מוצגת');
+      t.has(h, 'רווח קשיח', '⛔ סוג הלכלוך אינו מוצג — אבי יראה "כביסה" מול "כביסה" ולא יבין');
+      t.has(h, 'ירד מהחוב', 'הסכום שירד מהחוב אינו מסומן');
+    },
+
+    '⛔ כרטיס האבחון שקט כשאין ממצא, ועובד גם על תשובה ישנה בלי השדות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const base = {
+        ok: 1, ledger_rows: 0,
+        counts: { orders: 0, orders_wash: 0, intakes: 0, invoices: 0, payments: 0, charges: 0 },
+        phantom: { count: 0, amount: 0, rows: [] },
+        intake_in_bulk: { count: 0, rows: [] }, intake_after_invoice: { count: 0, rows: [] },
+        synthetic_invoices: { count: 0, rows: [] }, pay_no_status: { count: 0, amount: 0 },
+        pending_intakes: { count: 0, amount: 0 }
+      };
+      const h = w.b54AuditHtml(base);
+      t.has(h, 'לא נמצאו — סוג ההזמנה קנוני', '⛔ הסעיף אינו מציג מצב נקי');
+      t.ok(h.indexOf('undefined') === -1, '⛔ תשובת שרת ישנה מייצרת undefined על המסך');
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-20 אינו יכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.ok(names.indexOf('WASH-20') === -1, '⛔ נוספה טענה לשכבה 2 — היא נבדקת בשכבה 1');
+    }
   }
 });
 
