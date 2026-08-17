@@ -122,6 +122,16 @@
 //             B71 — WASH-10: כסף הכביסה באגורות שלמות (w10Cent/w10MulAg/fromAg)
 //             B73 — WASH-18: קליטת NOBLE נראית בלוח הכביסה + w18Advance — canary v4.73-B73
 //             B74 — WASH-20: סוג הזמנה מלוכלך חייב שורות כביסה ככסף — canary v4.74-B74
+//             B75 — WASH-15 + WASH-05 + WASH-08 + WASH-13 + WASH-16 + WASH-21 — canary v4.75-B75
+//                   • WASH-15: b49cAfterAdvance כותבת portion_kg (w15TaskKg = qty × items.weight_kg).
+//                     המונה של הניצולת הפסיק להיות אפס. + אבחון READ_ONLY w15WeightAudit.
+//                     ⭐ סופח: מזהי מכונה מנורמלים (w15MachKey) ב-nobleOpenStarts/nobleMachineLoad.
+//                   • WASH-05: w05Gate — מכונה אחת, משימה אחת. דילוג בקוד מנהל + פירוט חובה.
+//                   • WASH-08: w08DetachMachine — דיווח תקלה על מכונה מנתק את משימות הכביסה שלה.
+//                   • WASH-13: nobleDriverScan נושאת את order_id של הקליטה.
+//                   • WASH-16: w16OrderGate — חסימה במקור בשלושה אתרים (DEC-03).
+//                   • WASH-21: w21IsRental — תאום ל-w17IsWash, 20 אתרי סוג גולמי שאינם כסף.
+//                   ⛔ אין שינוי סכימה. ⛔ toAg וארבע נקודות האגורות של B71 לא נגעו.
 //                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
 //                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
 //                     שהתרוקנה וחזרה לקלוט מאותה הזמנה נשקלת שוב בשעה אחרת
@@ -1134,7 +1144,7 @@ var B49E_LEGS = ['הלוך', 'חזור'];
 
 // איזה kind מקבלת כל רגל, לפי סוג ההזמנה
 function b49eLegKind(o, leg) {
-  var rental = String(o.type) !== 'כביסה';
+  var rental = w21IsRental(o);   /* ⭐ B75/WASH-21 — היה String(o.type) גולמי */
   if (leg === 'הלוך') return rental ? 'אספקה' : 'איסוף';
   return rental ? 'איסוף' : 'אספקה';
 }
@@ -1147,7 +1157,7 @@ function b49eShipMode(o, leg) {
      שום שגיאה — מחלקת הכשל השקט של B64a. sPick מחזיר ערך קנוני. */
   var v = sPick(leg === 'הלוך' ? o.ship_out : o.ship_back, [B49E_SHIP, B49E_SELF]);
   if (v === B49E_SHIP || v === B49E_SELF) return v;
-  if (String(o.type) === 'כביסה') return Number(o.delivery_fee || 0) > 0 ? B49E_SHIP : B49E_SELF;
+  if (!w21IsRental(o)) return Number(o.delivery_fee || 0) > 0 ? B49E_SHIP : B49E_SELF;   /* ⭐ B75/WASH-21 */
   return B49E_SHIP;   // השכרה ותיקה — עד B49e תמיד נוצרו לה שתי נסיעות
 }
 
@@ -1939,6 +1949,8 @@ var READ_ONLY_ACTIONS = ['getAll', 'getFullTexts', 'login', 'availability', 'sca
   'portalCheckAvail',
   // B54: אבחון נתוני החיובים — קריאה בלבד, אינה משנה דבר (כלל R1)
   'b54LedgerAudit',
+  // ⭐ B75/WASH-15: אבחון משקלי הפריטים והמונה של הניצולת — קריאה בלבד, אפס כתיבה
+  'w15WeightAudit',
   // B65/BLD-01: אבחון הזמנות כביסה היסטוריות — קריאה בלבד.
   // ⛔ bld01Heal בכוונה **אינה** כאן — היא כותבת ל-deliveries ול-orders.
   'bld01Diagnose',
@@ -2687,7 +2699,9 @@ function handle(action, p, db, user) {
       var r5 = advanceLaundry(db, p.task_id, today(), {
         cart_id: p.cart_id, machine_id: p.machine_id, worker: p.worker,
         release_mode: p.release_mode, shelf_code: p.shelf_code, note: p.note,
-        to_stage: p.to_stage   // B59: שלב יעד נבחר; בהעדרו — השלב הבא לפי הסדר
+        to_stage: p.to_stage,  // B59: שלב יעד נבחר; בהעדרו — השלב הבא לפי הסדר
+        // ⭐ B75/WASH-05: דילוג על חסימת מכונה תפוסה — קוד מנהל + פירוט חובה
+        mgr_pin: p.mgr_pin, w05_reason: p.w05_reason
       }, genId, user);
       if (r5.ok) {
         // C3: הנפקת ברקוד אריזה אוטומטי במעבר ל'מוכן'
@@ -4159,13 +4173,25 @@ function handle(action, p, db, user) {
       db.assetFaults.push(fault);
       writeTable('asset_faults', db.assetFaults);
       b42SetState(db, aF, aF.onFault);
+      /* ⭐⭐ B75/WASH-08 (הכרעת אבי 3ג) — מכונה שדווחה בתקלה מתנתקת מיד
+         מכל משימות הכביסה הפתוחות שלה. מכאן advanceLaundry חוסם ממילא
+         ("חובה לשייך מכונה"), והניתוק נרשם ביומן כל משימה. ⛔ עגלות ורכבים
+         אינם מנותקים — מנגנון העגלות הוא releaseCart והרכב אינו נוגע בכביסה. */
+      var det08 = (sVal(aF.type) === 'מכונה') ? w08DetachMachine(db, aF.row.id, user, faultId, genId) : [];
+      if (det08.length) {
+        writeTable('laundry_tasks', db.laundryTasks);
+        writeTable('laundry_task_events', db.laundryTaskEvents || []);
+      }
       b42AppendEvent(db, {
         event_type: 'תקלה', fault_id: faultId, asset_type: aF.type, asset_id: aF.row.id,
-        description: descF + ' · שלב הבא: ' + nextF, user: user || ''
+        description: descF + ' · שלב הבא: ' + nextF +
+          (det08.length ? ' · נותקו ' + det08.length + ' משימות כביסה מהמכונה' : ''), user: user || ''
       });
       return {
         ok: true, fault: fault, task: taskF, asset_state: aF.row[aF.field],
-        auditNote: 'B42 דיווח תקלה ' + faultId + ' · ' + aF.type + ' ' + aF.row.id + ' · שלב הבא: ' + nextF
+        detached_tasks: det08,   /* ⭐ B75/WASH-08 */
+        auditNote: 'B42 דיווח תקלה ' + faultId + ' · ' + aF.type + ' ' + aF.row.id + ' · שלב הבא: ' + nextF +
+          (det08.length ? ' · WASH-08: נותקו ' + det08.length + ' משימות כביסה (' + det08.join(', ') + ')' : '')
       };
     }
 
@@ -4487,6 +4513,7 @@ function handle(action, p, db, user) {
     case 'b54ChargeAdd': return b54ChargeAdd(db, p, user);
     case 'b54ChargeCancel': return b54ChargeCancel(db, p, user);
     case 'b54LedgerAudit': return b54LedgerAudit(db, p);
+    case 'w15WeightAudit': return w15WeightAudit(db);   /* ⭐ B75/WASH-15 — קריאה בלבד */
 
     // ===================== B65 / BLD-01 =====================
     case 'bld01Diagnose': return bld01Diagnose(db);
@@ -5157,6 +5184,22 @@ var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
    ============================================================ */
 function w17IsWash(o){ return !!o && sVal(o.type)==='כביסה'; }
 
+/* ============================================================
+   ⭐⭐ B75 / WASH-21 — "האם ההזמנה היא השכרה" · התאום של w17IsWash
+   ------------------------------------------------------------
+   B74 תיקן את ארבע נקודות הכסף. הסריקה שלו גילתה **19 אתרים נוספים**
+   שמשווים את סוג ההזמנה בהשוואה גולמית ואינם כסף — והכבדים שבהם הם
+   מלאי: reservedQty · b48CommittedQty (שרת) · b40ItemBreakdown ·
+   דוח הניצולת (ממשק). התוצאה בשטח היא **התמונה הראי של WASH-20**:
+   הזמנת השכרה שסוגה בגיליון מלוכלך אינה משריינת מלאי, והפריט נראה
+   זמין למרות שהתחייבנו עליו.
+   ⛔ הכרעת אבי (17.08.2026, אפשרות א'): עוזר אחד, תאום מדויק ל-w17IsWash,
+   **בלי** עוזר "סוג קנוני" שידרוש הכרעה חדשה על סוג לא מוכר.
+   ⛔ סוג לא מוכר וסוג ריק נשארים **השכרה** — בדיוק כמו לפני התיקון (B74).
+   ⛔ זהה תו-בתו ל-w21IsRental ב-index.html. יש בדיקה שמשווה את הגופים.
+   ============================================================ */
+function w21IsRental(o){ return !!o && sVal(o.type)!=='כביסה'; }
+
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
    ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
    רווח כפול, רווח קשיח (\u00A0) או תו כיווניות RTL בלתי נראה
@@ -5237,7 +5280,7 @@ function reservedQty(db, itemId, start, end, excludeOrderId, wh) {
   db.orderLines.forEach(function (l) {
     if (l.item_id !== itemId) return;
     var o = db.orders.find(function (x) { return x.id === l.order_id; });
-    if (!o || o.type !== 'השכרה') return;
+    if (!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — היה o.type !== 'השכרה' גולמי: השכרה מלוכלכת לא שריינה מלאי */
     if (wh !== undefined && String(o.warehouse_id || '') !== String(wh || '')) return;
     if (excludeOrderId && o.id === excludeOrderId) return;
     if (RESERVING_STATUSES.indexOf(o.status) === -1) return;
@@ -5277,7 +5320,7 @@ function b48CommittedQty(db, itemId, wh) {
   db.orderLines.forEach(function (l) {
     if (l.item_id !== itemId) return;
     var o = db.orders.find(function (x) { return x.id === l.order_id; });
-    if (!o || o.type !== 'השכרה') return;
+    if (!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — היה o.type !== 'השכרה' גולמי */
     if (wh !== undefined && String(o.warehouse_id || '') !== String(wh || '')) return;
     if (RESERVING_STATUSES.indexOf(o.status) === -1) return;
     qty += Number(l.qty);
@@ -5428,6 +5471,159 @@ function releaseCart(db, cartId) {
    מידוף למדף מסוים, או "ללא מידוף" (הפריטים נשארים על רצפת הייצור להזמנות היום).
    כל מעבר נרשם ביומן laundry_task_events — זה מקור ההיסטוריה במסך.
    opts = { cart_id, machine_id, release_mode, shelf_code, worker, note } */
+/* ============================================================
+   ⭐⭐ B75 / WASH-15 — המונה של הניצולת
+   ------------------------------------------------------------
+   הבאג: b49cAfterAdvance (הגשר ממסלול MAPA ליומן NOBLE) כתבה אירוע
+   'התחלה' **בלי portion_kg בכלל**. nobleMachineLoad סופרת
+   Number(ev.portion_kg)||0, ולכן load_kg של כל כביסה פנימית של MAPA
+   היה **אפס תמיד** — רק load_count נספר. ניצולת שמחושבת מזה מציגה
+   מכבסה ריקה, ולכן BLD-13 (תכנון עומס) היה חסום.
+
+   ⛔ המשקל אינו שדה חדש: items.weight_kg קיים מאז B?? ומשמש לשקילת
+   החזרות, ו-laundry_events.portion_kg קיים מאז B39b. **אין שינוי סכימה.**
+   ⛔ הכרעת אבי (17.08.2026, אפשרות 1ב): המשקל נגזר אוטומטית —
+   qty × items.weight_kg — **ובנוסף** נבנה אבחון READ_ONLY שמראה אילו
+   פריטים חסרי משקל, כי בלעדיו אין דרך לדעת למה הניצולת חלקית (R1/R11).
+   ⛔ אין שער חסימה: פריט בלי משקל מחזיר '' בדיוק כמו מנת NOBLE בלי
+   portion_kg (הכרעת WASH-07 — capacity הוא מכנה של מדידה ולא שער).
+   ⛔ משקל אינו כסף (הכרעת אבי 09.08.2026) — nRound2 כאן תקין ואינו
+   מסלול הכסף של B71.
+   ============================================================ */
+function w15MachKey(v) { return sVal(v); }
+function w15ItemKg(db, itemId) {
+  var it = (db.items || []).find(function (x) { return String(x.id) === String(itemId); });
+  var kg = Number(it && it.weight_kg) || 0;
+  return kg > 0 ? kg : 0;
+}
+/* משקל המנה של משימת כביסה — '' כשאין נתון, בדיוק כמו ב-NOBLE */
+function w15TaskKg(db, t) {
+  if (!t) return '';
+  var kg = w15ItemKg(db, t.item_id), q = Number(t.qty) || 0;
+  if (!(kg > 0) || !(q > 0)) return '';
+  return nRound2(kg * q);
+}
+
+/* ⭐ B75/WASH-15 · אבחון READ_ONLY (הכרעת אבי 1ב · כלל R1).
+   בלי זה אין דרך לדעת למה הניצולת חלקית: פריט בלי weight_kg פשוט
+   תורם אפס בשקט. הפעולה **אינה כותבת דבר** — היא סופרת ומציגה.
+   מחזירה: כמה משימות כביסה פתוחות · מהן עם משקל ובלי · פירוט הפריטים
+   החסרים (עד 40) · והמונה בפועל בכל מכונה, כדי שאבי יראה מספר אמיתי. */
+var W15_AUDIT_ROWS = 40;
+function w15WeightAudit(db) {
+  var open = (db.laundryTasks || []).filter(function (t) { return sVal(t.stage) !== 'מוכן'; });
+  var miss = {}, withKg = 0, noKg = 0, kgTotal = 0;
+  open.forEach(function (t) {
+    var kg = w15TaskKg(db, t);
+    if (kg === '') {
+      noKg++;
+      var iid = String(t.item_id || '(ריק)');
+      if (!miss[iid]) {
+        var it = (db.items || []).find(function (x) { return String(x.id) === iid; });
+        miss[iid] = { item_id: iid, name: (it && it.name) || '(פריט לא נמצא)', tasks: 0, qty: 0 };
+      }
+      miss[iid].tasks++;
+      miss[iid].qty += Number(t.qty) || 0;
+    } else { withKg++; kgTotal += Number(kg) || 0; }
+  });
+  var loadMap = nobleMachineLoad(db);
+  var machines = (db.machines || []).filter(function (m) { return sPick(m.auto_stage, NOBLE_MACHINE_STAGES) !== ''; })
+    .map(function (m) {
+      var lo = loadMap[w15MachKey(m.id)] || [];
+      var kg = 0; lo.forEach(function (x) { kg += Number(x.portion_kg) || 0; });
+      var cap = Number(m.capacity) || 0;
+      return { id: m.id, type: m.type || 'מכונה', stage: m.auto_stage, status: m.status || '',
+        capacity: cap, load_kg: nRound2(kg), load_count: lo.length,
+        pct: cap > 0 ? Math.round(kg * 100 / cap) : '' };
+    });
+  var rows = Object.keys(miss).map(function (k) { return miss[k]; })
+    .sort(function (a, b) { return b.qty - a.qty; }).slice(0, W15_AUDIT_ROWS);
+  var itemsTotal = (db.items || []).length;
+  var itemsNoKg = (db.items || []).filter(function (i) { return !(Number(i.weight_kg) > 0); }).length;
+  return {
+    ok: true,
+    tasks_open: open.length, tasks_with_kg: withKg, tasks_no_kg: noKg,
+    kg_total: nRound2(kgTotal),
+    items_total: itemsTotal, items_no_weight: itemsNoKg,
+    missing: rows, missing_more: Math.max(0, Object.keys(miss).length - rows.length),
+    machines: machines
+  };
+}
+
+/* ============================================================
+   ⭐⭐ B75 / WASH-05 — מכונה אחת, משימה אחת
+   ------------------------------------------------------------
+   עד כאן advanceLaundry בדק שהמכונה קיימת ושהיא 'פעילה' — ולא אם
+   משימה אחרת יושבת בה כרגע. שתי משימות נפרדות נשלחו לאותה מכונה
+   בו-זמנית בלי שום התראה.
+   ⚠ שונה מ-WASH-06 שנסגר כמכוון: שם מדובר במנות של **אותה** קליטת
+   NOBLE שהתחלקו בין מכונות, וזה בדיוק מה שקורה במכבסה אמיתית.
+   ⛔ הכרעת אבי (17.08.2026, אפשרות 2א+): חסימה, **עם דילוג בקוד מנהל
+   וחובת פירוט**. הדילוג נרשם ביומן המשימה — אחרת אין למי לחזור.
+   ============================================================ */
+var W05_MIN_REASON = 3;
+function w05Occupant(db, machineId, exceptTaskId) {
+  var mid = w15MachKey(machineId);
+  if (!mid) return null;
+  return (db.laundryTasks || []).filter(function (x) {
+    return String(x.id) !== String(exceptTaskId) &&
+      w15MachKey(x.machine_id) === mid && sVal(x.stage) !== 'מוכן';
+  })[0] || null;
+}
+/* מחזיר null כשמותר להמשיך, או אובייקט שגיאה. override נבדק כאן ולא
+   בשני מקומות — advanceLaundry ו-b40SplitLaundry קוראות לאותה פונקציה. */
+function w05Gate(db, machineId, exceptTaskId, p, user) {
+  var occ = w05Occupant(db, machineId, exceptTaskId);
+  if (!occ) return null;
+  var mid = w15MachKey(machineId);
+  var reason = sVal(p && p.w05_reason);
+  var pin = (p && p.mgr_pin) || '';
+  if (!String(pin).trim())
+    return { ok: false, machine_busy: { machine_id: mid, task_id: occ.id, stage: occ.stage, order_id: occ.order_id || '' },
+      error: 'המכונה ' + mid + ' תפוסה על ידי משימה ' + occ.id + ' (' + (occ.stage || '') +
+        ') — בחר מכונה אחרת, או אשר דילוג בקוד מנהל עם פירוט' };
+  if (reason.length < W05_MIN_REASON)
+    return { ok: false, machine_busy: { machine_id: mid, task_id: occ.id, stage: occ.stage, order_id: occ.order_id || '' },
+      error: 'דילוג על חסימת מכונה תפוסה מחייב פירוט (לפחות ' + W05_MIN_REASON + ' תווים)' };
+  var v = b38VerifyManagerPin(db, pin, user);
+  if (!v.ok) return v;
+  return { ok: true, override: 'דילוג חסימת מכונה תפוסה (WASH-05) · המכונה ' + mid +
+    ' תפוסה במשימה ' + occ.id + ' · אישור מנהל · סיבה: ' + reason };
+}
+
+/* ============================================================
+   ⭐⭐ B75 / WASH-08 — מכונה שנשלחה לתיקון
+   ------------------------------------------------------------
+   הבאג: סטטוס המכונה נבדק **רק** ברגע השיוך. משימה שכבר יושבת על
+   מכונה שדווחה בתקלה המשיכה להתקדם עד 'מוכן' כאילו כלום.
+   ⛔ הכרעת אבי (17.08.2026, אפשרות 3ג): **ניתוק אוטומטי** ברגע דיווח
+   התקלה. הניתוק נרשם ביומן המשימה, ולכן אינו מוחק היסטוריה — הוא
+   מוסיף לה שורה. מאותו רגע advanceLaundry חוסם ממילא ("חובה לשייך
+   מכונה"), ואין צורך בשער שני (R8).
+   ⛔ NOBLE אינו מנותק: שם 'התחלה' פתוחה היא כביסה **שנמצאת פיזית**
+   בתוף, ו-nobleStageEnd חייבת להמשיך לעבוד גם על מכונה מקולקלת.
+   nobleStageStart כבר חוסם התחלה חדשה במכונה שאינה פעילה.
+   ⚠ שער בטיחות לנתוני עבר: תקלה שדווחה **לפני** B75 השאירה שיוך תקוע,
+   ולכן advanceLaundry בודק גם את סטטוס המכונה המשויכת (ולא רק חדשה).
+   ============================================================ */
+function w08DetachMachine(db, machineId, user, faultId, genIdFn) {
+  var mid = w15MachKey(machineId);
+  var hit = [];
+  if (!mid) return hit;
+  (db.laundryTasks || []).forEach(function (t) {
+    if (w15MachKey(t.machine_id) !== mid) return;
+    if (sVal(t.stage) === 'מוכן') return;
+    t.machine_id = '';
+    hit.push(t.id);
+    b40LogTask(db, t, 'ניתוק מכונה', {
+      machine_id: '',
+      note: 'המכונה ' + mid + ' דווחה בתקלה' + (faultId ? ' ' + faultId : '') +
+        ' — יש לשייך מכונה אחרת לפני קידום השלב (WASH-08)'
+    }, genIdFn || genId, user);
+  });
+  return hit;
+}
+
 function b40LogTask(db, t, evType, extra, genIdFn, user) {
   extra = extra || {};
   var row = {
@@ -5475,6 +5671,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   // B49c: העגלה שהחזיקה את המשימה עד לרגע הזה — עליה נסגרים השלבים הפתוחים
   // ביומן NOBLE. חייבים לתפוס אותה לפני assignCart ולפני השחרור שבסיום.
   var b49cCartBefore = String(t.cart_id || '');
+  var b75Override = '';   /* ⭐ B75/WASH-05 — נימוק הדילוג, נרשם ביומן המשימה */
 
   if (isFinish) {
     // סיום — לא שואלים עגלה ומכונה, שואלים לאן הכביסה הנקייה הולכת
@@ -5504,6 +5701,17 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
     }
     if (!t.cart_id) return { ok: false, error: 'חובה לשייך עגלה לפני המעבר ל' + toStage };
     if (!t.machine_id) return { ok: false, error: 'חובה לשייך מכונה לפני המעבר ל' + toStage };
+    /* ⭐ B75/WASH-08 — שער בטיחות לנתוני עבר: תקלה שדווחה לפני B75 השאירה
+       שיוך תקוע, והמשימה המשיכה להתקדם במכונה מקולקלת. מכאן והלאה הניתוק
+       אוטומטי (w08DetachMachine), וזו הרשת מתחת. */
+    var mcNow = db.machines.find(function (x) { return w15MachKey(x.id) === w15MachKey(t.machine_id); });
+    if (mcNow && sVal(mcNow.status) && sVal(mcNow.status) !== 'פעילה')
+      return { ok: false, error: 'המכונה ' + mcNow.id + ' בסטטוס ' + mcNow.status +
+        ' — בחר מכונה אחרת לפני קידום השלב (WASH-08)' };
+    /* ⭐⭐ B75/WASH-05 — מכונה אחת, משימה אחת. דילוג אפשרי בקוד מנהל עם פירוט. */
+    var g05 = w05Gate(db, t.machine_id, t.id, opts, user);
+    if (g05 && !g05.ok) return g05;
+    if (g05 && g05.override) b75Override = g05.override;
   }
   if (opts.worker) t.worker = String(opts.worker);
   t.stage = toStage;
@@ -5521,7 +5729,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
     cart_id: isFinish ? '' : (t.cart_id || ''), machine_id: t.machine_id || '',
     shelf_code: t.shelf_code || '',
     /* B59: מעבר שאינו "השלב הבא" מסומן ביומן — כדי שההיסטוריה תסביר למה שלב דולג */
-    note: [opts.note || '', b59Back ? 'חזרה לשלב קודם (B59)' : (b59Jump ? 'דילוג שלבים (B59)' : '')]
+    note: [opts.note || '', b59Back ? 'חזרה לשלב קודם (B59)' : (b59Jump ? 'דילוג שלבים (B59)' : ''), b75Override]
       .filter(function (x) { return x; }).join(' · ')
   }, genIdFn, user);
   /* B49c — הגשר. קריאה אחת בסוף, אחרי שהמעבר כבר הוכרע ונרשם ביומן המשימה.
@@ -5530,7 +5738,9 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
   return {
     ok: true, stage: t.stage, release_mode: t.release_mode || '', shelf_code: t.shelf_code || '',
     from_stage: fromStage, skipped: b59Jump ? 'כן' : '', back: b59Back ? 'כן' : '',
-    noble_events: b49c.events, intake_closed: b49c.closed ? 'כן' : ''
+    noble_events: b49c.events, intake_closed: b49c.closed ? 'כן' : '',
+    machine_override: b75Override ? 'כן' : '',   /* ⭐ B75/WASH-05 */
+    portion_kg: b49c.portion_kg   /* ⭐ B75/WASH-15 — משקל המנה שנרשם ביומן NOBLE ('' כשאין) */
   };
 }
 /* B40: פיצול משימת כביסה — הזמנה גדולה מתחלקת בין כמה עגלות וכמה מכונות.
@@ -5576,7 +5786,12 @@ function b40SplitLaundry(db, p, todayStr, genIdFn, user) {
     if (!mc2) { rollback(); return { ok: false, error: 'מכונה ' + p.machine_id + ' לא נמצאה' }; }
     // אותה בדיקה בדיוק כמו בקידום שלב — מכונה בתיקון/מושבתת אינה מקבלת עבודה
     if (mc2.status && mc2.status !== 'פעילה') { rollback(); return { ok: false, error: 'המכונה ' + mc2.id + ' בסטטוס ' + mc2.status }; }
+    /* ⭐⭐ B75/WASH-05 — אותו שער בדיוק כמו בקידום שלב (R8, בלי דפוס שני).
+       nt כבר ב-db, ולכן מוחרג מהספירה כדי שלא ימצא את עצמו כתפוס. */
+    var g05s = w05Gate(db, mc2.id, nt.id, p, user);
+    if (g05s && !g05s.ok) { rollback(); return g05s; }
     nt.machine_id = mc2.id;
+    if (g05s && g05s.override) b40LogTask(db, nt, 'דילוג חסימה', { note: g05s.override }, genIdFn, user);
   }
   t.qty = Number(t.qty) - q;
   if (!t.parent_task_id) t.parent_task_id = t.id;
@@ -5713,7 +5928,7 @@ function b49cCloseIntake(db, intake, w) {
 /* ⭐ הגשר עצמו — נקרא פעם אחת בסוף advanceLaundry, אחרי שהמעבר כבר הוכרע.
    מחזיר { events, closed, released } לצורך בדיקות ודיווח. */
 function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
-  var out = { events: 0, closed: false, released: [] };
+  var out = { events: 0, closed: false, released: [], portion_kg: '' };
   var ik = b49cTaskIntake(db, t);
   if (!ik || ['במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1) return out;
   var w = b49cWorkerRef(db, t.worker || user);
@@ -5732,10 +5947,17 @@ function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
   }
   // 2. פתיחת השלב החדש — רק שלב עבודה עם עגלה ומכונה (B40 אוכף את שניהם)
   if (!isFinish && t.cart_id && t.machine_id) {
+    /* ⭐⭐ B75/WASH-15 — כאן היה חסר portion_kg לחלוטין, ולכן load_kg של כל
+       כביסה פנימית של MAPA היה אפס תמיד. המשקל נגזר מ-items.weight_kg × qty
+       (שדות קיימים — אין שינוי סכימה), ו-'' כשאין נתון: בדיוק כמו מנת NOBLE
+       שנפתחה בלי משקל. ⛔ אין שער חסימה (הכרעת WASH-07). */
+    var kg15 = w15TaskKg(db, t);
+    out.portion_kg = kg15;
     nobleEvent(db, {
       intake_id: ik.id, customer_id: ik.customer_id, cart_id: t.cart_id, machine_id: t.machine_id,
       stage: toStage, event_type: 'התחלה', worker_id: w.id, worker_name: w.name,
-      note: 'לוח הכביסה · משימה ' + t.id
+      portion_kg: kg15,
+      note: 'לוח הכביסה · משימה ' + t.id + (kg15 === '' ? ' · אין משקל לפריט' : '')
     });
     out.events++;
     if (ik.status !== toStage) ik.status = toStage;
@@ -5787,13 +6009,51 @@ function b49dIntakeOfOrder(db, orderId) {
 }
 
 /* אימות ההזמנה לפני פתיחת קליטה. מחזיר {ok, order, customer} או שגיאה עברית. */
+/* ============================================================
+   ⭐⭐ B75 / WASH-16 — חסימה במקור (הכרעת אבי DEC-03 + 4ב, 17.08.2026)
+   ------------------------------------------------------------
+   ⛔ אין לקלוט כביסה — ואין להוסיף לה עגלות ואין לשקול — על הזמנה
+   שנסגרה או שכבר הופקה לה חשבונית פעילה. המצב לא ייווצר, ולכן אין
+   צורך בחשבונית מתקנת ולא בזיכוי (DEC-03).
+   ⛔ נקודת אמת אחת (R8): שלושת אתרי הכניסה קוראים לפונקציה הזו —
+   b49dResolveOrder (פתיחת קליטה) · b49dAddCarts (הוספת עגלות) ·
+   nobleWeigh (שקילה = יצירת חיוב).
+   ⛔ nobleWeighFix בכוונה **אינה** כאן: היא מסלול התיקון היחיד של
+   שקילה קיימת (B70), וחסימה שלה הייתה משאירה שקילה שגויה בלי תיקון.
+   ⚠ קליטה פנימית של MAPA (בלי order_id) אינה מושפעת כלל.
+   ⛔ B64a: הסטטוס נקרא מהגיליון ולכן עובר sVal — קודם הייתה כאן
+   השוואה גולמית שחסמה הזמנה תקינה עם רווח קשיח.
+   ⭐ איחוד הזמנות נשאר אפשרי לצרכים תפעוליים — אין לו אפקט חשבונאי,
+   והשער הזה אינו נוגע בו.
+   ============================================================ */
+function w16ActiveInvoiceOf(db, orderId) {
+  return (db.invoices || []).find(function (v) {
+    return String(v.order_id || '') === String(orderId) && sVal(v.status) !== 'בוטלה';
+  }) || null;
+}
+function w16OrderGate(db, orderId, what) {
+  var oid = String(orderId || '');
+  if (!oid) return { ok: true, order: null };            // קליטה פנימית — אין הזמנה
+  var o = (db.orders || []).find(function (x) { return String(x.id) === oid; });
+  if (!o) return { ok: false, error: 'ההזמנה של הקליטה לא נמצאה (' + oid + ')' };
+  if (B49D_ORDER_OPEN.indexOf(sVal(o.status)) === -1)
+    return { ok: false, error: 'ההזמנה ' + (o.order_number ? '#' + o.order_number : o.id) + ' בסטטוס ' +
+      (o.status || '—') + ' — אין ' + (what || 'לקלוט אליה כביסה') + '. נדרש "מאושרת" או "סופקה"' };
+  var inv = w16ActiveInvoiceOf(db, o.id);
+  if (inv)
+    return { ok: false, error: 'להזמנה ' + (o.order_number ? '#' + o.order_number : o.id) +
+      ' כבר הופקה חשבונית ' + (inv.number || inv.id) + ' — אין ' + (what || 'לקלוט אליה כביסה') +
+      '. פנה למשרד (DEC-03)' };
+  return { ok: true, order: o };
+}
+
 function b49dResolveOrder(db, orderId) {
   var o = (db.orders || []).find(function (x) { return String(x.id) === String(orderId); });
   if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
-  if (String(o.type) !== 'כביסה')
+  if (w21IsRental(o))   /* ⭐ B75/WASH-21 — היה String(o.type) גולמי */
     return { ok: false, error: 'קליטה מהזמנה אפשרית רק להזמנת כביסה (סוג ההזמנה: ' + (o.type || '—') + ')' };
-  if (B49D_ORDER_OPEN.indexOf(String(o.status)) === -1)
-    return { ok: false, error: 'ההזמנה בסטטוס ' + (o.status || '—') + ' — נדרש "מאושרת" או "סופקה"' };
+  var g16 = w16OrderGate(db, o.id, 'לפתוח לה קליטה');   /* ⭐⭐ B75/WASH-16 */
+  if (!g16.ok) return g16;
   var exist = b49dIntakeOfOrder(db, o.id);
   if (exist)
     return { ok: false, error: 'להזמנה כבר נפתחה קליטה ' + exist.id + ' — אפשר להוסיף אליה עגלות במקום לפתוח חדשה' };
@@ -5825,6 +6085,8 @@ function b49dAddCarts(db, p, user) {
   if (!ik) return { ok: false, error: 'קליטה לא נמצאה' };
   if (B49D_CLOSED_INTAKE.indexOf(String(ik.status)) > -1)
     return { ok: false, error: 'הקליטה כבר ' + ik.status + ' — לא ניתן להוסיף אליה עגלות' };
+  var g16a = w16OrderGate(db, ik.order_id, 'להוסיף לה עגלות');   /* ⭐⭐ B75/WASH-16 */
+  if (!g16a.ok) return g16a;
   var bcs = (p.cart_barcodes || []).map(String).filter(function (s) { return s.trim() !== ''; });
   if (!bcs.length) return { ok: false, error: 'יש לסרוק לפחות עגלה אחת' };
   var carts = [], seen = {};
@@ -6945,7 +7207,11 @@ function nobleOpenStarts(db, intakeId, cartId) {
   nobleEventsOf(db, intakeId, cartId).forEach(function (e) {
     var et = sVal(e.event_type);
     if (et !== 'התחלה' && et !== 'סיום') return;
-    var k = String(e.machine_id || '') + '|' + sVal(e.stage);
+    /* ⭐⭐ B75 (ממצא B69) — מזהה המכונה היה **גולמי** לצד sVal(e.stage).
+       מזהה עם רווח נגרר או רווח קשיח פתח מפתח שני, ולכן 'סיום' לא סגר
+       את 'התחלה' התואמת: המנה נשארה פתוחה לנצח, המכונה נראתה תפוסה,
+       והניצולת נמדדה על עומס שאינו קיים. מחלקת הכשל השקט של B64a. */
+    var k = w15MachKey(e.machine_id) + '|' + sVal(e.stage);
     if (et === 'התחלה') byKey[k] = e;
     else delete byKey[k];
   });
@@ -6964,8 +7230,9 @@ function nobleMachineLoad(db) {
     db.intakeCarts.forEach(function (b) {
       if (b.intake_id !== ik.id || sVal(b.active) !== 'כן') return;
       nobleOpenStarts(db, ik.id, b.cart_id).forEach(function (ev) {
-        if (!ev.machine_id) return;
-        (out[ev.machine_id] = out[ev.machine_id] || []).push({
+        var mk = w15MachKey(ev.machine_id);   /* ⭐⭐ B75 — מפתח מנורמל, אחרת עומס המכונה מתפצל לשני מפתחות */
+        if (!mk) return;
+        (out[mk] = out[mk] || []).push({
           intake_id: ik.id, cart_id: b.cart_id, stage: ev.stage,
           since: ev.ts, portion_kg: Number(ev.portion_kg) || 0, customer_id: ik.customer_id
         });
@@ -7069,7 +7336,7 @@ function nobleCartInfo(db, p) {
     }),
     machines: db.machines.filter(function (m) { return sPick(m.auto_stage, NOBLE_MACHINE_STAGES) !== ''; })
       .map(function (m) {
-        var lo = nobleMachineLoad(db)[m.id] || [];
+        var lo = nobleMachineLoad(db)[w15MachKey(m.id)] || [];   /* ⭐ B75 — מפתח מנורמל */
         var kg = 0; lo.forEach(function (x) { kg += x.portion_kg; });
         return { id: m.id, type: m.type, status: m.status, auto_stage: m.auto_stage, capacity: Number(m.capacity) || 0, load_kg: nRound2(kg), load_count: lo.length };
       }),
@@ -7193,7 +7460,7 @@ function nobleStageStart(db, p, user) {
      במקביל, וגם להיות בשלבים שונים בו-זמנית (מנה אחת כבר בייבוש בזמן
      שהשנייה עדיין בכביסה) — זה בדיוק מה שקורה במכבסה אמיתית. */
   var opens = nobleOpenStarts(db, intake.id, cart.id);
-  var same = opens.filter(function (o) { return String(o.machine_id) === String(mach.id); })[0];
+  var same = opens.filter(function (o) { return w15MachKey(o.machine_id) === w15MachKey(mach.id); })[0];   /* ⭐ B75 */
   if (same) return { ok: false, error: 'העגלה ' + cart.id + ' כבר פתוחה במכונה ' + mach.id + ' (' + same.stage + ') — סיים אותה לפני התחלה חוזרת באותה מכונה' };
   var portion = p.portion_kg === undefined || p.portion_kg === '' ? '' : Number(p.portion_kg);
   if (portion !== '' && !(portion > 0)) return { ok: false, error: 'משקל המנה חייב להיות מספר חיובי (או ריק)' };
@@ -7201,7 +7468,7 @@ function nobleStageStart(db, p, user) {
   var warn = '';
   var cap = Number(mach.capacity) || 0;
   var loadNow = 0;
-  (nobleMachineLoad(db)[mach.id] || []).forEach(function (x) { loadNow += x.portion_kg; });
+  (nobleMachineLoad(db)[w15MachKey(mach.id)] || []).forEach(function (x) { loadNow += x.portion_kg; });   /* ⭐ B75 */
   if (cap > 0 && portion !== '' && (loadNow + portion) > cap)
     warn = 'שים לב: במכונה ' + mach.id + ' כבר ' + nRound2(loadNow) + ' ק"ג, והמנה הזו מוסיפה ' + portion + ' — מעל הקיבולת (' + cap + ' ק"ג)';
   nobleEvent(db, {
@@ -7234,7 +7501,7 @@ function nobleStageEnd(db, p, user) {
   if (mEnd) {
     var mObj = db.machines.find(function (m) { return String(m.barcode) === mEnd || String(m.id) === mEnd; });
     var mId = mObj ? mObj.id : mEnd;
-    open = opens.filter(function (o) { return String(o.machine_id) === String(mId); })[0];
+    open = opens.filter(function (o) { return w15MachKey(o.machine_id) === w15MachKey(mId); })[0];   /* ⭐ B75 */
     if (!open) return { ok: false, error: 'לעגלה ' + cart.id + ' אין מנה פתוחה במכונה ' + mId };
   } else if (opens.length === 1) {
     open = opens[0];
@@ -7260,6 +7527,11 @@ function nobleWeigh(db, p, user) {
   if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
   var blkW = nobleBlockReleased(r); if (blkW) return blkW;
   if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  /* ⭐⭐ B75/WASH-16 — שקילה היא יצירת חיוב (B70/WASH-03). הזמנה שנסגרה או
+     שכבר הופקה לה חשבונית אינה מקבלת חיוב נוסף. אותו שער בדיוק כמו
+     פתיחת הקליטה — אין דפוס שני (R8). */
+  var g16w = w16OrderGate(db, intake.order_id, 'לשקול לתוכה כביסה נוספת');
+  if (!g16w.ok) return g16w;
   var gross = Number(p.gross_kg);
   if (!(gross > 0)) return { ok: false, error: 'יש להזין משקל ברוטו תקין (ק"ג)' };
   var tare = Number(cart.tare_kg) || 0;
@@ -7457,8 +7729,14 @@ function nobleDriverScan(db, p, user) {
   var intake = r.intake;
   if (sVal(intake.status) !== 'מוכן') return { ok: false, error: 'ניתן להעמיס רק קליטה במצב "מוכן" (מצב נוכחי: ' + intake.status + ')' };
   var cust = intake.customer_id ? db.customers.find(function (c) { return c.id === intake.customer_id; }) : null;
+  /* ⭐ B75/WASH-13 — היה order_id:'' קבוע. קליטה שנפתחה מהזמנת כביסה (B49d)
+     ידעה את מזהה ההזמנה כל הזמן, והמשלוח שיצא ממנה נותר תלוש ממנה: כרטיס
+     ההזמנה לא הראה אותו, ובדיקת "רגל פתוחה" ב-b56CloseLaundryOrder לא ידעה
+     על קיומו. ⚠ kind נשאר 'משלוח מכבסה' — ולכן אינו מתנגש עם רגלי ההלוך/חזור
+     ('אספקה'/'איסוף') לא ב-b38EnsureOrderDeliveries ולא ב-b49fCloseLegs.
+     ⚠ קליטה פנימית של MAPA נשארת עם order_id ריק, כמו קודם. */
   var dlv = {
-    id: genId('DELI'), order_id: '', kind: 'משלוח מכבסה', date: today(), driver: w.name,
+    id: genId('DELI'), order_id: String(intake.order_id || ''), kind: 'משלוח מכבסה', date: today(), driver: w.name,
     status: 'מתוכנן', note: 'קליטת מכבסה ' + intake.id + (cust ? ' · ' + cust.name : ' · פנימי MAPA'),
     note_number: '', vehicle_id: p.vehicle_id || '', photo_url: ''
   };
@@ -7710,7 +7988,7 @@ function nobleBoard(db) {
   // B39b: במכונה אחת יכולות לשבת מנות מכמה עגלות — busy הוא רשימה
   var loadMap = nobleMachineLoad(db);
   var machines = db.machines.map(function (m) {
-    var lo = (loadMap[m.id] || []).map(function (x) {
+    var lo = (loadMap[w15MachKey(m.id)] || []).map(function (x) {   /* ⭐ B75 — מפתח מנורמל */
       return { intake: x.intake_id, customer: custName(x.customer_id), cart: x.cart_id, since: x.since, stage: x.stage, portion_kg: x.portion_kg };
     });
     var loadKg = 0; lo.forEach(function (x) { loadKg += Number(x.portion_kg) || 0; });
@@ -8900,7 +9178,7 @@ function b4ScanReturnReminders(db) {
   var daysBefore = Number(b2Setting(db, 'notify_return_days_before')) || 1;
   var target = Utilities.formatDate(new Date(new Date().getTime() + daysBefore * 86400000), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   db.orders.filter(function (o) {
-    return o.type === 'השכרה' && o.end_date === target && ['מאושרת', 'סופקה'].indexOf(o.status) > -1;
+    return w21IsRental(o) && o.end_date === target && ['מאושרת', 'סופקה'].indexOf(o.status) > -1;   /* ⭐ B75/WASH-21 */
   }).forEach(function (o) {
     var c = db.customers.find(function (x) { return x.id === o.customer_id; });
     if (!c || !c.email || b4OptedOut(c)) return;
@@ -9305,7 +9583,7 @@ function b9ExceptionsDashboard(db) {
 
   // 2) החזרות שעברו את המועד ועדיין לא הוחזרו/הושלמו
   var overdueReturns = db.orders.filter(function (o) {
-    return o.type === 'השכרה' && o.end_date && ['מאושרת', 'סופקה'].indexOf(o.status) > -1 && daysOverdue(o.end_date) > 0;
+    return w21IsRental(o) && o.end_date && ['מאושרת', 'סופקה'].indexOf(o.status) > -1 && daysOverdue(o.end_date) > 0;   /* ⭐ B75/WASH-21 */
   }).map(function (o) {
     var c = db.customers.find(function (x) { return x.id === o.customer_id; });
     return { order_id: o.id, order_number: o.order_number || o.id, customer: c ? c.name : '', end_date: o.end_date, days: daysOverdue(o.end_date) };
@@ -9497,7 +9775,7 @@ function b14Revenue(db) {
     var t = 'כביסה';
     if (v.order_id) {
       var o = db.orders.find(function (x) { return x.id === v.order_id; });
-      t = (o && o.type === 'השכרה') ? 'השכרה' : 'כביסה';
+      t = w21IsRental(o) ? 'השכרה' : 'כביסה';   /* ⭐ B75/WASH-21 */
     }
     typeTotals[t] = (typeTotals[t] || 0) + Number(v.subtotal || 0);
   });
