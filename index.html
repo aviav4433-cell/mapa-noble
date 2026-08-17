@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.74-B74 · 16.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.75-B75 · 17.08.2026</div>
   </div>
 </div>
 
@@ -975,6 +975,13 @@ async function act(action, payload, okMsg){
   try{
     var r = await api(action, payload);
     if(!r.ok){
+      /* ⭐⭐ B75/WASH-05 — מכונה תפוסה. אותו דפוס בדיוק כמו need_count
+         (R8, בלי מסלול שני): השרת מחזיר machine_busy, והממשק פותח את
+         טופס הדילוג — קוד מנהל + פירוט חובה. */
+      if(action==='advanceLaundry' && r.machine_busy){
+        w05BusyForm(payload, r);
+        return null;
+      }
       if(action==='returnByWeight' && r.need_count){
         var nm = {}; r.need_count.forEach(function(x){ nm[x.line_id]=x; });
         renderReturn(nm); toast(r.error, true);
@@ -2004,7 +2011,7 @@ function rDash(){
     var wash = DB.laundryTasks.filter(t=>t.item_id===i.id&&t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty),0);
     return (total-wash) < Number(i.min_stock);
   });
-  var upcoming = DB.orders.filter(o=>o.type==='השכרה' && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);
+  var upcoming = DB.orders.filter(o=>w21IsRental(o) && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);   /* ⭐ B75/WASH-21 */
   el('main').innerHTML =
     b43DashBanner(today)+   /* B43: מה דורש טיפול כספי היום — באיחור + להיום, בשני הכיוונים */
     '<div class="gridkpi">'+
@@ -2545,7 +2552,7 @@ function b49dIntakeOfOrder(oid){
    שהרצפה תראה הזמנה שתאריכה שגוי מאשר שההזמנה תיעלם ממנה. */
 function b49dPendingOrders(){
   return ((DB&&DB.orders)||[]).filter(function(o){
-    return String(o.type)==='כביסה' && ['מאושרת','סופקה'].indexOf(String(o.status))>-1 && !b49dIntakeOfOrder(o.id);
+    return w17IsWash(o) && ['מאושרת','סופקה'].indexOf(String(o.status))>-1 && !b49dIntakeOfOrder(o.id);   /* ⭐ B75/WASH-21 */
   }).sort(function(a,b){
     return String(b49eLegDate(a,'הלוך')||'').localeCompare(String(b49eLegDate(b,'הלוך')||''));
   });
@@ -2587,7 +2594,7 @@ function b49dCanIntake(){
 }
 /* מקטע הקליטה בכרטיס הזמנת כביסה — הזמנת השכרה לא רואה אותו כלל */
 function b49dOrderIntakeHtml(o){
-  if(String(o.type)!=='כביסה') return '';
+  if(!w17IsWash(o)) return '';   /* ⭐ B75/WASH-21 */
   var ik = b49dIntakeOfOrder(o.id);
   var st = b49dLegState(o);
   var body;
@@ -2999,6 +3006,17 @@ async function doInvoice(oid){
    ⛔ הזמנת השכרה לא נגעה כלל.
    ============================================================ */
 function w17IsWash(o){ return !!o && sVal(o.type)==='כביסה'; }
+/* ============================================================
+   ⭐⭐ B75 / WASH-21 — "האם ההזמנה היא השכרה" · התאום של w17IsWash
+   ------------------------------------------------------------
+   19 אתרי השוואת סוג גולמית שאינם כסף (נספרו ב-B74). הכבדים בממשק:
+   b40ItemBreakdown ודוח הניצולת — הזמנת השכרה עם סוג מלוכלך בגיליון
+   לא שריינה מלאי, והפריט נראה זמין. התמונה הראי של WASH-20.
+   ⛔ הכרעת אבי (17.08.2026, אפשרות א'): עוזר אחד, תאום מדויק.
+   ⛔ סוג לא מוכר וסוג ריק נשארים **השכרה**, כמו לפני התיקון.
+   ⛔ זהה תו-בתו ל-w21IsRental בקוד השרת. יש בדיקה שמשווה את הגופים.
+   ============================================================ */
+function w21IsRental(o){ return !!o && sVal(o.type)!=='כביסה'; }
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
 function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
@@ -3541,6 +3559,37 @@ function b40RelChg(){
   var isShelf = el('adv_rel').value==='מדף';
   el('adv_shelfrow').style.display = isShelf? 'block':'none';
 }
+/* ⭐⭐ B75/WASH-05 — טופס הדילוג. ⛔ הפירוט חובה, ונרשם ביומן המשימה
+   יחד עם המזהה של המשימה התופסת — אחרת אין למי לחזור אחר כך. */
+var W05_PL = null;
+function w05BusyForm(pl, r){
+  W05_PL = pl;
+  var b = r.machine_busy || {};
+  openModal('<h2>המכונה תפוסה</h2>'+
+    '<div class="card" style="background:#FFF7E6;border-color:var(--amber);padding:9px 11px;font-size:12.5px;margin-bottom:10px">'+
+      'המכונה <b>'+esc(b.machine_id||'')+'</b> מוקצית כרגע למשימה <b>'+esc(b.task_id||'')+'</b>'+
+      (b.stage? ' (שלב '+esc(b.stage)+')' : '')+'.<br>'+
+      'העדיפות היא לבחור מכונה אחרת. דילוג אפשרי באישור מנהל בלבד, והוא נרשם ביומן המשימה.'+
+    '</div>'+
+    '<div class="frow"><label>למה בכל זאת אותה מכונה? <b style="color:var(--danger)">*</b></label>'+
+      '<input id="f_w05reason" maxlength="120" placeholder="לדוגמה: המשימה הקודמת הסתיימה פיזית וטרם עודכנה"></div>'+
+    '<div class="frow"><label>מספר אישי — מנהל <b style="color:var(--danger)">*</b></label>'+
+      '<input id="f_w05pin" type="password" inputmode="numeric" autocomplete="off"></div>'+
+    '<div class="row"><button class="btn danger" onclick="w05BusyGo()">אשר דילוג וקדם</button>'+
+    '<button class="btn ghost" onclick="W05_PL=null;closeModal()">ביטול</button></div>');
+  setTimeout(function(){ var i=el('f_w05reason'); if(i) i.focus(); }, 60);
+}
+async function w05BusyGo(){
+  if(!W05_PL) return;
+  var reason = el('f_w05reason')? String(el('f_w05reason').value||'').trim() : '';
+  var pin = el('f_w05pin')? String(el('f_w05pin').value||'').trim() : '';
+  if(reason.length < 3) return toast('יש לפרט למה נדרשת אותה מכונה', true);
+  if(!pin) return toast('הזן מספר אישי של מנהל', true);
+  var pl = Object.assign({}, W05_PL, {mgr_pin:pin, w05_reason:reason});
+  W05_PL = null;
+  var r = await act('advanceLaundry', pl, 'קודם לשלב הבא · הדילוג נרשם ביומן');
+  if(r) closeModal();
+}
 async function doAdvance(tid){
   var pl = {task_id:tid};
   /* B59: שלב היעד נשלח מפורשות. בהעדרו השרת נופל חזרה לשלב הבא לפי הסדר. */
@@ -3832,13 +3881,13 @@ function dispatchTodayHtml(){
    ומועתקת מילה במילה מ-b49eShipMode בשרת. */
 var B49E_SHIP='משלוח', B49E_SELF='איסוף עצמי', B49E_LEGS=['הלוך','חזור'];
 function b49eLegKind(o,leg){
-  var rental = String(o.type)!=='כביסה';
+  var rental = w21IsRental(o);   /* ⭐ B75/WASH-21 */
   if(leg==='הלוך') return rental?'אספקה':'איסוף';
   return rental?'איסוף':'אספקה';
 }
 function b49eLegDate(o,leg){ return leg==='הלוך'? o.start_date : o.end_date; }
 function b49eLegLabel(o,leg){
-  var rental = String(o.type)!=='כביסה';
+  var rental = w21IsRental(o);   /* ⭐ B75/WASH-21 */
   if(leg==='הלוך') return rental?'אספקה ללקוח':'איסוף הכביסה מהלקוח';
   return rental?'איסוף מהלקוח':'החזרת הכביסה ללקוח';
 }
@@ -3849,7 +3898,7 @@ function b49eShipMode(o,leg){
      הערך הקנוני מהרשימה. */
   var v = sPick(leg==='הלוך'? o.ship_out : o.ship_back, [B49E_SHIP,B49E_SELF]);
   if(v===B49E_SHIP||v===B49E_SELF) return v;
-  if(String(o.type)==='כביסה') return Number(o.delivery_fee||0)>0? B49E_SHIP : B49E_SELF;
+  if(!w21IsRental(o)) return Number(o.delivery_fee||0)>0? B49E_SHIP : B49E_SELF;   /* ⭐ B75/WASH-21 */
   return B49E_SHIP;
 }
 /* B38 + B49e: אותה הגדרה בדיוק כמו בשרת — אילו נסיעות מגיעות להזמנה.
@@ -4559,7 +4608,7 @@ function openDelivery(did){
      היה צריך לפתוח את ההזמנה. עכשיו הפעולה יושבת כאן, ראשית. */
   /* B49d: נסיעת איסוף של הזמנת כביסה — הפעולה של הרגע היא פתיחת קליטה במכבסה,
      לא "קליטת החזרה" (שהיא מסלול ההשכרה ואינה חלה כאן). */
-  var isWash49d = o.id && String(o.type)==='כביסה' && isReturn && ['מאושרת','סופקה'].indexOf(String(o.status))>-1;
+  var isWash49d = o.id && w17IsWash(o) && isReturn && ['מאושרת','סופקה'].indexOf(String(o.status))>-1;   /* ⭐ B75/WASH-21 */
   var wash49dIk = isWash49d? b49dIntakeOfOrder(o.id) : null;
   var canRecv = isMgr && isReturn && !isWash49d && d.status!=='בוצע' && o.id && o.status==='סופקה';
   var recvBtn = canRecv? '<button class="btn pri" onclick="closeModal();returnForm(\''+o.id+'\')">קבל החזרה (ללא שקילה)</button>' : '';
@@ -5240,6 +5289,53 @@ async function b54RunAudit(){
     var b=el('b54AuditBtn'); if(b){ b.disabled=false; b.textContent='בדיקת נתוני חיובים'; }
   }
 }
+/* ===== ⭐ B75/WASH-15 — אבחון משקלי הפריטים והמונה של הניצולת =====
+   ⛔ קריאה בלבד. הפער שהאבחון הזה חושף: פריט בלי weight_kg תורם אפס
+   ק"ג לניצולת בשקט, ובלי המספר הזה אין דרך לדעת שהדוח חלקי. */
+async function w15RunAudit(){
+  var btn=el('w15AuditBtn');
+  if(btn){ btn.disabled=true; btn.textContent='בודק...'; }
+  try{
+    var r=await apiBusy('w15WeightAudit',{});
+    if(!r||!r.ok){ toast((r&&r.error)||'הבדיקה נכשלה', true); return; }
+    var box=el('w15AuditOut');
+    if(box) box.innerHTML=w15AuditHtml(r);
+  } finally {
+    var b=el('w15AuditBtn'); if(b){ b.disabled=false; b.textContent='בדיקת משקלי פריטים וניצולת'; }
+  }
+}
+function w15AuditHtml(r){
+  var miss = r.missing || [], mach = r.machines || [];
+  function sec(title, ok, body){
+    return '<div class="card" style="padding:9px 11px;margin:6px 0;border-right:5px solid '+(ok?'var(--ok)':'var(--amber,#E8A33D)')+'">'+
+      '<b>'+esc(title)+'</b><div style="font-size:12.5px;margin-top:3px">'+body+'</div></div>';
+  }
+  var missBody = miss.length
+    ? ('<div style="font-size:12px;margin-top:4px">'+miss.map(function(x){
+        return '<div style="padding:2px 0;border-top:1px solid var(--line,#eee)"><b>'+esc(x.name)+'</b> ('+esc(x.item_id)+') · '+
+          esc(x.tasks)+' משימות · '+esc(x.qty)+' יח\'</div>'; }).join('')+
+        (r.missing_more? '<div class="muted" style="margin-top:3px">ועוד '+esc(r.missing_more)+' פריטים</div>':'')+'</div>')
+    : '';
+  var machBody = mach.length
+    ? ('<div style="font-size:12px;margin-top:4px">'+mach.map(function(m){
+        return '<div style="padding:2px 0;border-top:1px solid var(--line,#eee)"><b>'+esc(m.type)+' '+esc(m.id)+'</b>'+
+          (m.stage? ' · '+esc(m.stage):'')+' · '+esc(m.load_kg)+' ק"ג'+
+          (m.capacity? ' מתוך '+esc(m.capacity)+(m.pct!==''? ' ('+esc(m.pct)+'%)':'') : ' · לא הוגדרה קיבולת')+
+          ' · '+esc(m.load_count)+' מנות'+
+          (m.status && m.status!=='פעילה'? ' · <b style="color:var(--danger)">'+esc(m.status)+'</b>':'')+'</div>'; }).join('')+'</div>')
+    : 'אין מכונות עם שלב אוטומטי מוגדר — הניצולת לא תוצג עד שיוגדר.';
+  return '<div style="margin-top:10px">'+
+    sec('משימות כביסה פתוחות', r.tasks_no_kg===0,
+      'סה"כ '+esc(r.tasks_open)+' · עם משקל '+esc(r.tasks_with_kg)+' · <b>בלי משקל '+esc(r.tasks_no_kg)+'</b>'+
+      ' · המשקל הנמדד: <b>'+esc(r.kg_total)+' ק"ג</b>')+
+    sec('פריטים בקטלוג ללא משקל ליחידה', r.items_no_weight===0,
+      esc(r.items_no_weight)+' מתוך '+esc(r.items_total)+' פריטים. פריט בלי משקל תורם אפס ק"ג לניצולת. '+
+      'המשקל מוגדר בכרטיס הפריט — שדה "משקל הפריט (ק"ג ליחידה)".')+
+    (miss.length? sec('הפריטים שחסרים עכשיו במשימות פתוחות', false, 'לפי כמות יחידות:'+missBody) : '')+
+    sec('המונה בפועל, לפי מכונה', true, machBody)+
+    '</div>';
+}
+
 /* ⭐ B74/WASH-20: שורות הממצא. הערך הגולמי מוצג עם התווים הבלתי נראים
    מסומנים בשמם — אחרת אבי רואה 'כביסה' מול 'כביסה' ואינו מבין למה. */
 function w20RowsHtml(rows){
@@ -6598,7 +6694,7 @@ function b40ItemBreakdown(iid, wh){
   var out = [], reserved = [], laundry = [];
   (DB.orderLines||[]).filter(l=>l.item_id===iid).forEach(function(l){
     var o = (DB.orders||[]).find(x=>x.id===l.order_id); if(!o) return;
-    if(String(o.type)!=='השכרה') return;
+    if(!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — היה String(o.type)!=='השכרה' גולמי: השכרה מלוכלכת נראתה זמינה */
     if(!inWh(o.warehouse_id)) return;
     if(B40_OUT_STATUSES.indexOf(String(o.status))>-1) out.push({line:l, order:o});
     else if(B40_RESERVED_STATUSES.indexOf(String(o.status))>-1) reserved.push({line:l, order:o});
@@ -7567,7 +7663,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.74-B74';
+var B61_CANARY = 'v4.75-B75';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -8688,7 +8784,7 @@ function b50UtilRows(p){
     return per[iid];
   };
   (DB.orders||[]).forEach(function(o){
-    if(String(o.type)!=='השכרה') return;
+    if(!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — דוח הניצולת */
     if(B54_SKIP_ORDER.indexOf(String(o.status))>-1) return;
     var s = dYmd(o.start_date||''), e = dYmd(o.end_date||o.start_date||'');
     if(!s) return;
@@ -10778,6 +10874,11 @@ function b46FixPanelHtml(){
       '<div class="row" style="margin-top:10px"><button class="btn ghost" id="b54AuditBtn" onclick="b54RunAudit()">בדיקת נתוני חיובים</button></div>'+
       '<div class="muted" style="font-size:12.5px;margin-top:4px">בדיקה בלבד — אינה משנה שום נתון. מציגה מה יש בפועל בנתוני החיובים.</div>'+
       '<div id="b54AuditOut"></div>'+
+      /* ⭐ B75/WASH-15 — אבחון משקלי הפריטים והמונה של הניצולת. כלל R1: אבי
+         לוחץ ורואה מספר אמיתי, בלי ייצוא בסיס נתונים. */
+      '<div class="row" style="margin-top:12px"><button class="btn ghost" id="w15AuditBtn" onclick="w15RunAudit()">בדיקת משקלי פריטים וניצולת</button></div>'+
+      '<div class="muted" style="font-size:12.5px;margin-top:4px">בדיקה בלבד. מראה כמה ק"ג נמדדים בפועל בכל מכונה, ואילו פריטים חסרי משקל ולכן תורמים אפס לניצולת.</div>'+
+      '<div id="w15AuditOut"></div>'+
       '<div id="b46FixOut" class="muted" style="margin-top:8px;font-size:12.5px"></div>'+
     '</div>'+
     /* B49e: מילוי חד-פעמי של אופן המסירה בהזמנות ותיקות. אחריו אף חישוב במערכת
@@ -10984,7 +11085,7 @@ function calEvents(){
      רגל באיסוף עצמי אינה נסיעה, ולכן מסומנת בבירור ובצבע נייטרלי. */
   DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status)).forEach(function(o){
     var nm = cust(o.customer_id);
-    var laundry = String(o.type)==='כביסה';
+    var laundry = !w21IsRental(o);   /* ⭐ B75/WASH-21 */
     B49E_LEGS.forEach(function(leg){
       var ship = b49eShipMode(o,leg)===B49E_SHIP;
       var out = leg==='הלוך';
