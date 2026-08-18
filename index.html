@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.76-B76 · 17.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.77-B77 · 18.08.2026</div>
   </div>
 </div>
 
@@ -1165,7 +1165,7 @@ function b54OrderBalanceAgFE(oid){
   if(rows.length) return rows.reduce(function(s,r){ return s+r.open_ag; },0);
   var o = DB.orders.find(x=>x.id===oid);
   if(!o) return 0;
-  var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
+  var inv = DB.invoices.find(v=>v.order_id===oid && w23InvActive(v));
   var baseAg = inv? toAg(inv.total) : b54RawOrderTotalAgFE(o);
   var paidAg = (DB.payments||[]).filter(p=>p.order_id===oid && b54PayCounts(p)).reduce(function(s,p){ return s+toAg(p.amount); },0);
   return baseAg - paidAg;
@@ -1430,7 +1430,7 @@ function printInvoice(vid){
   printDoc('חשבונית עסקה', v.number,
     custBlock(v.customer_id)+body+
     '<p class="tot">סכום: '+ils(v.subtotal)+' · מע"מ '+(Number(v.vat_rate)*100)+'%: '+ils(v.vat)+' · <u>סה"כ: '+ils(v.total)+'</u></p>'+
-    (v.status==='בוטלה'?'<p style="color:#C44536;font-weight:800">— מבוטלת —</p>':''),
+    (!w23InvActive(v)?'<p style="color:#C44536;font-weight:800">— מבוטלת —</p>':''),
     {num:v.number, date:v.date});
 }
 function printReceipt(pid){
@@ -2103,7 +2103,7 @@ function revenueChartSvg(){
     months.push(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2));
   }
   var sums = months.map(function(mk){
-    return (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+    return (DB.invoices||[]).filter(v=>w23InvActive(v) && String(v.date||'').slice(0,7)===mk)
       .reduce((s,v)=>s+Number(v.subtotal||0),0);
   });
   var max = Math.max.apply(null, sums);
@@ -2149,7 +2149,7 @@ function ordersDonutSvg(){
 function revMonthDetail(mk){
   var HEB_M = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
   var lbl = HEB_M[Number(mk.slice(5,7))-1]+' '+mk.slice(0,4);
-  var list = (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+  var list = (DB.invoices||[]).filter(v=>w23InvActive(v) && String(v.date||'').slice(0,7)===mk)
     .sort((a,b)=>String(a.date)<String(b.date)?1:-1);
   var sum = list.reduce((s,v)=>s+Number(v.subtotal||0),0);
   openModal('<h2>הכנסות '+lbl+'</h2>'+
@@ -2273,7 +2273,7 @@ function collectDocRows(cid){
     var b = orderBalance(o.id);
     if(b>0.01) rows.push({kind:'order', id:o.id, label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, sort:String(o.created_at||o.start_date||''), click:"openOrder('"+o.id+"')"});
   });
-  DB.invoices.filter(v=>v.customer_id===cid && !v.order_id && v.status!=='בוטלה').forEach(function(v){
+  DB.invoices.filter(v=>v.customer_id===cid && !v.order_id && w23InvActive(v)).forEach(function(v){
     var paid = DB.payments.filter(p=>p.invoice_id===v.id && b54PayCounts(p)).reduce((s,p)=>s+Number(p.amount||0),0);   /* C10 */
     var b = Math.max(0, Number(v.total)-paid);
     if(b>0.01) rows.push({kind:'invoice', id:v.id, label:'חשבונית מכבסה '+v.number+' · '+(v.date||''), b:b, sort:String(v.date||''), click:"openInvoice('"+v.id+"')"});
@@ -2354,7 +2354,7 @@ function collectMissingInv(cid, docKind, docId){
   if(docKind==='invoice') return [];
   var os = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(w22Stat(o)) && orderBalance(o.id)>0.01);
   if(docKind==='order') os = os.filter(o=>String(o.id)===String(docId));
-  return os.filter(o=>!DB.invoices.some(v=>v.order_id===o.id && v.status!=='בוטלה'));
+  return os.filter(o=>!DB.invoices.some(v=>v.order_id===o.id && w23InvActive(v)));
 }
 function vatRateFE(){ var v=parseFloat(setting('vat_rate'));
   if(!(v>0&&v<1) && typeof SHOP!=='undefined' && SHOP && SHOP.vat_rate) v=parseFloat(SHOP.vat_rate); /* B45: מצב חנות — ההגדרות לא נטענות */
@@ -2828,7 +2828,7 @@ function docChainHtml(oid, active){
   var o = DB.orders.find(x=>x.id===oid); if(!o) return '';
   var supplies = DB.deliveries.filter(d=>d.order_id===oid && d.kind==='אספקה').slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
   var returns  = DB.deliveries.filter(d=>d.order_id===oid && d.kind==='איסוף').slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
+  var inv = DB.invoices.find(v=>v.order_id===oid && w23InvActive(v));
   var pays = DB.payments.filter(p=>p.order_id===oid || (inv && p.invoice_id===inv.id));
   function node(key, label, list, openFn){
     if(!list || !list.length) return '<div class="dc-node dc-empty">'+esc(label)+'</div>';
@@ -2884,7 +2884,7 @@ function openOrder(oid){
   var o = DB.orders.find(x=>x.id===oid); if(!o) return;
   var lines = DB.orderLines.filter(l=>l.order_id===oid);
   var pays = DB.payments.filter(p=>p.order_id===oid);
-  var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
+  var inv = DB.invoices.find(v=>v.order_id===oid && w23InvActive(v));
   var delivs = DB.deliveries.filter(d=>d.order_id===oid);
   var total = orderTotal(oid), bal = orderBalance(oid);
   var editable = (w22Stat(o)==='טיוטה'||w22Stat(o)==='הצעת מחיר');
@@ -3028,6 +3028,19 @@ var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
 function w22Stat(o){ var s = sVal(o && o.status); return sPick(s, ORDER_STATUSES) || s; }
 function w22Known(o){ return sPick(o && o.status, ORDER_STATUSES) !== ''; }
 function w22Reserving(o){ return !!o && (RESERVING_STATUSES.indexOf(w22Stat(o)) > -1 || !w22Known(o)); }
+/* ⭐⭐ B77/WASH-23 — ציר הסטטוס של חשבוניות. w23InvStat היא נקודת האמת
+   היחידה ל"מה הסטטוס של החשבונית", ו-w23InvActive ל"האם היא מחייבת".
+   ⛔ שתיהן זהות תו-בתו ל-index.html — יש בדיקה שמשווה את הגופים ואת הרשימה.
+   ⛔ נרמול להשוואה בלבד — הערך בגיליון ובתצוגה אינו משתנה.
+   ⛔ הכרעת אבי 18.08.2026 (אפשרות א'): סטטוס חשבונית לא מוכר וסטטוס ריק
+     נחשבים **פעילים** — החשבונית מחייבת, נכנסת לספר וחוסמת הפקה שנייה.
+     הנימוק: בכסף, טעות שרואים עדיפה על חוב שנעלם בשקט או על כפל חיוב.
+   ⛔ w23InvStat מחזירה את הערך **המנורמל עצמו** כשאין התאמה ב-INVOICE_STATUSES —
+     אסור להחזיר '' ואסור למפות לסטטוס מוכר.
+   ⛔ חשבונית מבוטלת עדיין אינה חוסמת הפקה חדשה (B75/WASH-16) — לא נשבר. */
+var INVOICE_STATUSES = ['פתוחה', 'שולמה', 'בוטלה'];
+function w23InvStat(v){ var s = sVal(v && v.status); return sPick(s, INVOICE_STATUSES) || s; }
+function w23InvActive(v){ return !!v && w23InvStat(v) !== 'בוטלה'; }
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
 function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
@@ -3120,7 +3133,7 @@ var PAY_CTX = null;
 async function paymentScreen(oid){
   var o = DB.orders.find(x=>x.id===oid); if(!o) return;
   // B31c: אין מסמך להזמנה — שואלים מה להפיק לפני התשלום (ברירת מחדל: חשבונית מס).
-  if(orderBalance(oid)>0.01 && !PAY_SKIP[oid] && !DB.invoices.some(v=>v.order_id===oid && v.status!=='בוטלה'))
+  if(orderBalance(oid)>0.01 && !PAY_SKIP[oid] && !DB.invoices.some(v=>v.order_id===oid && w23InvActive(v)))
     return payDocChooser(oid);
   var ctx = await api('b2PaymentContext',{order_id:oid});
   if(!ctx.ok) return toast(ctx.error, true);
@@ -4792,9 +4805,9 @@ function rFinance(){
           '<td><div class="row" style="gap:4px;flex-wrap:nowrap">'+
             '<button class="btn ghost sm" onclick="printInvoice(\''+v.id+'\')" title="הדפסה">'+printIcon+'</button>'+
             (v.pdf_url?'<a href="'+esc(v.pdf_url)+'" target="_blank" class="btn ghost sm" title="פתח ב-Drive">☁</a>':'')+
-            (v.status==='פתוחה'&&!v.order_id&&CAN_EDIT?'<button class="btn sm" onclick="laundryPayForm(\''+v.id+'\')">תשלום</button>':'')+
+            (w23InvStat(v)==='פתוחה'&&!v.order_id&&CAN_EDIT?'<button class="btn sm" onclick="laundryPayForm(\''+v.id+'\')">תשלום</button>':'')+
             (ROLE==='מנהל'&&!hasAlloc?'<button class="btn ghost sm" onclick="allocForm(\''+v.id+'\')" title="הוסף מספר הקצאה">הקצ׳</button>':'')+
-            (v.status==='פתוחה'&&ROLE==='מנהל'?'<button class="btn danger sm" onclick="cancelInv(\''+v.id+'\')">בטל</button>':'')+
+            (w23InvStat(v)==='פתוחה'&&ROLE==='מנהל'?'<button class="btn danger sm" onclick="cancelInv(\''+v.id+'\')">בטל</button>':'')+
           '</div></td>'+
         '</tr>';
       }).join('')+'</table></div>' : '<div class="card empty">אין חשבוניות — מפיקים מתוך מסך ההזמנה</div>';
@@ -4819,7 +4832,7 @@ function finMonthKey(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.get
 // הכנסות החודש — לפי חשבוניות שהופקו החודש, לפני מע"מ (זהה לגרף ההכנסות בלוח הבקרה)
 function finIncomeMonth(){
   var mk = finMonthKey();
-  return (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+  return (DB.invoices||[]).filter(v=>w23InvActive(v) && String(v.date||'').slice(0,7)===mk)
     .reduce((s,v)=>s+Number(v.subtotal||0),0);
 }
 // הוצאות שנרשמו בפועל בחודש הנוכחי — כולל מע"מ
@@ -4937,7 +4950,7 @@ function b54LedgerFE(){
   if(DB && DB._b54Ledger) return DB._b54Ledger;
   var rows=[];
   var orders=(DB.orders||[]).filter(function(o){ return B54_SKIP_ORDER.indexOf(w22Stat(o))===-1; });
-  var invActive=(DB.invoices||[]).filter(function(v){ return v.status!=='בוטלה'; });
+  var invActive=(DB.invoices||[]).filter(function(v){ return w23InvActive(v); });
   var invById={}; invActive.forEach(function(v){ invById[v.id]=v; });
   var byOrder={}, byInv={}, containers=[], loose=[];
 
@@ -5102,7 +5115,7 @@ function b54RawOrderTotalAgFE(o){
     if(String(ik.order_id||'').trim()!==o.id) return;
     if(sVal(ik.internal)==='כן') return;   /* ⛔ WASH-04 · כסף */
     if(!(toAg(ik.total_charge)>0)) return;
-    var iv=(DB.invoices||[]).find(function(v){ return v.id===ik.invoice_id && sVal(v.status)!=='בוטלה'; });
+    var iv=(DB.invoices||[]).find(function(v){ return v.id===ik.invoice_id && w23InvActive(v); });
     if(iv && !iv.order_id) return;
     ag+=toAg(ik.total_charge);
   });
@@ -5110,7 +5123,7 @@ function b54RawOrderTotalAgFE(o){
     if(String(ch.order_id||'').trim()!==o.id) return;
     if(String(ch.status||'פתוח')==='בוטל') return;
     if(!(toAg(ch.amount)>0)) return;
-    var cv=(DB.invoices||[]).find(function(v){ return v.id===ch.invoice_id && v.status!=='בוטלה'; });
+    var cv=(DB.invoices||[]).find(function(v){ return v.id===ch.invoice_id && w23InvActive(v); });
     if(cv && !cv.order_id) return;
     ag+=toAg(ch.amount);
   });
@@ -5716,7 +5729,7 @@ function finBdModal(title, sub, head, rowsHtml, tot, empty){
 // הכנסות החודש — החשבוניות שמרכיבות את הסכום (לפני מע"מ)
 function finIncomeBreakdown(){
   var mk = finMonthKey();
-  var list = (DB.invoices||[]).filter(v=>v.status!=='בוטלה' && String(v.date||'').slice(0,7)===mk)
+  var list = (DB.invoices||[]).filter(v=>w23InvActive(v) && String(v.date||'').slice(0,7)===mk)
     .slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   var tot = list.reduce((s,v)=>s+Number(v.subtotal||0),0);
   finBdModal('הכנסות החודש — '+mk, list.length+' חשבוניות · לחיצה על שורה פותחת את החשבונית',
@@ -7675,7 +7688,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.76-B76';
+var B61_CANARY = 'v4.77-B77';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -14274,11 +14287,11 @@ var B34_PICKS = [];
 function b34PickForm(orderId){
   var cases = (DB.cases||[]).filter(c=>c.active!=='לא');
   if(!cases.length) return toast('אין מארזים — צור מארז קודם', true);
-  var orders = (DB.orders||[]).filter(o=>B44_PICK_STATUSES.includes(o.status)).slice(-60).reverse();
+  var orders = (DB.orders||[]).filter(o=>B44_PICK_STATUSES.includes(w22Stat(o))).slice(-60).reverse();
   if(orderId){
     var oSel = (DB.orders||[]).find(x=>x.id===orderId);
     if(!oSel) return toast('הזמנה לא נמצאה', true);
-    if(B44_PICK_STATUSES.indexOf(oSel.status)===-1)
+    if(B44_PICK_STATUSES.indexOf(w22Stat(oSel))===-1)
       return toast('ליקוט אפשרי רק בהזמנה בסטטוס "מאושרת" או "סופקה". ההזמנה הזו בסטטוס "'+oSel.status+'" — אשר אותה קודם.', true);
     if(!orders.some(x=>x.id===orderId)) orders.unshift(oSel);   /* מחוץ ל-60 האחרונות */
   }
@@ -15032,7 +15045,7 @@ function b44PickBlockHtml(oid){
   if(!lines.length) return '';
   var picked = b44PickedByItem(oid);
   var cs = b44OrderCases(oid);
-  var canPick = B44_PICK_STATUSES.indexOf(o.status)>-1;
+  var canPick = B44_PICK_STATUSES.indexOf(w22Stat(o))>-1;
   var left = 0;
   var rows = lines.map(function(l){
     var need = Number(l.qty)||0, got = Number(picked[l.item_id]||0);
@@ -15073,7 +15086,7 @@ function b44OScanMsg(txt, bad){
 }
 function b44OrderScanForm(oid){
   var o = (DB.orders||[]).find(function(x){ return x.id===oid; }); if(!o) return;
-  if(B44_PICK_STATUSES.indexOf(o.status)===-1)
+  if(B44_PICK_STATUSES.indexOf(w22Stat(o))===-1)
     return toast('ליקוט אפשרי רק בהזמנה בסטטוס "מאושרת" או "סופקה" — ההזמנה הזו בסטטוס "'+o.status+'"', true);
   B44_OSCAN = {oid:oid, cases:[], picks:[]};
   var free = (DB.cases||[]).filter(function(c){
