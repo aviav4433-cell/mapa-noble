@@ -133,6 +133,7 @@
 //                   • WASH-21: w21IsRental — תאום ל-w17IsWash, 20 אתרי סוג גולמי שאינם כסף.
 //             B76 — WASH-22: ציר הסטטוס של ההזמנה — canary v4.76-B76
 //             B77 — WASH-23: ציר הסטטוס של החשבונית — canary v4.77-B77
+//             B78 — WASH-23ב: ציר הסטטוס בשכר · משימות · רכש · נסיעות — canary v4.78-B78
 //                   • w22Stat/w22Known/w22Reserving — נקודת אמת אחת לסטטוס,
 //                     זהה תו-בתו בממשק (יש בדיקה). 35 אתרים בשרת + 34 בממשק.
 //                   • הבאג: הזמנה מאושרת שסטטוסה בגיליון נושא רווח קשיח לא
@@ -1432,7 +1433,7 @@ function bld01Candidates(db) {
   var out = [];
   orders.forEach(function (o) {
     if (sVal(o.type) !== 'כביסה') return;
-    var st = sVal(o.status);
+    var st = w22Stat(o);   /* ⛔ B78/R6: היה sVal גולמי — w22Stat היא נקודת האמת (B76) */
     if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(st) === -1) return;
 
     var mine = intakes.filter(function (ik) { return String(ik.order_id || '') === String(o.id); });
@@ -2234,7 +2235,10 @@ function handle(action, p, db, user) {
            על שורות כשהסוג 'כביסה') — החסימה אינה מזיזה אף סכום. */
         if (sPick(po.type, ORDER_TYPES) === 'כביסה')
           return { ok: false, error: 'בהזמנת כביסה אין שורות פריטים — המלאי שייך למכבסה. רשום תיאור חופשי בכרטיס ההזמנה' };
-        if (po.status !== 'טיוטה' && po.status !== 'הצעת מחיר') return { ok: false, error: 'מוסיפים פריטים רק בטיוטה או בהצעת מחיר' };
+        /* ⛔ B78/R6: היה כאן po.status גולמי — דליפת WASH-22. הזמנה בסטטוס
+           'טיוטה ' מלוכלך לא ניתן היה להוסיף לה שורות פריטים, בשקט. */
+        var poSt = w22Stat(po);
+        if (poSt !== 'טיוטה' && poSt !== 'הצעת מחיר') return { ok: false, error: 'מוסיפים פריטים רק בטיוטה או בהצעת מחיר' };
         if (!(Number(row.qty) > 0)) return { ok: false, error: 'כמות חייבת להיות גדולה מאפס' };
         if (row.unit_price === '' || row.unit_price === undefined)
           row.unit_price = linePrice(db, po.customer_id, row.item_id, po.type);
@@ -2244,7 +2248,7 @@ function handle(action, p, db, user) {
       if (p.table === 'purchase_lines') {
         var pp = db.purchases.find(function (x) { return x.id === row.purchase_id; });
         if (!pp) return { ok: false, error: 'הזמנת רכש לא נמצאה' };
-        if (pp.status !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל — אין להוסיף שורות' };
+        if (w24Stat(pp, PURCHASE_STATUSES) !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל — אין להוסיף שורות' };
       }
       if (p.table === 'carts') {
         if (!row.id || !String(row.id).trim()) row.id = 'CART-' + ('00' + nextNumber(db, 'cart_seq', 1)).slice(-3);
@@ -2870,7 +2874,7 @@ function handle(action, p, db, user) {
     case 'receivePurchase': {
       var pu = db.purchases.find(function (x) { return x.id === p.purchase_id; });
       if (!pu) return { ok: false, error: 'רכש לא נמצא' };
-      if (pu.status !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל' };
+      if (w24Stat(pu, PURCHASE_STATUSES) !== 'טיוטה') return { ok: false, error: 'הרכש כבר התקבל' };
       // B28: תאריך תשלום משוער לספק — שדה חובה
       if (!isDateStr(p.due_date)) return { ok: false, error: 'תאריך תשלום משוער לספק הוא שדה חובה' };
       var lines = db.purchaseLines.filter(function (l) { return l.purchase_id === pu.id; });
@@ -3207,7 +3211,7 @@ function handle(action, p, db, user) {
       var locked = false;
       if (fV.dup) locked = true;
       else if (prV) {
-        if (sVal(prV.status) === 'טיוטה') { rebuildPayrollFromAttendance(db, prV); writeTable('payroll', db.payroll); }
+        if (w24Stat(prV, PAYROLL_STATUSES, 'טיוטה') === 'טיוטה') { rebuildPayrollFromAttendance(db, prV); writeTable('payroll', db.payroll); }
         else locked = true;
       }
       var empV = db.employees.find(function (x) { return x.id === attV.employee_id; });
@@ -3244,7 +3248,7 @@ function handle(action, p, db, user) {
     case 'setBonus': {
       var pr = db.payroll.find(function (x) { return x.id === p.payroll_id; });
       if (!pr) return { ok: false, error: 'רשומת שכר לא נמצאה' };
-      if (pr.status !== 'טיוטה') return { ok: false, error: 'השכר כבר אושר — השתמש בתוספת/ניכוי מפורט' };
+      if (w24Stat(pr, PAYROLL_STATUSES, 'טיוטה') !== 'טיוטה') return { ok: false, error: 'השכר כבר אושר — השתמש בתוספת/ניכוי מפורט' };
       pr.bonus = Number(p.bonus) || 0;
       pr.bonus_note = p.note || '';
       recomputePayrollTotal(pr, db);
@@ -3254,7 +3258,7 @@ function handle(action, p, db, user) {
     case 'approvePayroll': {
       var pr2 = db.payroll.find(function (x) { return x.id === p.payroll_id; });
       if (!pr2) return { ok: false, error: 'רשומת שכר לא נמצאה' };
-      if (pr2.status !== 'טיוטה') return { ok: false, error: 'כבר אושר' };
+      if (w24Stat(pr2, PAYROLL_STATUSES, 'טיוטה') !== 'טיוטה') return { ok: false, error: 'כבר אושר' };
       pr2.status = 'אושר';
       writeTable('payroll', db.payroll);
       // B20: לא נרשמת הוצאה בשלב האישור — הוצאה נרשמת רק כשיש תשלום בפועל (payPayroll).
@@ -3267,7 +3271,7 @@ function handle(action, p, db, user) {
     case 'addPayrollAdjustment': {
       var prA = db.payroll.find(function (x) { return x.id === p.payroll_id; });
       if (!prA) return { ok: false, error: 'רשומת שכר לא נמצאה' };
-      if (prA.status === 'שולם במלואו') return { ok: false, error: 'השכר שולם במלואו — לא ניתן לשנות' };
+      if (w24Stat(prA, PAYROLL_STATUSES, 'טיוטה') === 'שולם במלואו') return { ok: false, error: 'השכר שולם במלואו — לא ניתן לשנות' };
       var adjType = p.type === 'ניכוי' ? 'ניכוי' : 'תוספת';
       var adjAmt = Number(p.amount) || 0;
       if (adjAmt <= 0) return { ok: false, error: 'סכום לא תקין' };
@@ -3279,7 +3283,7 @@ function handle(action, p, db, user) {
       writeTable('payroll_adjustments', db.payrollAdjustments);
       recomputePayrollTotal(prA, db);
       writeTable('payroll', db.payroll);
-      if (prA.status !== 'טיוטה') syncFutureExpenseForPayroll(db, prA);
+      if (w24Stat(prA, PAYROLL_STATUSES, 'טיוטה') !== 'טיוטה') syncFutureExpenseForPayroll(db, prA);
       return { ok: true, total: prA.total };
     }
     // B20: תשלום שכר בפועל — מלא או חלקי. נרשם כהוצאה רק ברגע התשלום.
@@ -4027,10 +4031,13 @@ function handle(action, p, db, user) {
     case 'moveTask': {
       var tk = db.tasks.find(function (x) { return x.id === p.task_id; });
       if (!tk) return { ok: false, error: 'משימה לא נמצאה' };
-      if (['פתוחה', 'בתהליך', 'הושלמה'].indexOf(p.status) === -1) return { ok: false, error: 'סטטוס לא חוקי' };
-      tk.status = p.status;
+      /* ⛔ B78/WASH-23ב: הסטטוס הנכנס עובר sPick, והערך **הקנוני** הוא
+         שנכתב — כדי שלא ייכנס לגיליון סטטוס מלוכלך חדש. */
+      var tkSt = sPick(p.status, TASK_STATUSES);
+      if (!tkSt) return { ok: false, error: 'סטטוס לא חוקי' };
+      tk.status = tkSt;
       writeTable('tasks', db.tasks);
-      db.taskComments.push({ id: genId('TCOM'), task_id: tk.id, ts: nowTs(), user: user || '', text: '— סטטוס שונה ל: ' + p.status });
+      db.taskComments.push({ id: genId('TCOM'), task_id: tk.id, ts: nowTs(), user: user || '', text: '— סטטוס שונה ל: ' + tkSt });
       writeTable('task_comments', db.taskComments);
       return { ok: true };
     }
@@ -4262,7 +4269,7 @@ function handle(action, p, db, user) {
         fltE.next_step = String(p.next_step);
         writeTable('asset_faults', db.assetFaults);
         var tkE = fltE.task_id ? db.tasks.find(function (t) { return t.id === fltE.task_id; }) : null;
-        if (tkE && tkE.status !== 'הושלמה') {
+        if (tkE && w24Stat(tkE, TASK_STATUSES) !== 'הושלמה') {
           tkE.title = 'תקלה: ' + (aE ? aE.label : fltE.asset_id) + ' — ' + fltE.next_step;
           writeTable('tasks', db.tasks);
         }
@@ -4355,7 +4362,7 @@ function handle(action, p, db, user) {
       writeTable('asset_faults', db.assetFaults);
       if (fC.task_id) {
         var tC = db.tasks.find(function (t) { return t.id === fC.task_id; });
-        if (tC && tC.status !== 'הושלמה') { tC.status = 'הושלמה'; writeTable('tasks', db.tasks); }
+        if (tC && w24Stat(tC, TASK_STATUSES) !== 'הושלמה') { tC.status = 'הושלמה'; writeTable('tasks', db.tasks); }
       }
       b42AppendEvent(db, {
         event_type: 'סגירה', fault_id: fC.id, asset_type: fC.asset_type, asset_id: fC.asset_id,
@@ -4734,7 +4741,7 @@ function buildPayrollForMonth(db, month) {
     var f = b68PayrollFor(db, e.id, month);
     if (f.dup) { dup++; return; }
     var ex = f.row;
-    if (ex && sVal(ex.status) !== 'טיוטה') { locked++; return; }
+    if (ex && w24Stat(ex, PAYROLL_STATUSES, 'טיוטה') !== 'טיוטה') { locked++; return; }
     if (ex) {
       ex.pay_type = c.pay_type; ex.hours = c.hours; ex.hourly_rate = c.rate; ex.base_pay = c.base;
       recomputePayrollTotal(ex, db);
@@ -4872,7 +4879,7 @@ function b68DupGroups(db) {
       month: sVal(first.month),
       rows: map[k].map(function (pr) {
         return {
-          id: pr.id, status: sVal(pr.status),
+          id: pr.id, status: w24Stat(pr, PAYROLL_STATUSES, 'טיוטה'),
           total: Number(pr.total || 0), base_pay: Number(pr.base_pay || 0),
           hours: Number(pr.hours || 0),
           adjustments: (db.payrollAdjustments || []).filter(function (a) { return a.payroll_id === pr.id; }).length,
@@ -4953,7 +4960,7 @@ function b68MergePayroll(db, p, user) {
   writeTable('payroll_payments', db.payrollPayments);
   writeTable('future_expenses', db.futureExpenses);
   writeTable('payroll', db.payroll);
-  if (sVal(keep.status) !== 'טיוטה') syncFutureExpenseForPayroll(db, keep);
+  if (w24Stat(keep, PAYROLL_STATUSES, 'טיוטה') !== 'טיוטה') syncFutureExpenseForPayroll(db, keep);
 
   var emp = (db.employees || []).find(function (e) { return e.id === keep.employee_id; });
   var over = b68RowOverpay(db, keep);
@@ -4985,7 +4992,7 @@ function b68OffsetOverpay(db, p, user) {
   if (t.dup) return { ok: false, error: 'קיימות ' + t.count + ' שורות שכר לחודש ' + month + ' — יש למזג אותן קודם' };
   if (!t.row) return { ok: false, error: 'אין שורת שכר לחודש ' + month + ' — הפק אותה קודם' };
   var pr = t.row;
-  if (sVal(pr.status) === 'שולם במלואו') return { ok: false, error: 'שכר ' + month + ' שולם במלואו — בחר חודש אחר' };
+  if (w24Stat(pr, PAYROLL_STATUSES, 'טיוטה') === 'שולם במלואו') return { ok: false, error: 'שכר ' + month + ' שולם במלואו — בחר חודש אחר' };
   var openRem = Math.round((Number(pr.total || 0) - payrollPaidSum(db, pr.id)) * 100) / 100;
   if (amt > openRem + 0.01)
     return { ok: false, error: 'הקיזוז גבוה מיתרת השכר הפתוחה לחודש ' + month + ' (' + openRem + ' ₪). קזז בכמה חודשים' };
@@ -4998,7 +5005,7 @@ function b68OffsetOverpay(db, p, user) {
   writeTable('payroll_adjustments', db.payrollAdjustments);
   recomputePayrollTotal(pr, db);
   writeTable('payroll', db.payroll);
-  if (sVal(pr.status) !== 'טיוטה') syncFutureExpenseForPayroll(db, pr);
+  if (w24Stat(pr, PAYROLL_STATUSES, 'טיוטה') !== 'טיוטה') syncFutureExpenseForPayroll(db, pr);
 
   var emp = (db.employees || []).find(function (e) { return e.id === empId; });
   return {
@@ -5026,8 +5033,9 @@ function b68OffsetOverpay(db, p, user) {
 function b67PayOneRow(db, prRow, amount, method, note, paidAt, user, opts) {
   opts = opts || {};
   if (!prRow) return { ok: false, error: 'רשומת שכר לא נמצאה' };
-  /* B64a: הסטטוס נקרא מהגיליון ולכן עובר sVal לפני ההשוואה */
-  if (sVal(prRow.status) === 'טיוטה') return { ok: false, error: 'יש לאשר את השכר לפני תשלום' };
+  /* ⛔ B78/WASH-23ב: הסטטוס נקרא מהגיליון ועובר w24Stat. סטטוס לא מוכר
+     או ריק נחשב 'טיוטה' (הכרעת אבי 2א) — כלומר **חסום לתשלום**. */
+  if (w24Stat(prRow, PAYROLL_STATUSES, 'טיוטה') === 'טיוטה') return { ok: false, error: 'יש לאשר את השכר לפני תשלום' };
   var payAmt = Number(amount) || 0;
   if (payAmt <= 0) return { ok: false, error: 'סכום לא תקין' };
   var paidSoFar = payrollPaidSum(db, prRow.id);
@@ -5070,7 +5078,7 @@ function b67EmployeeOpenRows(db, employeeId) {
   var out = [];
   (db.payroll || []).forEach(function (pr) {
     if (pr.employee_id !== employeeId) return;
-    if (sVal(pr.status) === 'טיוטה') return;
+    if (w24Stat(pr, PAYROLL_STATUSES, 'טיוטה') === 'טיוטה') return;
     var rem = Math.round((Number(pr.total || 0) - payrollPaidSum(db, pr.id)) * 100) / 100;
     if (rem > 0.005) out.push({ pr: pr, remaining: rem });
   });
@@ -5123,7 +5131,7 @@ function b67PayEmployee(db, p, user) {
   /* ⛔ מלכודת 1: רשומת טיוטה ישנה יותר. אסור לעקוף אישור ואסור לדלג בשקט. */
   var lastMonth = String(plan[plan.length - 1].pr.month || '');
   var skipped = (db.payroll || []).filter(function (x) {
-    return x.employee_id === empId && sVal(x.status) === 'טיוטה' &&
+    return x.employee_id === empId && w24Stat(x, PAYROLL_STATUSES, 'טיוטה') === 'טיוטה' &&
       Number(x.total || 0) > 0 && String(x.month || '') < lastMonth;
   }).map(function (x) { return String(x.month || ''); }).sort();
 
@@ -5253,6 +5261,35 @@ function w22Reserving(o){ return !!o && (RESERVING_STATUSES.indexOf(w22Stat(o)) 
 var INVOICE_STATUSES = ['פתוחה', 'שולמה', 'בוטלה'];
 function w23InvStat(v){ var s = sVal(v && v.status); return sPick(s, INVOICE_STATUSES) || s; }
 function w23InvActive(v){ return !!v && w23InvStat(v) !== 'בוטלה'; }
+
+/* ===== B78 / WASH-23ב: ציר הסטטוס בארבע הטבלאות שנותרו =====
+   B76 סגר את orders.status ו-B77 את invoices.status. אותה מחלקת כשל
+   בדיוק נשארה פתוחה ב-payroll · tasks · purchases · delivery_trips:
+   ערך שנקרא מהגיליון עם רווח נגרר, רווח קשיח (\u00A0) או תו כיווניות
+   בלתי נראה שובר השוואת מחרוזת מדויקת, **והכשל שקט**.
+   ⛔ הכבד מהארבעה: payroll.status הוא שער לפני כסף שיוצא בפועל.
+
+   ⭐ הכרעת אבי 18.08.2026 (1ב): **עוזר גנרי אחד**, לא ארבעה שמות.
+   ארבע הטבלאות קטנות ואף אחת אינה בספר החיובים — בניגוד ל-orders
+   ול-invoices, שכל אחת מהן נושאת הכרעה עסקית משלה ולכן קיבלה שם משלה.
+   ⛔ w24Stat היא נקודת האמת היחידה לסטטוס ארבע הטבלאות האלה, וחייבת
+   להישאר זהה תו-בתו ב-index.html ובקוד השרת (בדיקת גוף משווה).
+
+   ⭐ הכרעת אבי 18.08.2026 (2א): **סטטוס שכר לא מוכר או ריק = 'טיוטה'** —
+   כלומר חסום לתשלום, חסום לתלוש, ואינו נספר כחוב לעובד. בכסף שיוצא
+   הצד החוסם. זה ההפך מהכרעת B77 בחשבוניות ובכוונה: שם הצד הזהיר היה
+   'פעילה/מחייבת', כאן הצד הזהיר הוא 'חסום'.
+   ⛔ ההכרעה נאכפת דרך הארגומנט השלישי (dflt) ולא דרך פונקציה שנייה.
+   ⛔ לשלוש הטבלאות האחרות אין dflt — הן מחזירות את הערך המנורמל עצמו,
+   בדיוק כמו w23InvStat, ואסור למפות אותן לסטטוס מוכר.
+
+   ⛔ נרמול להשוואה בלבד — הערך הנשמר בגיליון אינו משתנה, והתצוגה
+   למשתמש ממשיכה להראות את הערך האמיתי כפי שהוא. */
+var PAYROLL_STATUSES  = ['טיוטה', 'אושר', 'שולם חלקית', 'שולם במלואו'];
+var TASK_STATUSES     = ['פתוחה', 'בתהליך', 'הושלמה'];
+var PURCHASE_STATUSES = ['טיוטה', 'התקבלה'];
+var TRIP_STATUSES     = ['מתוכננת', 'יצאה', 'הסתיימה', 'בוטלה'];
+function w24Stat(v, list, dflt){ var s = sVal(v && v.status); return sPick(s, list || []) || dflt || s; }
 
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
    ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
@@ -8088,7 +8125,7 @@ function nobleCreateInvoice(db, p, user) {
     var oid = String(i.order_id || '').trim();
     if (oid) {
       var ord = db.orders.find(function (x) { return x.id === oid; });
-      if (ord && sVal(ord.status) !== 'בוטלה') return false;
+      if (ord && w22Stat(ord) !== 'בוטלה') return false;   /* ⛔ B78/R6: w22Stat, לא sVal */
     }
     return true;
   });
@@ -8669,7 +8706,7 @@ function b2MarkPayLater(db, p) {
   if (o.payment_status === 'תשלום בהמשך') return { ok: true, order: o, credit: b2CreditStatusObj(db, o.customer_id) };
   o.payment_status = 'תשלום בהמשך';
   // הזמנת פורטל שטרם אושרה (הצעת מחיר) — מקדמת לטיוטה כדי שניתן לאשר אחר כך
-  if (o.status === 'הצעת מחיר') o.status = 'טיוטה';
+  if (w22Stat(o) === 'הצעת מחיר') o.status = 'טיוטה';   /* ⛔ B78/R6: w22Stat, לא גולמי */
   writeTable('orders', db.orders);
   return { ok: true, order: o, credit: b2CreditStatusObj(db, o.customer_id), auditNote: 'תשלום בהמשך — הזמנה ' + (o.order_number || o.id) };
 }
@@ -10209,7 +10246,7 @@ function b34TripCreate(db, p, user) {
     var v = db.vehicles.find(function (x) { return x.id === p.vehicle_id; });
     if (v && v.status && v.status !== 'פעיל') return { ok: false, error: 'הרכב שנבחר אינו פעיל (' + v.status + ')' };
   }
-  var seq = db.deliveryTrips.filter(function (t) { return String(t.date) === String(p.date) && String(t.driver_id) === String(p.driver_id) && t.status !== 'בוטלה'; }).length + 1;
+  var seq = db.deliveryTrips.filter(function (t) { return String(t.date) === String(p.date) && String(t.driver_id) === String(p.driver_id) && w24Stat(t, TRIP_STATUSES) !== 'בוטלה'; }).length + 1;
   var tr = {
     id: genId('TRIP'), date: p.date, driver_id: drv.id, vehicle_id: String(p.vehicle_id || ''),
     seq: seq, planned_time: String(p.planned_time || ''), status: 'מתוכננת', notes: String(p.notes || ''), created_at: nowTs()
@@ -10248,8 +10285,9 @@ function b34TripSetStatus(db, p, user) {
   if (!b34OfficeOk(db, user)) return { ok: false, error: 'עדכון נסיעה — מנהל/משרד בלבד' };
   var tr = db.deliveryTrips.find(function (t) { return t.id === p.trip_id; });
   if (!tr) return { ok: false, error: 'נסיעה לא נמצאה' };
-  var st = String(p.status || '');
-  if (['מתוכננת', 'יצאה', 'הסתיימה', 'בוטלה'].indexOf(st) === -1) return { ok: false, error: 'סטטוס נסיעה לא חוקי' };
+  /* ⛔ B78/WASH-23ב: הסטטוס הנכנס עובר sPick והערך הקנוני הוא שנכתב. */
+  var st = sPick(p.status, TRIP_STATUSES);
+  if (!st) return { ok: false, error: 'סטטוס נסיעה לא חוקי' };
   tr.status = st;
   if (st === 'בוטלה') {
     db.deliveries.forEach(function (d) { if (String(d.trip_id) === String(tr.id)) { d.trip_id = ''; d.trip_order = ''; } });
