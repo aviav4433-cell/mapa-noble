@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.81-B81 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.82-B82 · 18.08.2026</div>
   </div>
 </div>
 
@@ -2266,12 +2266,27 @@ function collectListModal(){
       (rows.length?'<button class="btn ghost" onclick="closeModal();goReport(\'aging\')">→ דוח חובות לפי גיל</button>':'')+
     '</div>');
 }
+/* ============================================================
+   B82 / BLD-06 (DEC-04) — שיוך תשלום לחוב
+   ------------------------------------------------------------
+   ⛔ שתי הפונקציות זהות תו-בתו לקוד השרת. אם הן יתפצלו, הממשק יציג
+   שיוך אחד והשרת יבצע אחר.
+   ============================================================ */
+function b82DebtSort(o) { return String((o && (o.created_at || o.start_date)) || ''); }
+function b82ParseTarget(v) {
+  var s = sVal(v);
+  var i = s.indexOf(':');
+  if (i < 1) return null;
+  var kind = s.slice(0, i), id = sVal(s.slice(i + 1));
+  if (['order', 'invoice'].indexOf(kind) === -1 || !id) return null;
+  return { kind: kind, id: id };
+}
 /* שורות החוב של לקוח, מהישן לחדש — אותה הקצאה שהשרת עושה */
 function collectDocRows(cid){
   var rows = [];
   DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(w22Stat(o))).forEach(function(o){
     var b = orderBalance(o.id);
-    if(b>0.01) rows.push({kind:'order', id:o.id, label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, sort:String(o.created_at||o.start_date||''), click:"openOrder('"+o.id+"')"});
+    if(b>0.01) rows.push({kind:'order', id:o.id, label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, sort:b82DebtSort(o), click:"openOrder('"+o.id+"')"});
   });
   DB.invoices.filter(v=>v.customer_id===cid && !v.order_id && w23InvActive(v)).forEach(function(v){
     var paid = DB.payments.filter(p=>p.invoice_id===v.id && b54PayCounts(p)).reduce((s,p)=>s+Number(p.amount||0),0);   /* C10 */
@@ -3843,10 +3858,12 @@ function b41IntakeState(oid){
 /* איסוף שנקלט בפועל — או שנסגר, או שההזמנה כבר הוחזרה/הושלמה.
    התנאי השני מכסה רשומות שנשארו פתוחות מלפני תיקון B39. */
 function b41PickupReceived(d){
-  if(sVal(d.status)==='בוצע') return true;
+  /* ⭐ B82/W23-שאריות: שני צירים באותן ארבע שורות — הנסיעה דרך w24Stat (B79)
+     וההזמנה דרך w22Stat (B76). היו שניהם sVal גולמי. */
+  if(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בוצע') return true;
   var oo = (DB.orders||[]).find(x=>x.id===d.order_id);
   if(!oo) return false;
-  var os = sVal(oo.status);
+  var os = w22Stat(oo);
   return os==='הוחזרה' || os==='הושלמה';
 }
 var B41_REASONS = ['הנהג לא סרק ולא צילם בשטח','הלקוח החזיר בעצמו / איסוף עצמי','תקלה במכשיר של הנהג','נאסף ע"י עובד אחר','אחר — פרט'];
@@ -4073,7 +4090,9 @@ function b38PlannedForOrder(o){
   return out;
 }
 /* B49e: נסיעה מבוטלת אינה "קיימת" — אחרת מעבר חזרה למשלוח לא היה יוצר אותה מחדש */
-function b49eLiveDeliv(d){ return ['מתוכנן','בדרך','בוצע'].indexOf(sVal(d.status))>-1; }
+/* ⭐ B82/W23-שאריות: נסיעה בסטטוס ריק או לא מוכר נחשבת 'מתוכנן' (הכרעת B79 2ב)
+   ולכן "קיימת" — עד כאן היא נחשבה מבוטלת ומעבר חזרה למשלוח שכפל אותה. */
+function b49eLiveDeliv(d){ return ['מתוכנן','בדרך','בוצע'].indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1; }
 /* B49e (P4): הוכחות המסירה של רגל — מטבלת signatures ומהתיעוד ההיסטורי על המשלוח */
 function b49eProofsOf(o,leg){
   var rows = (DB.signatures||[]).filter(function(s){
@@ -7827,7 +7846,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.81-B81';
+var B61_CANARY = 'v4.82-B82';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -9505,7 +9524,7 @@ async function loadApprovals(){
       (x.asmachta_url?'<a href="'+esc(x.asmachta_url)+'" target="_blank" onclick="event.stopPropagation()" style="font-size:12px">צפייה באסמכתא</a>':'<span class="muted" style="font-size:12px">לא צורפה אסמכתא</span>')+
       '</div>'+
       (canAct?
-        '<button class="btn sm" onclick="event.stopPropagation();apprConfirmDecl(\''+x.id+'\','+Number(x.amount||0)+',\''+esc(String(x.customer).replace(/\'/g,''))+'\',\''+esc(x.method||'')+'\')">אמת ואשר</button> '+
+        '<button class="btn sm" onclick="event.stopPropagation();apprConfirmDecl(\''+x.id+'\','+Number(x.amount||0)+',\''+esc(String(x.customer).replace(/\'/g,''))+'\',\''+esc(x.method||'')+'\',\''+esc(x.customer_id||'')+'\')">אמת ואשר</button> '+
         moreMenu(['<button class="btn ghost sm" style="color:var(--danger)" onclick="event.stopPropagation();closeMore();apprRejectDecl(\''+x.id+'\')">דחה</button>'])
         : '<span class="muted">אישור — מנהל/משרד</span>')+
       '</div>';
@@ -9535,15 +9554,24 @@ async function loadApprovals(){
 /* ===== B55: אימות ואישור הודעת תשלום =====
    הסכום ניתן לעריכה — במשרד רואים כמה באמת נכנס לחשבון ומתקנים לפי זה.
    האישור מפיק מסמכים חסרים ואז גובה דרך המנוע הקיים (b2ProcessPayment). */
-function apprConfirmDecl(did, amount, custName, method){
+function apprConfirmDecl(did, amount, custName, method, custId){
   var mOpts = ['העברה בנקאית','כרטיס אשראי','שיק','מזומן','אחר'].map(function(m){
     return '<option'+(m===method?' selected':'')+'>'+m+'</option>'; }).join('');
+  /* ⭐ B82/BLD-06 (DEC-04): ברירת המחדל היא החוב הוותיק ביותר, ולעובד יש אפשרות
+     לכוון את התשלום למסמך מסוים. collectDocRows היא בדיוק אותה רשימה ובאותו
+     מיון שהשרת מקצה לפיו — אין כאן רשימה שנייה (R8). */
+  var rows = (DB && DB.orders && DB.invoices && custId)? collectDocRows(custId) : [];
+  var tgtSel = rows.length? '<div class="frow"><label>שיוך התשלום</label>'+
+    '<select id="ac_target"><option value="">אוטומטי — החוב הוותיק ביותר קודם</option>'+
+    rows.map(function(x){ return '<option value="'+esc(x.kind)+':'+esc(x.id)+'">'+esc(x.label)+' · '+ils(x.b)+'</option>'; }).join('')+
+    '</select><div class="muted" style="font-size:11.5px;margin-top:3px">בחירת מסמך מקזזת ממנו בלבד ומפיקה מסמך רק עבורו.</div></div>' : '';
   openModal('<h2>אימות תשלום — '+esc(custName||'')+'</h2>'+
     '<p class="muted" style="font-size:13px">אשר רק אחרי שראית את הכסף בפועל. הסכום ניתן לתיקון — יירשם הסכום שהתקבל.</p>'+
     '<div class="frow"><label>סכום שהתקבל בפועל</label><input id="ac_amt" type="number" step="0.01" min="0.01" value="'+Number(amount||0)+'"></div>'+
+    tgtSel+
     '<div class="frow"><label>אמצעי</label><select id="ac_method">'+mOpts+'</select></div>'+
     '<div class="frow"><label>אסמכתא / הערה</label><input id="ac_note" placeholder="מספר אסמכתא בבנק, מספר שיק וכד\'"></div>'+
-    '<div class="muted" style="font-size:12px;margin-bottom:8px">אם חסר מסמך לחוב — תופק חשבונית אוטומטית לפני הקבלה.</div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">יופקו רק המסמכים שהתשלום הזה מכסה — לא לכל החוב הפתוח.</div>'+
     '<button class="btn" style="width:100%" id="ac_go" onclick="apprConfirmDeclGo(\''+did+'\')">אשר וקזז מהחוב</button>');
 }
 async function apprConfirmDeclGo(did){
@@ -9552,7 +9580,8 @@ async function apprConfirmDeclGo(did){
   if(!(amt>0)) return toast('סכום לא תקין', true);
   if(btn){ btn.disabled = true; btn.textContent = 'מאשר...'; }
   var r = await act('b55ConfirmDeclaration', { declaration_id: did, amount: amt,
-    method: (el('ac_method')||{}).value||'', note: String((el('ac_note')||{}).value||'').trim() });
+    method: (el('ac_method')||{}).value||'', note: String((el('ac_note')||{}).value||'').trim(),
+    debt_target: String((el('ac_target')||{}).value||'') });
   if(!r){ if(btn){ btn.disabled=false; btn.textContent='אשר וקזז מהחוב'; } return; }
   closeModal();
   toast((r.docs_created? 'הופקו '+r.docs_created+' מסמכים · ':'')+'קבלה '+r.receipt_number+' הופקה · '+ils(amt));
