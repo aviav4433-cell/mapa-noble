@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.82-B82', 'ה-canary לא עודכן ל-B82');
+      t.eq(inJs, 'v4.83-B83', 'ה-canary לא עודכן ל-B83');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.82-B82', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+      t.has(s, 'v4.83-B83', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7682,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8017,9 +8017,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8511,9 +8511,9 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ב הוא לוגיקת שרת/ממשק, לא יכולת דפדפן');
     },
 
-    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -10072,9 +10072,9 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — הפריט הוא לוגיקת שרת/ממשק');
     },
 
-    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -10619,9 +10619,485 @@ SPECS.push({
         '⛔ נוספה טענה לשכבה 2 עבור B82 — הוא נבדק כולו בשכבה 1');
     },
 
-    '[מודד] ⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+    '[מודד] ⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+
+/* ============================================================================
+   ⭐⭐ B83 — BLD-09 (נוכחות ושכר לפי דרישה) + BLD-10 (מלאי ממוספר)
+   ----------------------------------------------------------------------------
+   ⛔⛔ בקרה נגדית (נוהל B82): כל בדיקה נושאת [מודד] או [שומר].
+     [מודד] — נכשלת מול הריפו שלפני B83. היא מודדת את התיקון.
+     [שומר] — עוברת שם במכוון. היא מגנה על מה שלא היה אמור להשתנות.
+   ============================================================================ */
+const B83 = {
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return s ? s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '') : s; },
+
+  /* שני עובדים · נוכחות ושכר לשניהם. אחד מהם הוא הנהג. */
+  hrDb(srv) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [
+      { id: 'E_DRV', name: 'דני הנהג', active: 'כן', role: 'נהג' },
+      { id: 'E_MG', name: 'מנהל', active: 'כן', role: 'מנהל' }
+    ];
+    db.attendance = [
+      { id: 'A1', employee_id: 'E_DRV', date: '2020-01-01', in_time: '08:00', out_time: '17:00' },
+      { id: 'A2', employee_id: 'E_MG', date: '2020-01-01', in_time: '09:00', out_time: '18:00' },
+      { id: 'A3', employee_id: 'E_MG', date: '2026-08-01', in_time: '09:00', out_time: '18:00' }
+    ];
+    db.payroll = [
+      { id: 'P1', employee_id: 'E_DRV', month: '2020-01', total: 5000, status: 'טיוטה' },
+      { id: 'P2', employee_id: 'E_MG', month: '2020-01', total: 9000, status: 'טיוטה' }
+    ];
+    db.orders = []; db.orderLines = []; db.invoices = []; db.payments = []; db.charges = [];
+    return db;
+  }
+};
+
+SPECS.push({
+  file: 't29-b83-srv',
+  title: 'B83 — BLD-09: נוכחות ושכר לפי דרישה (שרת)',
+  needs: 'server',
+  requires: ['SLIM_POLICY', 'BLD09_ONDEMAND', 'bld09IsOnDemand', 'bld09PrefetchAll',
+             'b58TablePayload', 'getAllPayload', 'b58PrefetchForPayload',
+             'b58PayloadCached', 'getDriverFilteredPayload', 'handle', 'TMAP',
+             'B58_MAX_CACHE_VAL', 'b48BalancesAg', 'b2CreditUsedAg', 'b54Bump'],
+
+  tests: {
+
+    /* ================= המדיניות עצמה ================= */
+
+    '[מודד] ⛔⛔ attendance ו-payroll מוגדרות onDemand ואינן drop': (t, { srv }) => {
+      t.eq(JSON.stringify(srv.BLD09_ONDEMAND), JSON.stringify(['attendance', 'payroll']),
+        '⛔⛔ רשימת הטבלאות שלפי דרישה השתנתה — הממשק והשרת חייבים להסכים עליה');
+      ['attendance', 'payroll'].forEach(n => {
+        const pol = srv.SLIM_POLICY[n];
+        t.ok(pol, '⛔⛔ ' + n + ' אינה ב-SLIM_POLICY — היא חזרה להישלח בכל getAll');
+        t.eq(pol.onDemand, true, '⛔⛔ ' + n + ' אינה onDemand');
+        t.no(pol.drop, '⛔⛔ ' + n + ' סומנה drop — הנתונים יאבדו לחלוטין, לא רק ידחו');
+        t.no(pol.days, '⛔⛔ ' + n + ' נחתכה לפי ימים — חלק 11 אסר זאת במפורש (דוח השעות ומדד Y1)');
+      });
+    },
+
+    '[שומר] ⛔ audit_log נשארה drop ושאר המדיניות לא זזה': (t, { srv }) => {
+      t.eq(srv.SLIM_POLICY.audit_log.drop, true, '⛔ audit_log חזרה להישלח ב-getAll (B51)');
+      t.eq(srv.SLIM_POLICY.call_logs.drop, true, '⛔ call_logs חזרה להישלח');
+      t.eq(srv.SLIM_POLICY.laundry_events.days, 180, '⛔ חלון laundry_events השתנה');
+      t.eq(srv.SLIM_POLICY.notifications.days, 90, '⛔ חלון ההתראות השתנה');
+      /* טבלאות שחלק 11 של B51 אסר לחתוך במפורש — הן עדיין אינן במדיניות */
+      ['stock_moves', 'package_moves', 'fault_events'].forEach(n => {
+        t.no(srv.SLIM_POLICY[n], '⛔⛔ ' + n + ' נכנסה למדיניות הקיצוץ — יתרות היסטוריות ייעלמו בשקט');
+      });
+    },
+
+    /* ================= getAll ================= */
+
+    '[מודד] ⛔⛔ getAll אינו כולל נוכחות ושכר, ומסמן אותן ondemand': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const out = srv.getAllPayload(db);
+      t.eq((out.attendance || []).length, 0,
+        '⛔⛔ getAll עדיין שולח את כל טבלת הנוכחות — הטבלה שגדלה בשורה לעובד ליום');
+      t.eq((out.payroll || []).length, 0, '⛔⛔ getAll עדיין שולח את כל טבלת השכר');
+      t.eq(out._slim.attendance.mode, 'ondemand',
+        '⛔⛔ הממשק לא יידע שהטבלה ממתינה לטעינה ויציג אפס שעות בשקט');
+      t.eq(out._slim.payroll.mode, 'ondemand', '⛔⛔ סימון השכר חסר');
+      /* אימות נגדי — הסורק באמת מסתכל על מטען אמיתי */
+      t.eq((out.employees || []).length, 2, '⛔ getAll הפסיק לשלוח עובדים — הבדיקה כבר לא מוכיחה דבר');
+    },
+
+    '[מודד] ⛔ b58TablePayload: בלי full ריק, עם full מלא (שני הצדדים)': (t, { srv }) => {
+      /* מלכודת 2 — כל היפוך תנאי נבדק משני צדדיו */
+      const db = B83.hrDb(srv);
+      ['attendance', 'payroll'].forEach(n => {
+        t.eq(srv.b58TablePayload(n, db).rows.length, 0, '⛔ ' + n + ' הוחזרה בלי בקשה מפורשת');
+        t.eq(srv.b58TablePayload(n, db, true).rows.length, db[srv.TMAP[n]].length,
+          '⛔⛔ ' + n + ' לא הוחזרה במלואה גם כשביקשו אותה — המסך יישאר ריק לנצח');
+      });
+    },
+
+    '[שומר] ⛔ טבלה רגילה מוחזרת זהה עם full ובלעדיו': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      t.eq(srv.b58TablePayload('employees', db).rows.length,
+        srv.b58TablePayload('employees', db, true).rows.length,
+        '⛔ הדגל full דלף לטבלה שאינה onDemand');
+      t.eq(srv.b58TablePayload('audit_log', db, true).rows.length, 0,
+        '⛔⛔ full פתח טבלה שהיא drop — audit_log חזרה להיקרא מהגיליון');
+    },
+
+    '[מודד] ⛔ ה-prefetch של getAll מדלג על טבלאות שלפי דרישה': (t, { H }) => {
+      const b = B83.noCmt(B83.body(H.serverSrc(), 'b58PrefetchForPayload'));
+      t.ok(b, 'b58PrefetchForPayload נעלמה מקוד השרת');
+      t.has(b, 'pol.drop || pol.onDemand',
+        '⛔⛔ הגיליונות של נוכחות ושכר עדיין נקראים בכל getAll — החיסכון האמיתי לא קרה');
+      const c = B83.noCmt(B83.body(H.serverSrc(), 'b58PayloadCached'));
+      t.has(c, 'p.drop || p.onDemand', '⛔ המטמון הפר-טבלה עדיין קורא אותן');
+    },
+
+    /* ================= b58Tables ================= */
+
+    '[מודד] ⛔⛔ b58Tables מחזירה אותן במלואן כשביקשו אותן בשם': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const r = srv.handle('b58Tables', { tables: ['attendance', 'payroll'], _verified_role: 'מנהל' }, db, 'מנהל');
+      t.eq(r.ok, true, '⛔⛔ הבקשה נדחתה — מסכי הנוכחות והשכר לא ייטענו לעולם');
+      t.eq((r.db.attendance || []).length, 3, '⛔⛔ הנוכחות לא הוחזרה במלואה');
+      t.eq((r.db.payroll || []).length, 2, '⛔⛔ השכר לא הוחזר במלואו');
+      t.eq(r._slim.attendance.mode, 'full', '⛔⛔ הסימון לא התהפך ל-full — הממשק ייכנס ללולאת טעינה');
+      t.eq(r._slim.payroll.mode, 'full', '⛔⛔ סימון השכר לא התהפך');
+    },
+
+    '[מודד] ⛔⛔ בקשה מפורשת אינה מדליפה אותן חזרה ל-getAll': (t, { srv }) => {
+      /* אם המטען המלא היה נכנס למטמון המשותף של b58PayloadCached, כל
+         משתמש אחר היה מקבל אותן ב-getAll — והחיסכון היה מתאפס בשקט. */
+      const db = B83.hrDb(srv);
+      srv.handle('b58Tables', { tables: ['attendance', 'payroll'], _verified_role: 'מנהל' }, db, 'מנהל');
+      const out = srv.getAllPayload(db);
+      t.eq((out.attendance || []).length, 0, '⛔⛔ הנוכחות דלפה חזרה ל-getAll דרך המטמון המשותף');
+      t.eq((out.payroll || []).length, 0, '⛔⛔ השכר דלף חזרה ל-getAll דרך המטמון המשותף');
+      t.eq(out._slim.attendance.mode, 'ondemand', '⛔ הסימון ב-getAll השתנה בגלל בקשה של משתמש אחר');
+    },
+
+    '[שומר] ⛔ b58Tables לטבלה רגילה לא השתנתה': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const r = srv.handle('b58Tables', { tables: ['employees'], _verified_role: 'מנהל' }, db, 'מנהל');
+      t.eq(r.ok, true, '⛔ שליפה חלקית רגילה נשברה');
+      t.eq((r.db.employees || []).length, 2, '⛔ שליפה חלקית רגילה מחזירה מטען חסר');
+      t.eq(JSON.stringify(r.tables), JSON.stringify(['employees']), '⛔ חוזה tables השתנה');
+    },
+
+    '[שומר] ⛔ b58Tables עדיין חסומה לנהג — נוסח הדחייה המדויק': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const r = srv.handle('b58Tables', { tables: ['attendance'], _verified_role: 'נהג' }, db, 'דני הנהג');
+      t.eq(r.ok, false, '⛔⛔ הנהג קיבל גישה לשליפה חלקית — המטען שלו מסונן פר-משתמש ואינו במטמון');
+      t.eq(r.error, 'שליפה חלקית אינה נתמכת לנהג', '⛔ נוסח הדחייה השתנה (מלכודת 3)');
+    },
+
+    '[שומר] ⛔ טבלה שאינה ב-TMAP עדיין מסוננת החוצה': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const r = srv.handle('b58Tables', { tables: ['אין_כזו'], _verified_role: 'מנהל' }, db, 'מנהל');
+      t.eq(r.ok, true, '⛔ בקשה לטבלה לא קיימת החזירה שגיאה במקום מטען ריק');
+      t.eq(JSON.stringify(r.tables), JSON.stringify([]), '⛔ טבלה לא מוכרת עברה את הסינון');
+    },
+
+    /* ================= הנהג — החריג שנמצא בספירה ================= */
+
+    '[שומר] ⛔⛔ הנהג עדיין מקבל את הנוכחות והשכר שלו בלבד': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const out = srv.getDriverFilteredPayload(db, 'E_DRV');
+      t.eq((out.attendance || []).length, 1,
+        '⛔⛔ מסך הנוכחות של הנהג נשאר ריק — allowedViews נותן לו אותו והוא לא יכול למשוך אותו');
+      t.eq(out.attendance[0].id, 'A1', '⛔⛔ הנהג מקבל נוכחות של עובד אחר');
+      t.eq((out.payroll || []).length, 1, '⛔⛔ מסך השכר של הנהג נשאר ריק');
+      t.eq(out.payroll[0].id, 'P1', '⛔⛔ הנהג מקבל שכר של עובד אחר');
+    },
+
+    '[מודד] ⛔ מטען הנהג מסומן full ולכן הממשק אינו מבקש שוב': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const out = srv.getDriverFilteredPayload(db, 'E_DRV');
+      t.eq(out._slim.attendance.mode, 'full', '⛔⛔ הנהג היה נכנס למסך טעינה שלעולם לא ייגמר');
+      t.eq(out._slim.payroll.mode, 'full', '⛔⛔ סימון השכר של הנהג חסר');
+    },
+
+    '[שומר] ⛔ שאר מטען הנהג לא זז': (t, { srv }) => {
+      const db = B83.hrDb(srv);
+      const out = srv.getDriverFilteredPayload(db, 'E_DRV');
+      t.eq((out.employees || []).length, 1, '⛔ הנהג רואה יותר מעצמו בטבלת העובדים');
+      t.eq(out.employees[0].id, 'E_DRV', '⛔ העובד שבמטען הנהג אינו הוא');
+      t.no(out.employees[0].pin, '⛔⛔ המספר האישי דלף למטען הנהג (B38)');
+    },
+
+    /* ================= R6 · שלושת מקורות הכסף ================= */
+
+    '[שומר] ⛔⛔ R6 — שלושת מקורות הכסף עדיין מסכימים': (t, { srv }) => {
+      const db = H.emptyDb(srv);
+      db.settings = [];
+      db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 10000000 }];
+      db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', rent_price: 100 }];
+      db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 1000, warehouse_id: '' }];
+      db.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', type: 'השכרה',
+        status: 'מאושרת', created_at: '2026-01-01 08:00', start_date: '2026-01-01',
+        end_date: '2026-01-05', warehouse_id: '', delivery_fee: 0, shortage_charge: 0 }];
+      db.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 100, returned_qty: '' }];
+      db.invoices = []; db.payments = []; db.charges = [];
+      srv.b54Bump();
+      delete db._b54Ledger; delete db._b48Bal;
+      const bal = srv.b48BalancesAg(db)['C1'] || 0;
+      const used = srv.b2CreditUsedAg(db, 'C1');
+      t.eq(bal, used, '⛔⛔ b48BalancesAg ו-b2CreditUsedAg נפרדו — R6 נשבר');
+      t.ok(bal > 0, '⛔ אין חוב כלל — הבדיקה אינה מודדת דבר');
+    }
+  }
+});
+
+
+SPECS.push({
+  file: 't29-b83-ui',
+  title: 'B83 — BLD-09 (שער הטעינה) + BLD-10 (מלאי ממוספר) · ממשק',
+  needs: 'ui',
+  requires: ['BLD09_ONDEMAND', 'bld09Pending', 'bld09Ready', 'bld09ViewNeeds',
+             'bld09Ensure', 'bld09Retry', 'render', 'VIEWS', 'REPORTS_CATALOG',
+             'REPORT_RENDERERS', 'bld10UnitRows', 'bld10RenderUnitSnap',
+             'UNIT_STATUSES', 'sVal', 'sPick', 'b50Reg', 'b50ExportBtn', 'rReports'],
+
+  tests: {
+
+    /* ================= BLD-09 · זיהוי המצב ================= */
+
+    '[מודד] ⛔ bld09Pending מזהה רק את המצב ondemand': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB._slim = {};
+      t.eq(w.bld09Pending('attendance'), false, '⛔ טבלה בלי סימון נחשבה ממתינה — כל מסך ייתקע');
+      w.DB._slim = { attendance: { mode: 'full' }, payroll: { mode: 'days', days: 90 } };
+      t.eq(w.bld09Pending('attendance'), false, '⛔ mode:full נחשב ממתין');
+      t.eq(w.bld09Pending('payroll'), false, '⛔ mode:days נחשב ממתין — הוא חיתוך, לא המתנה');
+      w.DB._slim = { attendance: { mode: 'ondemand' } };
+      t.eq(w.bld09Pending('attendance'), true, '⛔⛔ mode:ondemand לא זוהה — המסך יצייר אפס בשקט');
+      t.eq(w.bld09Ready(), false, '⛔⛔ bld09Ready אמר מוכן בעוד טבלה ממתינה');
+    },
+
+    '[מודד] ⛔⛔ ששת מסכי הצריכה מזוהים — ואף אחד מעבר להם': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const at = (v, extra) => {
+        w.VIEW = v;
+        w.FIN_TAB = (extra && extra.fin) || 'flow';
+        w.REPORT_ID = (extra && extra.rep) || '';
+        return w.bld09ViewNeeds();
+      };
+      t.eq(at('attendance'), true, '⛔⛔ מסך הנוכחות לא סומן כצרכן');
+      t.eq(at('payroll'), true, '⛔⛔ מסך השכר לא סומן כצרכן');
+      t.eq(at('staff'), true, '⛔⛔ כרטיס העובד (טאבי נוכחות ושכר) לא סומן כצרכן');
+      t.eq(at('finance', { fin: 'future' }), true,
+        '⛔⛔ טאב ההוצאות העתידיות לא סומן — b67DraftCardHtml קורא DB.payroll והיה מציג ₪0');
+      t.eq(at('reports', { rep: 'hours' }), true, '⛔⛔ דוח השעות לא סומן כצרכן');
+      t.eq(at('reports', { rep: 'noble' }), true,
+        '⛔⛔ דוח ביצועי המכבסה לא סומן — b50TeamDayWindow קורא DB.attendance למדד Y1');
+      /* הצד השני של כל תנאי — מלכודת 2 */
+      t.eq(at('dash'), false, '⛔ לוח הבקרה מושך נוכחות ושכר בלי צורך — בקשה מיותרת לכל משתמש');
+      t.eq(at('orders'), false, '⛔ מסך ההזמנות מושך בלי צורך');
+      t.eq(at('finance', { fin: 'charges' }), false, '⛔ ספר החיובים מושך שכר בלי צורך');
+      t.eq(at('reports', { rep: 'orders' }), false, '⛔ דוח ההזמנות מושך בלי צורך');
+      t.eq(at('reports', { rep: '' }), false, '⛔ קטלוג הדוחות מושך בלי צורך');
+    },
+
+    /* ================= BLD-09 · השער ברינדור ================= */
+
+    '[מודד] ⛔⛔ מסך השכר מציג שלד ולא מספרים לפני שהנתונים הגיעו': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB._slim = { attendance: { mode: 'ondemand' }, payroll: { mode: 'ondemand' } };
+      w.VIEW = 'payroll';
+      w.render();
+      const html = w.document.getElementById('main').innerHTML;
+      t.has(html, 'טוען נתוני נוכחות ושכר',
+        '⛔⛔ המסך צויר עם מערך ריק — אפס שעות ואפס שכר בלי שום שגיאה. זו מחלקת הכשל של B64a');
+    },
+
+    '[מודד] ⛔ אותו שער חל על הנוכחות, על כרטיס העובד ועל דוח השעות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      [['attendance', ''], ['staff', ''], ['reports', 'hours']].forEach(pair => {
+        w.DB._slim = { attendance: { mode: 'ondemand' }, payroll: { mode: 'ondemand' } };
+        w.VIEW = pair[0]; w.REPORT_ID = pair[1];
+        w.render();
+        t.has(w.document.getElementById('main').innerHTML, 'טוען נתוני נוכחות ושכר',
+          '⛔⛔ ' + pair[0] + (pair[1] ? '/' + pair[1] : '') + ' צויר עם נתונים חסרים');
+      });
+      w.REPORT_ID = '';
+    },
+
+    '[שומר] ⛔ מסך שאינו צרכן מרונדר כרגיל גם כשהן ממתינות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB._slim = { attendance: { mode: 'ondemand' }, payroll: { mode: 'ondemand' } };
+      w.VIEW = 'orders';
+      w.render();
+      const html = w.document.getElementById('main').innerHTML;
+      t.hasNot(html, 'טוען נתוני נוכחות ושכר', '⛔⛔ שער הטעינה חטף מסך שאינו צריך את הנתונים');
+      t.ok(html.length > 50, '⛔ מסך ההזמנות לא צויר כלל');
+    },
+
+    '[שומר] ⛔ אחרי שהסימון התהפך ל-full המסך מרונדר באמת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB._slim = { attendance: { mode: 'full' }, payroll: { mode: 'full' } };
+      w.VIEW = 'payroll';
+      w.render();
+      const html = w.document.getElementById('main').innerHTML;
+      t.hasNot(html, 'טוען נתוני נוכחות ושכר', '⛔⛔ המסך נתקע בשלד גם אחרי שהנתונים הגיעו');
+    },
+
+    '[שומר] ⛔ מסכי הצריכה עובדים כרגיל כשאין סימון כלל (נהג ומצב ישן)': (t, { w, srv, H }) => {
+      /* מטען הנהג מסומן full בשרת, ומטען ישן בלי _slim אינו ממתין. */
+      H.login(w, 'מנהל', srv);
+      delete w.DB._slim;
+      w.VIEW = 'attendance';
+      w.render();
+      t.hasNot(w.document.getElementById('main').innerHTML, 'טוען נתוני נוכחות ושכר',
+        '⛔⛔ מטען בלי סימון נחשב ממתין — הנהג היה נתקע במסך טעינה נצחי');
+    },
+
+    '[מודד] ⛔ ה-polling אינו מושך טבלה שלפי דרישה שטרם נטענה': (t, { H }) => {
+      const b = B83.noCmt(B83.body(H.uiScript(), 'pollDataVersion'));
+      t.ok(b, 'pollDataVersion נעלמה מהממשק');
+      t.has(b, 'changed.filter(function(t){ return !bld09Pending(t); })',
+        '⛔⛔ רענון הרקע מושך נוכחות ושכר לכל משתמש כל 30 שניות — החיסכון מתאפס');
+    },
+
+    '[מודד] ⛔ הבקשה מביאה את שתי הטבלאות יחד — בקשה אחת, לא שתיים (R10)': (t, { H }) => {
+      const b = B83.noCmt(B83.body(H.uiScript(), 'bld09Ensure'));
+      t.ok(b, 'bld09Ensure נעלמה מהממשק');
+      t.has(b, "api('b58Tables', { tables: BLD09_ONDEMAND })",
+        '⛔⛔ השליפה אינה מרוכזת לבקשה אחת — רצפת התקורה היא 2.2 שנ\' לבקשה (R10)');
+      t.hasNot(b, "tables: ['attendance']", '⛔⛔ נוצרה בקשה נפרדת לכל טבלה');
+    },
+
+    '[שומר+מודד] ⛔ R8 — לא נבנתה שכבת שליפה שנייה': (t, { H }) => {
+      const ui = H.stripComments(H.uiScript());
+      t.eq((ui.match(/api\('b58Tables'/g) || []).length, 2,
+        '⛔⛔ מספר נקודות השליפה החלקית השתנה — R8 אוסר דפוס שני (polling + bld09Ensure = 2)');
+      const sv = H.stripComments(H.serverSrc());
+      t.eq((sv.match(/case 'b58Tables'/g) || []).length, 1, '⛔ נוצרה פעולת שליפה חלקית שנייה בשרת');
+    },
+
+    /* ================= BLD-10 ================= */
+
+    '[מודד] ⛔ הדוח רשום בקטלוג עם פונקציית render — ואינו מסך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const e = w.REPORTS_CATALOG.find(c => c.id === 'unitsnap');
+      t.ok(e, '⛔⛔ הדוח אינו ב-REPORTS_CATALOG');
+      t.eq(e.container, 'repUnitSnap', '⛔ שם המכולה אינו תואם לפונקציית ה-render');
+      t.eq(typeof w.REPORT_RENDERERS.unitsnap, 'function', '⛔⛔ אין פונקציית render לדוח');
+      t.eq(w.VIEWS.length, 29, '⛔⛔ נוסף מסך — דוח חדש בקטלוג אינו מסך (חלק 11)');
+      t.no(w.VIEWS.some(v => v[0] === 'unitsnap'), '⛔⛔ הדוח נרשם כמסך ב-VIEWS');
+    },
+
+    '[שומר] ⛔ rReports לא נגעה — הקטלוג הוא נקודת ההרחבה (R8)': (t, { H }) => {
+      const b = B83.noCmt(B83.body(H.uiScript(), 'rReports'));
+      t.ok(b, 'rReports נעלמה');
+      t.hasNot(b, 'unitsnap', '⛔⛔ הדוח נתפר לתוך rReports במקום דרך הקטלוג — R8');
+    },
+
+    '[מודד] ⛔⛔ סטטוס ריק וסטטוס לא מוכר נספרים בנפרד': (t, { w, srv, H }) => {
+      /* ⛔ B81: ריק ניתן למחיקה, לא מוכר חסום. איחודם מסתיר את המידע. */
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', category: 'מצעים' }];
+      w.DB.units = [
+        { id: 'U1', item_id: 'IT1', status: 'פנוי' },
+        { id: 'U2', item_id: 'IT1', status: '' },
+        { id: 'U3', item_id: 'IT1', status: '   ' },
+        { id: 'U4', item_id: 'IT1', status: 'בכביסה ליד' },
+        { id: 'U5', item_id: 'IT1', status: 'לא ידוע' }
+      ];
+      const r = w.bld10UnitRows()[0];
+      t.eq(r.free, 1, '⛔ ספירת "פנוי" שגויה');
+      t.eq(r.blank, 2, '⛔⛔ סטטוס ריק לא נספר בנפרד — יחידות שכן ניתן למחוק ייראו כחסומות');
+      t.eq(r.unknown, 2, '⛔⛔ סטטוס לא מוכר לא נספר — אלה בדיוק היחידות שלא ניתן למחוק (B81)');
+      t.ok(r.bad.indexOf('לא ידוע') > -1, '⛔ הערך הבעייתי אינו מוצג — אי אפשר לתקן מה שלא רואים');
+    },
+
+    '[מודד] ⛔ סטטוס מוכר עם לכלוך עדיין נספר כמוכר (הצד השני)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'IT1', name: 'מגבת' }];
+      w.DB.units = [
+        { id: 'U1', item_id: 'IT1', status: 'פנוי\u00A0' },
+        { id: 'U2', item_id: 'IT1', status: ' אצל לקוח' },
+        { id: 'U3', item_id: 'IT1', status: '\u200Eבכביסה' },
+        { id: 'U4', item_id: 'IT1', status: 'גרוט ' }
+      ];
+      const r = w.bld10UnitRows()[0];
+      t.eq(r.free, 1, '⛔⛔ "פנוי" עם רווח קשיח נספר כלא מוכר — כלל B64a לא הוחל');
+      t.eq(r.out, 1, '⛔⛔ "אצל לקוח" מלוכלך נספר כלא מוכר');
+      t.eq(r.wash, 1, '⛔⛔ "בכביסה" עם תו כיווניות נספר כלא מוכר');
+      t.eq(r.scrap, 1, '⛔⛔ "גרוט" מלוכלך נספר כלא מוכר');
+      t.eq(r.unknown, 0, '⛔⛔ ערך מוכר מלוכלך נספר כלא מוכר');
+      t.eq(r.blank, 0, '⛔ ערך מלוכלך נספר כריק');
+    },
+
+    '[מודד] ⛔ יחידה שנמחקה רכות אינה נספרת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'IT1', name: 'מגבת' }];
+      w.DB.units = [
+        { id: 'U1', item_id: 'IT1', status: 'פנוי' },
+        { id: 'U2', item_id: 'IT1', status: 'פנוי', deleted: 'כן' }
+      ];
+      const r = w.bld10UnitRows()[0];
+      t.eq(r.total, 1, '⛔⛔ יחידה מחוקה נספרה כמלאי — אותו כלל כמו liveUnits בכרטיס הפריט');
+    },
+
+    '[מודד] ⛔ אחוז "בחוץ" מחושב מתוך היחידות שאינן גרוט (שני הצדדים)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'IT1', name: 'מגבת' }];
+      w.DB.units = [
+        { id: 'U1', item_id: 'IT1', status: 'אצל לקוח' },
+        { id: 'U2', item_id: 'IT1', status: 'פנוי' },
+        { id: 'U3', item_id: 'IT1', status: 'גרוט' },
+        { id: 'U4', item_id: 'IT1', status: 'גרוט' }
+      ];
+      let r = w.bld10UnitRows()[0];
+      t.eq(r.live, 2, '⛔ גרוט נספר כמלאי חי');
+      t.eq(r.pct, 50, '⛔⛔ האחוז חושב מתוך סך היחידות במקום מתוך המלאי החי');
+      w.DB.units = [{ id: 'U9', item_id: 'IT1', status: 'גרוט' }];
+      r = w.bld10UnitRows()[0];
+      t.eq(r.pct, null, '⛔⛔ פריט שכל יחידותיו גרוטות קיבל אחוז במקום "—" — חלוקה באפס');
+    },
+
+    '[מודד] ⛔ הייצוא עובר ב-b50Reg ואינו משרשר נתונים ל-onclick (R8)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', category: 'מצעים' }];
+      w.DB.units = [{ id: 'U1', item_id: 'IT1', status: 'פנוי' }];
+      const box = w.document.createElement('div');
+      box.id = 'repUnitSnap';
+      w.document.getElementById('main').appendChild(box);
+      w.bld10RenderUnitSnap();
+      t.has(box.innerHTML, "b50Export('unitsnap')", '⛔⛔ כפתור הייצוא אינו עובר דרך המנגנון הקיים');
+      t.hasNot(box.innerHTML, 'exportCsv(', '⛔⛔ נתונים שורשרו ל-onclick — R8 אוסר זאת מפורשות');
+      const src = B83.noCmt(B83.body(H.uiScript(), 'bld10RenderUnitSnap'));
+      t.has(src, "b50Reg('unitsnap'", '⛔ הייצוא לא נרשם ב-b50Reg');
+    },
+
+    '[מודד] ⛔ דוח בלי יחידות מציג הודעה ולא טבלה ריקה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.items = []; w.DB.units = [];
+      const box = w.document.createElement('div');
+      box.id = 'repUnitSnap';
+      w.document.getElementById('main').appendChild(box);
+      w.bld10RenderUnitSnap();
+      t.has(box.innerHTML, 'לא נרשמה אף יחידה ממוספרת',
+        '⛔⛔ דוח ריק בלי הסבר — אבי לא יידע אם זו תקלה או שפשוט אין יחידות (מלכודת 6)');
+      t.has(box.innerHTML, 'מספור יחידות', '⛔ ההודעה אינה אומרת איפה יוצרים יחידות');
+    },
+
+    '[מודד] ⛔ הדוח אינו נגיש למכבסה ולעובד רצפה': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      const e = w.REPORTS_CATALOG.find(c => c.id === 'unitsnap');
+      t.eq(w.reportAllowed(e), false, '⛔ דוח מלאי נחשף לתפקיד מכבסה');
+      H.login(w, 'משרד', srv);
+      t.eq(w.reportAllowed(e), true, '⛔ המשרד אינו רואה את דוח המלאי');
+      H.login(w, 'מנהל', srv);
+      t.eq(w.reportAllowed(e), true, '⛔ המנהל אינו רואה את דוח המלאי');
+    },
+
+    '[שומר] ⛔ שכבה 2 לא נגעה — B83 אינו יכולת דפדפן': (t, { H }) => {
+      const b = B83.noCmt(B83.body(H.uiScript(), 'b61Tests'));
+      t.ok(b, 'b61Tests נעלמה');
+      t.hasNot(b, 'bld09', '⛔ נוספה טענה לכרטיס הבדיקה העצמית בלי צורך (חלק 11)');
+      t.hasNot(b, 'bld10', '⛔ נוספה טענה לכרטיס הבדיקה העצמית בלי צורך (חלק 11)');
+    },
+
+    '[מודד] ⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
