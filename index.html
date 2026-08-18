@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.82-B82 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.83-B83 · 18.08.2026</div>
   </div>
 </div>
 
@@ -890,6 +890,66 @@ async function b58FullRefresh(){
   var g = await api('getAll');
   if(g && g.ok){ DB = g.db; saveDriverCache(DB); b58AfterRefresh(); }
 }
+/* ============================================================
+   ⭐⭐ BLD-09 / B83 — נוכחות ושכר נטענות לפי דרישה
+   ------------------------------------------------------------
+   attendance ו-payroll יורדות מ-getAll ונשלחות במלואן רק כשמסך שצריך
+   אותן נפתח. ⛔ אין חיתוך שורות: דוח השעות של B50 ומדד Y1 מקבלים את
+   הנתונים המלאים בדיוק כמו קודם.
+
+   ⚠⚠ למה **אין כאן דגל "נטענתי"** אלא בדיקה של הנתון עצמו:
+   בממשק יש 28 מקומות שמבצעים `DB = g.db` אחרי getAll. דגל היה נדרס
+   בכל אחד מהם, ושכחה של אתר אחד = מסך שכר שמציג אפס **בשקט** — בדיוק
+   מחלקת הכשל של B64a. לכן השרת מסמן את המצב בתוך המטען עצמו
+   (`_slim.attendance.mode`), וכל החלפת DB מביאה איתה את הסימון הנכון
+   מעצמה. אין אתר שאפשר לשכוח.
+
+   ⛔ R10: הטבלאות נמשכות **יחד, בבקשה אחת**, לא אחת-אחת.
+   ⛔ R8: דרך b58Tables הקיימת. לא נבנתה שכבת שליפה שנייה.
+   ⛔ הנהג לעולם אינו מגיע לכאן — השרת מסמן לו mode:'full' כי המטען שלו
+      כולל את שתי הטבלאות מסוננות אליו (b58Tables חסומה לנהג מאז B58).
+   ============================================================ */
+var BLD09_ONDEMAND = ['attendance','payroll'];
+var BLD09_INFLIGHT = null, BLD09_ERR = false;
+function bld09Pending(t){
+  var s = (typeof DB==='object' && DB && DB._slim) ? DB._slim[t] : null;
+  return !!(s && s.mode==='ondemand');
+}
+function bld09Ready(){ return !BLD09_ONDEMAND.some(bld09Pending); }
+/* אילו מסכים באמת נוגעים בהן. ⚠ R9: חלק 11 הניח ארבעה, הספירה מול הקוד
+   החי נתנה **שישה** — futureExpensesHtml (טאב "הוצאות עתידיות" בכספים)
+   קורא ל-b67DraftCardHtml שקורא DB.payroll, ודוח ביצועי המכבסה קורא
+   ל-b50TeamDayWindow שקורא DB.attendance עבור מדד Y1. */
+function bld09ViewNeeds(){
+  if(!DB) return false;
+  if(VIEW==='attendance' || VIEW==='payroll' || VIEW==='staff') return true;
+  if(VIEW==='finance' && FIN_TAB==='future') return true;
+  if(VIEW==='reports' && (REPORT_ID==='hours' || REPORT_ID==='noble')) return true;
+  return false;
+}
+function bld09Ensure(){
+  if(bld09Ready()) return Promise.resolve(true);
+  if(BLD09_INFLIGHT) return BLD09_INFLIGHT;
+  BLD09_INFLIGHT = (async function(){
+    try{
+      var g = await api('b58Tables', { tables: BLD09_ONDEMAND });
+      if(!g || !g.ok || !g.db){ BLD09_ERR = true; return false; }
+      Object.keys(g.db).forEach(function(k){ DB[k] = g.db[k]; });
+      /* הסימון נקבע כאן ולא מהשרת: כך אין מסלול שבו הבקשה הצליחה והמסך
+         נכנס ללולאת רינדור אינסופית כי הסימון נשאר 'ondemand'. */
+      DB._slim = DB._slim || {};
+      BLD09_ONDEMAND.forEach(function(t){
+        if(!DB[t]) DB[t] = [];
+        DB._slim[t] = { mode:'full' };
+      });
+      BLD09_ERR = false;
+      return true;
+    }catch(e){ BLD09_ERR = true; return false; }
+    finally{ BLD09_INFLIGHT = null; }
+  })();
+  return BLD09_INFLIGHT;
+}
+function bld09Retry(){ BLD09_ERR = false; render(); }
 async function pollDataVersion(){
   if(!TOKEN || !DB) return;
   if(typeof document!=='undefined' && document.hidden) return; // א: לשונית ברקע לא מבקשת דבר
@@ -905,6 +965,10 @@ async function pollDataVersion(){
     if(ROLE==='נהג' || !prev || !tv) return await b58FullRefresh();
     var changed = Object.keys(tv).filter(function(t){ return prev[t] !== tv[t]; });
     if(!changed.length) return await b58FullRefresh(); // גרסה קפצה בלי ייחוס לטבלה — לא מנחשים
+    /* ⭐ BLD-09: טבלה שלפי דרישה וטרם נטענה — אין טעם למשוך אותה ברענון
+       הרקע. מי שנמצא במסך שצריך אותה כבר טען אותה, ואצלו היא כן תתרענן. */
+    changed = changed.filter(function(t){ return !bld09Pending(t); });
+    if(!changed.length) return;   /* השתנו רק טבלאות שאינן טעונות — אין מה למשוך */
     var g = await api('b58Tables', { tables: changed });
     if(!g || !g.ok || !g.db) return await b58FullRefresh();
     Object.keys(g.db).forEach(function(k){ DB[k] = g.db[k]; });
@@ -1847,6 +1911,17 @@ function render(){
   }
   renderTopbar(views);
   renderNav(views);
+  /* ⭐⭐ BLD-09/B83: מסך שצריך נוכחות או שכר ועוד לא נטענו — מציגים שלד
+     וטוענים. ⛔ אסור לרנדר את המסך עם מערך ריק: הוא היה מצייר אפס שעות
+     ואפס שכר בלי שום שגיאה — כשל שקט ממחלקת B64a. */
+  if(bld09ViewNeeds() && !bld09Ready()){
+    el('main').innerHTML = BLD09_ERR
+      ? '<div class="card empty">טעינת נתוני הנוכחות והשכר נכשלה. <button class="btn sm" onclick="bld09Retry()">נסה שוב</button></div>'
+      : '<div class="card empty">טוען נתוני נוכחות ושכר…</div>';
+    if(!BLD09_ERR) bld09Ensure().then(function(){ render(); });
+    try{ b65RecordWidth(); }catch(e){}
+    return;
+  }
   ({dash:rDash,orders:rOrders,tasks:rTasks,calendar:rCalendar,meetings:rMeetings,laundry:rLaundry,deliveries:rDeliveries,finance:rFinance,customers:rCustomers,
     items:rItems,purchasing:rPurchasing,scan:rScan,barcodes:rBarcodes,reports:rReports,bi:rBi,approvals:rApprovals,audit:rAudit,assets:rAssets,
     staff:rStaff,attendance:rAttendance,payroll:rPayroll,settings:rSettings,warehouses:rWarehouses,shelves:rShelves,fleet:rFleet,returns:rReturns,notes:rNotes,floor:rFloor,superadmin:rSuperAdmin})[VIEW]();
@@ -7846,7 +7921,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.82-B82';
+var B61_CANARY = 'v4.83-B83';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -8666,6 +8741,8 @@ var REPORTS_CATALOG = [
      {key:'from', type:'date', label:'מתאריך', def:function(){ return b50DaysAgo(30); }},
      {key:'to', type:'date', label:'עד תאריך', def:function(){ return ymdLocal(); }}
    ]},
+  /* ---- ⭐ BLD-10 / B83: תמונת מצב של המלאי הממוספר ---- */
+  {id:'unitsnap', title:'מלאי ממוספר לפי סטטוס', desc:'פר פריט — כמה יחידות ממוספרות רשומות ואיפה הן נמצאות כרגע, כולל סטטוס ריק או לא מוכר', group:'תפעול', roles:['משרד'], container:'repUnitSnap', autoRun:true, params:[]},
   {id:'maint', title:'עלות תחזוקה לפי חודש', desc:'עגלות ומכונות — עלות מצטברת מיומן התקלות, לפי חודש ולפי נכס', group:'ניהול', roles:['משרד'], container:'repMaint', autoRun:true,
    params:[
      {key:'from', type:'date', label:'מתאריך', def:function(){ return b50MonthStart(-5); }},
@@ -8682,7 +8759,8 @@ var REPORT_RENDERERS = {
   hours: function(p){ b50RenderHours(p||{}); },
   utilization: function(p){ b50RenderUtil(p||{}); },
   fleet: function(p){ b50RenderFleet(p||{}); },
-  maint: function(p){ b50RenderMaint(p||{}); }
+  maint: function(p){ b50RenderMaint(p||{}); },
+  unitsnap: function(){ bld10RenderUnitSnap(); }
 };
 var REPORT_GROUPS_ORDER = ['כספים','תפעול','מכבסה','ניהול'];
 function reportAllowed(entry){ if(!entry.roles) return true; return ROLE==='מנהל' || entry.roles.includes(ROLE); }
@@ -8994,6 +9072,101 @@ function b50UtilRows(p){
     w.pct = cap>0 ? Math.min(999, Math.round(w.days/cap*100)) : null;
     return w;
   }).sort(function(a,b){ return (b.pct==null?-1:b.pct) - (a.pct==null?-1:a.pct) || b.days-a.days; });
+}
+/* ============================================================
+   ⭐⭐ BLD-10 / B83 — מלאי ממוספר לפי סטטוס
+   ------------------------------------------------------------
+   ⚠⚠ R9, הפעם על הפריט עצמו: הפריט נכתב כ"ניצולת ברמת יחידה ממוספרת" —
+   ימי השכרה פר יחידה בטווח תאריכים. ספירה מול הקוד החי הראתה **שאין לזה
+   מקור נתונים**:
+     · units = id · item_id · barcode · status · note · created · deleted ·
+       deleted_by · deleted_at. אין תאריך שינוי סטטוס.
+     · אין unit_id באף טבלה אחרת — לא ב-order_lines ולא ב-deliveries.
+     · כל אתרי db.units בשרת הם יצירה · setUnitStatus ידני · מחיקה רכה ·
+       סריקה (קריאה בלבד — סריקת יחידה אינה כותבת דבר).
+   כלומר ניצולת לפי טווח מחייבת שינוי סכימה (M2), והיא נרשמה כ-BLD-10ב.
+
+   מה שכן קיים ומדיד היום הוא **תמונת המצב הרגעית**, והיא גם האבחון של R1:
+   אם הדוח יוצא ריק — מעולם לא נרשמו יחידות ממוספרות, ואין צורך בייצוא
+   גיליון כדי לדעת את זה.
+
+   ⛔ הסטטוס עובר sPick מול UNIT_STATUSES בדיוק כמו שער המחיקה של B81,
+   ו**ריק ולא-מוכר הן שתי מחלקות נפרדות**: ריק ניתן למחיקה, לא מוכר חסום.
+   איחודן כאן היה מסתיר בדיוק את המידע שבגללו הדוח שווה משהו.
+   ⛔ אין כאן כסף — ולכן אין כלל B45.
+   ============================================================ */
+function bld10UnitRows(){
+  var byItem = {}, order = [];
+  (DB.units||[]).forEach(function(u){
+    if(String(u.deleted||'')==='כן') return;          /* מחיקה רכה — אינה מלאי */
+    var iid = String(u.item_id||'');
+    if(!byItem[iid]){
+      var it = (DB.items||[]).find(function(x){ return String(x.id)===iid; });
+      byItem[iid] = { id:iid, name: it? String(it.name||iid) : ('פריט שאינו קיים ('+iid+')'),
+        category: it? String(it.category||'') : '', total:0, free:0, out:0, wash:0,
+        scrap:0, blank:0, unknown:0, bad:[] };
+      order.push(iid);
+    }
+    var w = byItem[iid];
+    w.total++;
+    var raw = sVal(u.status), known = sPick(raw, UNIT_STATUSES);
+    if(known==='פנוי') w.free++;
+    else if(known==='אצל לקוח') w.out++;
+    else if(known==='בכביסה') w.wash++;
+    else if(known==='גרוט') w.scrap++;
+    else if(!raw) w.blank++;                          /* ⛔ ריק — ניתן למחיקה (B81) */
+    else { w.unknown++; if(w.bad.indexOf(raw)===-1 && w.bad.length<4) w.bad.push(raw); }
+  });
+  return order.map(function(iid){
+    var w = byItem[iid];
+    w.live = w.total - w.scrap;                       /* גרוט אינו מלאי חי */
+    w.pct = w.live>0 ? Math.round((w.out + w.wash)*100/w.live) : null;
+    return w;
+  }).sort(function(a,b){ return b.total - a.total || String(a.name).localeCompare(String(b.name),'he'); });
+}
+function bld10RenderUnitSnap(){
+  var box = el('repUnitSnap'); if(!box) return;
+  var rows = bld10UnitRows();
+  var key = b50Reg('unitsnap', 'מלאי-ממוספר-לפי-סטטוס_'+ymdLocal()+'.csv',
+    ['פריט','קטגוריה','יחידות','פנוי','אצל לקוח','בכביסה','גרוט','סטטוס ריק','סטטוס לא מוכר','% בחוץ'],
+    rows.map(function(r){ return [r.name, r.category, r.total, r.free, r.out, r.wash, r.scrap, r.blank, r.unknown, r.pct==null?'':r.pct]; }));
+  var h = b50Head(box, 'תמונת מצב נכון ל-'+ymdLocal(),
+    'כל יחידה ממוספרת שאינה מחוקה, לפי הסטטוס הרשום לה ברגע זה. '+
+    '\u0022% בחוץ\u0022 = אצל לקוח ובכביסה, מתוך היחידות שאינן גרוט. '+
+    '⛔ אין כאן ימי השכרה: לטבלת היחידות אין תאריך שינוי סטטוס ואין שיוך להזמנה, '+
+    'ולכן ניצולת לפי טווח תאריכים אינה ניתנת לחישוב בלי שינוי סכימה.', key);
+  if(!rows.length){
+    box.innerHTML = h + b50Empty('לא נרשמה אף יחידה ממוספרת. מספור יחידות נעשה בכרטיס הפריט, בכפתור \u0022מספור יחידות\u0022');
+    return;
+  }
+  var T = function(f){ return rows.reduce(function(s,r){ return s+r[f]; },0); };
+  var tUnknown = T('unknown'), tBlank = T('blank');
+  h += repKpiRow([
+    {v:T('total'), l:'יחידות ממוספרות'},
+    {v:T('free'), l:'פנוי'},
+    {v:T('out')+T('wash'), l:'בחוץ (לקוח + כביסה)'},
+    {v:T('scrap'), l:'גרוט'},
+    {v:tBlank+tUnknown, l:'סטטוס ריק או לא מוכר', alert: tUnknown>0}
+  ]);
+  var bar = function(pc){
+    var c = pc>=70? 'var(--ok)' : (pc>=35? 'var(--teal)' : 'var(--amber)');
+    return '<div style=\u0022background:var(--line);border-radius:6px;height:8px;overflow:hidden;min-width:70px\u0022>'+
+      '<div style=\u0022width:'+Math.min(100,pc)+'%;height:100%;background:'+c+'\u0022></div></div>';
+  };
+  h += '<div class=\u0022card\u0022><table><tr><th>פריט</th><th>יחידות</th><th>פנוי</th><th>אצל לקוח</th>'+
+    '<th>בכביסה</th><th>גרוט</th><th>ריק / לא מוכר</th><th>% בחוץ</th></tr>'+
+    rows.map(function(r){
+      var dirty = (r.blank? r.blank+' ריק' : '') + (r.blank&&r.unknown? ' · ' : '') +
+        (r.unknown? '<b style=\u0022color:var(--danger)\u0022>'+r.unknown+' לא מוכר</b>'+
+          (r.bad.length? ' <span class=\u0022muted\u0022 style=\u0022font-size:11px\u0022>('+esc(r.bad.join(' · '))+')</span>' : '') : '');
+      return '<tr><td><b>'+esc(r.name)+'</b>'+(r.category?' <span class=\u0022muted\u0022 style=\u0022font-size:11.5px\u0022>'+esc(r.category)+'</span>':'')+'</td>'+
+        '<td>'+r.total+'</td><td>'+r.free+'</td><td>'+r.out+'</td><td>'+r.wash+'</td><td>'+r.scrap+'</td>'+
+        '<td>'+(dirty || '<span class=\u0022muted\u0022>—</span>')+'</td>'+
+        '<td>'+(r.pct==null? '<span class=\u0022muted\u0022 title=\u0022כל היחידות גרוטות\u0022>—</span>'
+          : '<div class=\u0022row\u0022 style=\u0022gap:6px;align-items:center\u0022><b>'+r.pct+'%</b>'+bar(r.pct)+'</div>')+'</td></tr>';
+    }).join('')+'</table></div>'+
+    b50Note('⛔ סטטוס לא מוכר חוסם מחיקת יחידה (B81) — יחידה כזו לא תימחק עד שהסטטוס יתוקן. סטטוס ריק אינו חוסם. תיקון נעשה בכרטיס הפריט ← מספור יחידות.');
+  box.innerHTML = h;
 }
 function b50RenderUtil(p){
   var box = el('repUtil'); if(!box) return;
