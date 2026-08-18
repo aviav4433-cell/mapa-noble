@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.81-B81', 'ה-canary לא עודכן ל-B81');
+      t.eq(inJs, 'v4.82-B82', 'ה-canary לא עודכן ל-B82');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.81-B81', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
+      t.has(s, 'v4.82-B82', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7682,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
+      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8017,9 +8017,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
+      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8511,9 +8511,9 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ב הוא לוגיקת שרת/ממשק, לא יכולת דפדפן');
     },
 
-    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
+      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -10072,9 +10072,556 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — הפריט הוא לוגיקת שרת/ממשק');
     },
 
-    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
+      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+
+/* ============================================================================
+   B82 — W23-שאריות + BLD-06 (DEC-04)
+   ----------------------------------------------------------------------------
+   שני פריטים, שני אזורי קוד שאינם נוגעים זה בזה (M1).
+
+   פריט 1 — W23-שאריות: שישה אתרי sVal גולמי בצירים שכבר נסגרו.
+   ⚠ R9: חלק 11 רשם ארבעה. הספירה מול הקוד החי נתנה **שישה** —
+   b41PickupReceived מכיל שני צירים באותן ארבע שורות, ו-bld01Candidates
+   הציג סטטוס נסיעה גולמי בעוד הסינון שלו עצמו כבר עבר w24Stat.
+
+   פריט 2 — BLD-06. ⚠ R9 שוב: מחצית מהפריט כבר הייתה בנויה —
+   b2ProcessPayment מקצה FIFO מאז D15 ומסך הגבייה כבר גובה מול מסמך
+   בודד. מה שחסר היה מסלול **הצהרת התשלום**: b55EnsureDocsForDebt
+   הפיקה חשבונית לכל החוב הפתוח גם על תשלום זעיר.
+
+   ⛔⛔ בקרה נגדית — הצהרה מפורשת לכל בדיקה בחלק הזה:
+   בדיקות המסומנות [שומר] עוברות גם מול הריפו המקורי במכוון. הן
+   מגינות על התנהגות שלא אמורה להשתנות ואינן מודדות את התיקון.
+   בדיקות המסומנות [מודד] נכשלות מול הריפו המקורי.
+   ============================================================================ */
+
+const B82 = {
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return s ? s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '') : s; },
+
+  /* לקוח אחד · שתי הזמנות מאושרות בלי חשבונית · הישנה קודם.
+     כל הזמנה = 1,000 ₪ נטו (10 × 100). */
+  twoOrderDb(srv) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+    db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 10000000 }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', rent_price: 100, weight_kg: 0.5 }];
+    db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 1000, warehouse_id: '' }];
+    db.orders = [
+      { id: 'O_OLD', order_number: '1001', customer_id: 'C1', type: 'השכרה', status: 'מאושרת',
+        created_at: '2026-01-01 08:00', start_date: '2026-01-01', end_date: '2026-01-05',
+        warehouse_id: '', delivery_fee: 0, shortage_charge: 0 },
+      { id: 'O_NEW', order_number: '1002', customer_id: 'C1', type: 'השכרה', status: 'מאושרת',
+        created_at: '2026-06-01 08:00', start_date: '2026-06-01', end_date: '2026-06-05',
+        warehouse_id: '', delivery_fee: 0, shortage_charge: 0 }
+    ];
+    db.orderLines = [
+      { id: 'OL1', order_id: 'O_OLD', item_id: 'IT1', qty: 10, unit_price: 100, returned_qty: '' },
+      { id: 'OL2', order_id: 'O_NEW', item_id: 'IT1', qty: 10, unit_price: 100, returned_qty: '' }
+    ];
+    db.invoices = []; db.payments = []; db.charges = [];
+    srv.b54Bump();
+    return db;
+  },
+
+  /* מזהי ההזמנות שהופקה להן חשבונית פעילה, ממויינים */
+  invoicedOrders(db) {
+    return (db.invoices || []).filter(v => String(v.status || '') !== 'בוטלה')
+      .map(v => String(v.order_id || '')).filter(x => x).sort();
+  },
+
+  /* הזמנת כביסה + נסיעת חזור, לבדיקת האבחון של bld01 */
+  healDb(srv, delivStatus) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן' }];
+    db.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', type: 'כביסה',
+      status: 'סופקה', created_at: '2026-05-01 08:00', start_date: '2026-05-01',
+      end_date: '2026-05-05', warehouse_id: '', ship_back: 'משלוח' }];
+    db.orderLines = [];
+    db.laundryIntakes = [{ id: 'IK1', order_id: 'O1', status: 'נמסר', customer_id: 'C1' }];
+    db.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה', status: delivStatus,   /* b49eLegKind(כביסה,'חזור') */
+      date: '2026-05-06', driver: 'דני' }];
+    db.invoices = []; db.payments = []; db.charges = [];
+    srv.b54Bump();
+    return db;
+  }
+};
+
+SPECS.push({
+  file: 't28-b82-srv',
+  title: 'B82 — W23-שאריות + BLD-06: שיוך תשלום והפקה סלקטיבית (שרת)',
+  needs: 'server',
+  requires: ['w22Stat', 'w24Stat', 'w25Usable', 'sVal', 'sPick',
+             'b82DebtSort', 'b82ParseTarget', 'b55EnsureDocsForDebt',
+             'b2ProcessPayment', 'b2OrderBalanceAg', 'b1CreateInvoice',
+             'b56CloseLaundryOrder', 'w16OrderGate', 'bld01Candidates',
+             'B49D_ORDER_OPEN', 'DELIVERY_STATUSES', 'DELIVERY_DFLT',
+             'ORDER_STATUSES', 'B54_SKIP_ORDER', 'b48BalancesAg',
+             'b2CreditUsedAg', 'b54CustomerOpenAg', 'b54Bump', 'toAg'],
+
+  tests: {
+
+    /* ================= W23-שאריות · סריקת מקור ================= */
+
+    '[מודד] ⛔⛔ שלושת אתרי השרת אינם משווים סטטוס גולמי': (t, { H }) => {
+      const sv = H.serverSrc();
+      const close = B82.noCmt(B82.body(sv, 'b56CloseLaundryOrder'));
+      t.ok(close, 'b56CloseLaundryOrder נעלמה מקוד השרת');
+      t.hasNot(close, 'sVal(order.status)',
+        '⛔⛔ b56CloseLaundryOrder חזרה ל-sVal גולמי — דפוס שני לציר שנסגר ב-B76 (R8)');
+      t.has(close, 'w22Stat(order)', '⛔⛔ b56CloseLaundryOrder אינה עוברת דרך w22Stat');
+
+      const gate = B82.noCmt(B82.body(sv, 'w16OrderGate'));
+      t.ok(gate, 'w16OrderGate נעלמה מקוד השרת');
+      t.hasNot(gate, 'sVal(o.status)', '⛔⛔ שער קליטת הכביסה חזר ל-sVal גולמי');
+      t.has(gate, 'B49D_ORDER_OPEN.indexOf(w22Stat(o))',
+        '⛔⛔ שער קליטת הכביסה אינו עובר דרך w22Stat');
+
+      const heal = B82.noCmt(B82.body(sv, 'bld01Candidates'));
+      t.ok(heal, 'bld01Candidates נעלמה מקוד השרת');
+      t.hasNot(heal, 'sVal(d.status)',
+        '⛔⛔ האבחון חזר להציג סטטוס נסיעה גולמי בעוד הסינון שלו עובר w24Stat');
+      t.has(heal, 'w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT), driver',
+        '⛔ שדה התצוגה באבחון אינו מנורמל');
+    },
+
+    '[מודד] ⛔ אין יותר sVal על סטטוס הזמנה או נסיעה בשום מקום בשרת': (t, { H }) => {
+      const sv = H.stripComments(H.serverSrc());
+      ['sVal(order.status)', 'sVal(o.status)', 'sVal(d.status)', 'sVal(oo.status)'].forEach(pat => {
+        t.hasNot(sv, pat, '⛔⛔ חזר דפוס שני לציר סטטוס שכבר נסגר: ' + pat);
+      });
+      /* אימות נגדי — הסורק באמת פועל: הדפוס המותר על שדה אחר עדיין קיים */
+      t.has(sv, 'sVal(rec && rec.status)',
+        '⛔ w25Usable נעלמה — הסורק כבר אינו מוכיח שהוא מסתכל על הקוד הנכון');
+    },
+
+    /* ================= W23-שאריות · התנהגות ================= */
+
+    '[שומר] ⛔ סגירת הזמנת כביסה: סטטוס מלוכלך עדיין נסגר': (t, { srv }) => {
+      /* ⚠ מוצהר כשומר: sVal ניקה לכלוך גם קודם, ולכן זה עובר גם מול הריפו
+         המקורי. הוא מגן על כך שהמעבר ל-w22Stat לא שינה התנהגות בטעות. */
+      ['סופקה', 'סופקה\u00A0', ' סופקה', '\u200Eמאושרת'].forEach(st => {
+        const db = B82.healDb(srv, 'בוצע');
+        db.orders[0].status = st;
+        t.eq(srv.b56CloseLaundryOrder(db, db.orders[0]), true,
+          '⛔ הזמנת כביסה בסטטוס ' + JSON.stringify(st) + ' לא נסגרה');
+      });
+    },
+
+    '[שומר] ⛔ סטטוס הזמנה שאינו ברשימת הסגירה עדיין אינו סוגר (שני הצדדים)': (t, { srv }) => {
+      ['טיוטה', 'בוטלה', 'הושלמה', 'לא ידוע', ''].forEach(st => {
+        const db = B82.healDb(srv, 'בוצע');
+        db.orders[0].status = st;
+        t.eq(srv.b56CloseLaundryOrder(db, db.orders[0]), false,
+          '⛔ סטטוס ' + JSON.stringify(st) + ' סגר הזמנת כביסה — היפוך התנאי שגוי (מלכודת 2)');
+      });
+    },
+
+    '[שומר] ⛔ שער קליטת הכביסה — נוסח הדחייה המדויק': (t, { srv }) => {
+      const db = B82.healDb(srv, 'בוצע');
+      db.orders[0].status = 'הושלמה';
+      const r = srv.w16OrderGate(db, 'O1', 'לקלוט אליה כביסה');
+      t.eq(r.ok, false, '⛔ הזמנה שהושלמה עברה את שער הקליטה');
+      t.has(r.error, 'נדרש "מאושרת" או "סופקה"',
+        '⛔ נוסח הדחייה של שער הקליטה השתנה (מלכודת 3)');
+    },
+
+    '[שומר] ⛔ שער הקליטה עדיין פותח הזמנה מאושרת מלוכלכת': (t, { srv }) => {
+      ['מאושרת', 'מאושרת\u00A0', ' סופקה'].forEach(st => {
+        const db = B82.healDb(srv, 'בוצע');
+        db.orders[0].status = st;
+        const r = srv.w16OrderGate(db, 'O1', 'לקלוט אליה כביסה');
+        t.eq(r.ok, true, '⛔ שער הקליטה חסם הזמנה פתוחה בסטטוס ' + JSON.stringify(st) +
+          ' — ' + (r && r.error));
+      });
+    },
+
+    '[מודד] ⭐ האבחון מציג את אותו סטטוס שהריפוי פועל לפיו': (t, { srv }) => {
+      /* נסיעת חזור בסטטוס ריק: הסינון סופר אותה כפתוחה (w24Stat → 'מתוכנן'),
+         אבל שדה התצוגה הראה מחרוזת ריקה. אבי ראה "רגל פתוחה בסטטוס ריק". */
+      const db = B82.healDb(srv, '');
+      const rows = srv.bld01Candidates(db);
+      t.eq(rows.length, 1, '⛔ ההזמנה לא זוהתה כמועמדת לריפוי');
+      t.eq(rows[0].open_legs.length, 1, '⛔ רגל החזור הפתוחה לא נספרה');
+      t.eq(rows[0].open_legs[0].status, 'מתוכנן',
+        '⛔⛔ האבחון מציג סטטוס אחר ממה שהסינון שלו עצמו פועל לפיו');
+    },
+
+    '[שומר] ⛔ נסיעה מוכרת עדיין מוצגת כמות שהיא': (t, { srv }) => {
+      const db = B82.healDb(srv, 'בדרך');
+      const rows = srv.bld01Candidates(db);
+      t.eq(rows.length, 1, '⛔ ההזמנה לא זוהתה כמועמדת לריפוי');
+      t.eq(rows[0].open_legs[0].status, 'בדרך',
+        '⛔ סטטוס מוכר שונה על ידי הנרמול — w24Stat אינו אמור לגעת בו');
+    },
+
+    /* ================= BLD-06 · העוזר ================= */
+
+    '[מודד] ⛔ b82ParseTarget: ריק ולא תקין → ברירת מחדל, לא שגיאה': (t, { srv }) => {
+      ['', null, undefined, 'order', ':O1', 'order:', 'foo:O1', '   ', 'ORDER:O1'].forEach(v => {
+        t.eq(srv.b82ParseTarget(v), null,
+          '⛔ ערך ' + JSON.stringify(v) + ' לא הוחזר כברירת מחדל — תשלום עלול להיחסם לשווא');
+      });
+      t.eq(JSON.stringify(srv.b82ParseTarget('order:O_OLD')),
+        JSON.stringify({ kind: 'order', id: 'O_OLD' }), '⛔ פענוח מסמך הזמנה נשבר');
+      t.eq(JSON.stringify(srv.b82ParseTarget(' invoice:IV1\u00A0')),
+        JSON.stringify({ kind: 'invoice', id: 'IV1' }),
+        '⛔ פענוח עם לכלוך נשבר — הבורר שולח ערך מהגיליון');
+    },
+
+    '[מודד] ⛔ b82DebtSort הוא מפתח המיון היחיד — הישן קודם': (t, { srv, H }) => {
+      t.eq(srv.b82DebtSort({ created_at: '2026-01-01', start_date: '2026-09-01' }), '2026-01-01',
+        '⛔ created_at אינו קודם ל-start_date');
+      t.eq(srv.b82DebtSort({ start_date: '2026-09-01' }), '2026-09-01', '⛔ נפילה ל-start_date נשברה');
+      t.eq(srv.b82DebtSort(null), '', '⛔ רשומה ריקה מפילה את המיון');
+      const pay = B82.noCmt(B82.body(H.serverSrc(), 'b2ProcessPayment'));
+      t.has(pay, 'sort: b82DebtSort(x)', '⛔ b2ProcessPayment חזר למחרוזת מיון ידנית (R8)');
+    },
+
+    /* ================= BLD-06 · הפקה סלקטיבית ================= */
+
+    '[שומר] ⛔ בלי opts — b55EnsureDocsForDebt מתנהגת בדיוק כמו קודם': (t, { srv }) => {
+      /* מוצהר כשומר: זו התאימות לאחור. כל קורא אחר של הפונקציה אינו מושפע. */
+      const db = B82.twoOrderDb(srv);
+      const made = srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל');
+      t.eq(made.length, 2, '⛔ ההתנהגות הישנה השתנתה — לא הופקו שתי חשבוניות');
+      t.eq(B82.invoicedOrders(db).join(','), 'O_NEW,O_OLD', '⛔ לא כל ההזמנות קיבלו מסמך');
+    },
+
+    '[מודד] ⛔⛔ תשלום שמכסה הזמנה אחת מפיק מסמך אחד בלבד': (t, { srv }) => {
+      /* עד B82: לקוח שחייב 2,360 ושילם 1,180 קיבל מסמכי מס על **כל** החוב. */
+      const db = B82.twoOrderDb(srv);
+      const made = srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל',
+        { capAg: srv.toAg(1000) });
+      t.eq(made.length, 1,
+        '⛔⛔ הופקו ' + made.length + ' מסמכים על תשלום שמכסה הזמנה אחת — הלקוח מקבל חשבוניות על חוב שלא שילם');
+      t.eq(B82.invoicedOrders(db).join(','), 'O_OLD',
+        '⛔⛔ המסמך לא הופק להזמנה הוותיקה ביותר — ברירת המחדל של DEC-04 נשברה');
+    },
+
+    '[שומר] ⛔ תשלום שמכסה הכל עדיין מפיק לכל החוב': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const made = srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל',
+        { capAg: srv.toAg(99999) });
+      t.eq(made.length, 2, '⛔ תשלום שמכסה את כל החוב לא הפיק את כל המסמכים');
+    },
+
+    '[מודד] ⛔⛔ בחירת מסמך: מופק מסמך רק עבורו': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const made = srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל',
+        { target: 'order:O_NEW', capAg: srv.toAg(99999) });
+      t.eq(made.length, 1, '⛔⛔ בחירת מסמך הפיקה ' + made.length + ' מסמכים');
+      t.eq(B82.invoicedOrders(db).join(','), 'O_NEW',
+        '⛔⛔ הופק מסמך להזמנה שלא נבחרה');
+    },
+
+    '[מודד] ⛔ בחירת חשבונית קיימת אינה מפיקה דבר': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      db.invoices.push({ id: 'IV9', number: '5009', order_id: '', customer_id: 'C1',
+        date: '2026-03-01', subtotal: 500, vat_rate: 18, vat: 90, total: 590,
+        status: 'פתוחה', type: 'חשבונית' });
+      srv.b54Bump();
+      const made = srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל',
+        { target: 'invoice:IV9', capAg: srv.toAg(590) });
+      t.eq(made.length, 0, '⛔ הופקו מסמכים אף שהתשלום כוון לחשבונית שכבר קיימת');
+      t.eq(B82.invoicedOrders(db).join(','), '', '⛔ הופקה חשבונית להזמנה שלא נבחרה');
+    },
+
+    '[מודד] ⛔ חיוב ידני אינו מקבל מסמך כשנבחר מסמך אחר': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      db.charges = [{ id: 'CH1', customer_id: 'C1', source: 'כללי', date: '2026-07-01',
+        amount: 300, description: 'חיוב ידני', order_id: '', intake_id: '',
+        invoice_id: '', status: 'פתוח' }];
+      srv.b54Bump();
+      const made = srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל',
+        { target: 'order:O_OLD', capAg: srv.toAg(1000) });
+      t.eq(made.length, 1, '⛔ הופקו ' + made.length + ' מסמכים במקום אחד');
+      t.eq((db.charges[0].invoice_id || ''), '',
+        '⛔⛔ החיוב הידני קיבל חשבונית אף שהתשלום כוון להזמנה אחרת');
+    },
+
+    /* ================= BLD-06 · ההקצאה ================= */
+
+    '[שומר] ⛔ ברירת המחדל נשארה FIFO — הישן קודם': (t, { srv }) => {
+      /* ⚠ מוצהר כשומר. R9: זה כבר עבד מאז D15 — חצי מ-BLD-06 היה בנוי.
+         הבדיקה קיימת כדי שהוספת debt_target לא תשבור את ברירת המחדל. */
+      const db = B82.twoOrderDb(srv);
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(1000), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_FIFO' }, 'מנהל');
+      t.eq(r.ok, true, '⛔ הגבייה נכשלה: ' + (r && r.error));
+      const paid = db.payments.filter(x => String(x.txn_id) === 'TX_FIFO');
+      t.eq(paid.length, 1, '⛔ התשלום פוצל בין מסמכים במקום להיסגר על אחד');
+      t.eq(String(paid[0].order_id), 'O_OLD',
+        '⛔⛔ התשלום לא שויך להזמנה הוותיקה ביותר — ברירת המחדל של DEC-04 נשברה');
+    },
+
+    '[מודד] ⛔⛔ בחירת מסמך: התשלום מקוזז ממנו בלבד': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(1000), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_TGT',
+        debt_target: 'order:O_NEW' }, 'מנהל');
+      t.eq(r.ok, true, '⛔ הגבייה הממוקדת נכשלה: ' + (r && r.error));
+      const paid = db.payments.filter(x => String(x.txn_id) === 'TX_TGT');
+      t.eq(paid.length, 1, '⛔ התשלום התפצל בין מסמכים אף שנבחר מסמך יחיד');
+      t.eq(String(paid[0].order_id), 'O_NEW',
+        '⛔⛔ התשלום שויך להזמנה שלא נבחרה — הבחירה של העובד לא נאכפה');
+    },
+
+    '[מודד] ⛔ שער: מסמך שנבחר ואינו פתוח — נוסח הדחייה המדויק': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(100), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_BAD',
+        debt_target: 'order:O_MISSING' }, 'מנהל');
+      t.eq(r.ok, false, '⛔⛔ התקבל תשלום כנגד מסמך שאינו קיים');
+      t.has(r.error, 'המסמך שנבחר לשיוך התשלום אינו פתוח לגבייה',
+        '⛔ נוסח הדחייה של שער הבחירה השתנה (מלכודת 3)');
+      t.eq(db.payments.length, 0, '⛔⛔ נרשם תשלום למרות הדחייה');
+    },
+
+    '[מודד] ⛔ שער: הסכום גבוה מיתרת המסמך שנבחר — נוסח מדויק': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(1500), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_OVER',
+        debt_target: 'order:O_OLD' }, 'מנהל');
+      t.eq(r.ok, false, '⛔⛔ נגבה סכום גבוה מיתרת המסמך שנבחר');
+      t.has(r.error, 'הסכום גבוה מיתרת המסמך שנבחר',
+        '⛔ נוסח הדחייה של תקרת המסמך השתנה (מלכודת 3)');
+    },
+
+    '[שומר] ⛔ בלי בחירה — נוסח הדחייה הישן על כל החוב לא השתנה': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(99999), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_OVER2' }, 'מנהל');
+      t.eq(r.ok, false, '⛔ נגבה סכום גבוה מכלל החוב');
+      t.has(r.error, 'קיזוז החוב גבוה מהחוב הניתן לגבייה',
+        '⛔ נוסח הדחייה הוותיק הוחלף בטעות בנוסח החדש');
+    },
+
+    '[שומר] ⛔ debt_target לא תקין נופל לברירת המחדל ואינו חוסם תשלום': (t, { srv }) => {
+      const db = B82.twoOrderDb(srv);
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(1000), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_JUNK', debt_target: 'זבל' }, 'מנהל');
+      t.eq(r.ok, true, '⛔⛔ ערך שיוך פגום חסם תשלום תקין: ' + (r && r.error));
+      const paid = db.payments.filter(x => String(x.txn_id) === 'TX_JUNK');
+      t.eq(String(paid[0].order_id), 'O_OLD', '⛔ הנפילה לברירת המחדל אינה FIFO');
+    },
+
+    /* ================= R6 ================= */
+
+    '[שומר] ⛔⛔ R6 לא נשבר — שלושת מקורות הכסף אחרי גבייה ממוקדת': (t, { srv }) => {
+      const check = (db, where) => {
+        srv.b54Bump();
+        const bal = srv.b48BalancesAg(db)['C1'] || 0;
+        srv.b54Bump();
+        const used = srv.b2CreditUsedAg(db, 'C1');
+        srv.b54Bump();
+        const open = srv.b54CustomerOpenAg(db)['C1'] || 0;
+        t.eq(bal, used, '⛔⛔ R6 נשבר ' + where + ': b48BalancesAg=' + bal + ' מול b2CreditUsedAg=' + used);
+        t.eq(bal, open, '⛔⛔ R6 נשבר ' + where + ': b48BalancesAg=' + bal + ' מול b54CustomerOpenAg=' + open);
+        return bal;
+      };
+      const db = B82.twoOrderDb(srv);
+      const before = check(db, 'לפני הגבייה');
+      t.ok(before > 0, '⛔ החוב לא נספר כלל — הבדיקה אינה מודדת דבר');
+      srv.b55EnsureDocsForDebt(db, 'C1', 'חשבונית מס', 'מנהל',
+        { target: 'order:O_NEW', capAg: srv.toAg(1000) });
+      check(db, 'אחרי הפקה סלקטיבית');
+      const r = srv.b2ProcessPayment(db, { customer_id: 'C1', order_id: '',
+        order_amount_ag: 0, debt_amount_ag: srv.toAg(1000), method: 'מזומן',
+        note: '', date: '2026-08-01', txn_id: 'TX_R6',
+        debt_target: 'order:O_NEW' }, 'מנהל');
+      t.eq(r.ok, true, '⛔ הגבייה נכשלה: ' + (r && r.error));
+      const after = check(db, 'אחרי גבייה ממוקדת');
+      t.ok(after < before, '⛔⛔ החוב לא קטן אחרי גבייה של 1,000 ₪');
+    },
+
+    '[שומר+מודד] ⛔ B64a–B81 לא נשברו — נקודות האמת הקודמות במקומן': (t, { srv }) => {
+      ['sVal', 'sPick', 'w17IsWash', 'w21IsRental', 'w22Stat', 'w23InvActive',
+       'w24Stat', 'w25Usable', 'toAg', 'fromAg', 'b54Bump',
+       'b82DebtSort', 'b82ParseTarget'].forEach(f => {
+        t.eq(typeof srv[f], 'function', '⛔ ' + f + ' נעלמה מקוד השרת');
+      });
+      ['ORDER_STATUSES', 'INVOICE_STATUSES', 'DELIVERY_STATUSES', 'DELIVERY_DFLT',
+       'CHARGE_STATUSES', 'CHARGE_DFLT', 'B49D_ORDER_OPEN', 'B54_SKIP_ORDER',
+       'UNIT_BUSY', 'FAULT_DFLT', 'W23G_SHIPPED'].forEach(v => {
+        t.ok(srv[v] !== undefined, '⛔ ' + v + ' נעלמה מקוד השרת');
+      });
+    },
+
+    '[שומר] ⛔ READ_ONLY_ACTIONS לא נפרצה על ידי B82': (t, { srv }) => {
+      const ro = srv.READ_ONLY_ACTIONS || [];
+      ['b2ProcessPayment', 'b55ConfirmDeclaration', 'addPayment'].forEach(a => {
+        t.ok(ro.indexOf(a) === -1, '⛔⛔ פעולה שכותבת לגיליון נכנסה ל-READ_ONLY_ACTIONS: ' + a);
+      });
+    }
+  }
+});
+
+SPECS.push({
+  file: 't28-b82-ui',
+  title: 'B82 — W23-שאריות + BLD-06 (ממשק): זהות תו-בתו · בורר השיוך',
+  needs: 'ui',
+  requires: ['w22Stat', 'w24Stat', 'sVal', 'b82DebtSort', 'b82ParseTarget',
+             'b41PickupReceived', 'b49eLiveDeliv', 'collectDocRows',
+             'apprConfirmDecl', 'apprConfirmDeclGo', 'DELIVERY_STATUSES',
+             'DELIVERY_DFLT', 'ORDER_STATUSES', 'openModal', 'ils'],
+
+  tests: {
+
+    '[מודד] ⛔⛔ b82DebtSort ו-b82ParseTarget זהים תו-בתו בין הקבצים': (t, { H }) => {
+      const sv = H.serverSrc(), ui = H.uiScript();
+      ['b82DebtSort', 'b82ParseTarget'].forEach(n => {
+        const a = B82.body(sv, n), b = B82.body(ui, n);
+        t.ok(a, n + ' אינה קיימת בקוד השרת');
+        t.ok(b, n + ' אינה קיימת ב-index.html');
+        t.eq(a, b, '⛔⛔ ' + n + ' התפצלה בין הקבצים — הממשק יציג שיוך אחד והשרת יבצע אחר');
+      });
+    },
+
+    '[מודד] ⭐ נסיעה בסטטוס ריק או לא מוכר נחשבת קיימת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['', 'לא ידוע', 'מתוכנן\u00A0', ' בדרך'].forEach(st => {
+        t.eq(w.b49eLiveDeliv({ status: st }), true,
+          '⛔⛔ נסיעה בסטטוס ' + JSON.stringify(st) + ' נחשבה מבוטלת — מעבר חזרה למשלוח משכפל אותה');
+      });
+    },
+
+    '[שומר] ⛔ נסיעה מבוטלת או שהוסרה עדיין אינה קיימת (הצד השני)': (t, { w, srv, H }) => {
+      /* מלכודת 2: בדיקה על שני צדדי התנאי שהופך. */
+      H.login(w, 'מנהל', srv);
+      ['בוטל', 'בוטל\u00A0', 'הוסר ממסלול', 'התקבלה'].forEach(st => {
+        t.eq(w.b49eLiveDeliv({ status: st }), false,
+          '⛔⛔ נסיעה בסטטוס ' + JSON.stringify(st) + ' נחשבה חיה — מעבר חזרה למשלוח לא ייצור נסיעה חדשה');
+      });
+    },
+
+    '[מודד] ⛔ b41PickupReceived: שני הצירים עוברים דרך העוזרים': (t, { H }) => {
+      const b = B82.noCmt(B82.body(H.uiScript(), 'b41PickupReceived'));
+      t.ok(b, 'b41PickupReceived נעלמה מהממשק');
+      t.hasNot(b, 'sVal(d.status)', '⛔⛔ ציר הנסיעה חזר ל-sVal גולמי');
+      t.hasNot(b, 'sVal(oo.status)', '⛔⛔ ציר ההזמנה חזר ל-sVal גולמי');
+      t.has(b, 'w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)', '⛔ הנסיעה אינה עוברת w24Stat');
+      t.has(b, 'w22Stat(oo)', '⛔ ההזמנה אינה עוברת w22Stat');
+    },
+
+    '[שומר] ⛔ b41PickupReceived עדיין מזהה איסוף שנקלט — נקי ומלוכלך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.orders = [{ id: 'O1', customer_id: 'C1', status: 'הוחזרה\u00A0' }];
+      t.eq(w.b41PickupReceived({ id: 'D1', order_id: 'O1', status: 'בוצע\u00A0' }), true,
+        '⛔ נסיעה שבוצעה (סטטוס מלוכלך) לא זוהתה כנקלטת');
+      t.eq(w.b41PickupReceived({ id: 'D2', order_id: 'O1', status: 'מתוכנן' }), true,
+        '⛔ הזמנה שהוחזרה (סטטוס מלוכלך) לא סגרה את האיסוף');
+      w.DB.orders = [{ id: 'O2', customer_id: 'C1', status: 'מאושרת' }];
+      t.eq(w.b41PickupReceived({ id: 'D3', order_id: 'O2', status: 'מתוכנן' }), false,
+        '⛔ איסוף שלא נקלט סומן כנקלט — היפוך התנאי שגוי (מלכודת 2)');
+    },
+
+    '[מודד] ⛔ collectDocRows משתמשת ב-b82DebtSort ולא במחרוזת ידנית': (t, { H }) => {
+      const b = B82.noCmt(B82.body(H.uiScript(), 'collectDocRows'));
+      t.ok(b, 'collectDocRows נעלמה מהממשק');
+      t.has(b, 'sort:b82DebtSort(o)', '⛔ מפתח המיון בממשק התפצל מזה של השרת (R8)');
+      t.hasNot(b, "sort:String(o.created_at||o.start_date||'')",
+        '⛔ נשארה מחרוזת מיון ידנית לצד העוזר — שני דפוסים לאותו מיון');
+    },
+
+    '[מודד] ⛔⛔ בורר השיוך מוצג, וברירת המחדל היא אוטומטית': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן' }];
+      w.DB.orders = [
+        { id: 'O_OLD', order_number: '1001', customer_id: 'C1', type: 'השכרה',
+          status: 'מאושרת', created_at: '2026-01-01', start_date: '2026-01-01' },
+        { id: 'O_NEW', order_number: '1002', customer_id: 'C1', type: 'השכרה',
+          status: 'מאושרת', created_at: '2026-06-01', start_date: '2026-06-01' }
+      ];
+      w.DB.orderLines = [
+        { id: 'OL1', order_id: 'O_OLD', item_id: 'IT1', qty: 10, unit_price: 100, returned_qty: '' },
+        { id: 'OL2', order_id: 'O_NEW', item_id: 'IT1', qty: 10, unit_price: 100, returned_qty: '' }
+      ];
+      w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', rent_price: 100 }];
+      w.DB.invoices = []; w.DB.payments = []; w.DB.charges = []; w.DB.settings = [];
+      delete w.DB._b54Ledger; delete w.DB._b48Bal;
+
+      w.apprConfirmDecl('PDEC1', 500, 'מלון הים', 'העברה בנקאית', 'C1');
+      const html = w.el('modal').innerHTML;
+      t.has(html, 'id="ac_target"', '⛔⛔ בורר השיוך אינו מוצג — העובד אינו יכול לבחור מסמך');
+      t.has(html, 'אוטומטי — החוב הוותיק ביותר קודם',
+        '⛔⛔ ברירת המחדל אינה החוב הוותיק ביותר (DEC-04)');
+      const sel = w.el('ac_target');
+      t.ok(sel, 'בורר השיוך אינו אלמנט אמיתי ב-DOM');
+      t.eq(sel.value, '', '⛔⛔ ברירת המחדל אינה ריקה — נבחר מסמך בלי שהעובד ביקש');
+      t.eq(sel.options.length, 3, '⛔ הבורר אינו מציג את שתי ההזמנות לצד ברירת המחדל');
+      t.eq(sel.options[1].value, 'order:O_OLD',
+        '⛔⛔ ההזמנה הוותיקה אינה ראשונה בבורר — הסדר אינו FIFO');
+      t.eq(sel.options[2].value, 'order:O_NEW', '⛔ סדר המסמכים בבורר אינו מהישן לחדש');
+      t.has(html, 'יופקו רק המסמכים שהתשלום הזה מכסה',
+        '⛔ ההסבר עדיין מבטיח הפקה לכל החוב');
+    },
+
+    '[שומר] ⛔ אין חוב או אין מזהה לקוח — הבורר נעלם והמסך עדיין נפתח': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן' }];
+      w.DB.orders = []; w.DB.orderLines = []; w.DB.invoices = [];
+      w.DB.payments = []; w.DB.charges = []; w.DB.settings = [];
+      delete w.DB._b54Ledger; delete w.DB._b48Bal;
+
+      w.apprConfirmDecl('PDEC1', 500, 'מלון הים', 'מזומן', 'C1');
+      let html = w.el('modal').innerHTML;
+      t.has(html, 'id="ac_amt"', '⛔ מסך האישור לא נפתח כשאין חוב פתוח');
+      t.hasNot(html, 'id="ac_target"', '⛔ בורר ריק הוצג ללקוח בלי חוב');
+
+      w.apprConfirmDecl('PDEC2', 500, 'מלון הים', 'מזומן');
+      html = w.el('modal').innerHTML;
+      t.has(html, 'id="ac_go"', '⛔⛔ מסך האישור קרס כשלא הועבר מזהה לקוח');
+      t.hasNot(html, 'id="ac_target"', '⛔ הבורר הוצג בלי מזהה לקוח');
+    },
+
+    '[מודד] ⛔⛔ הכפתור בתיבת האישורים מעביר את מזהה הלקוח': (t, { H }) => {
+      /* R7: הבורר נבנה מ-custId. אם הקורא לא יעביר אותו, הבורר ייעלם
+         בייצור בלי שאף בדיקה תרגיש. */
+      const ui = H.stripComments(H.uiScript());
+      t.has(ui, "apprConfirmDecl(\\''+x.id+'\\','+Number(x.amount||0)",
+        '⛔ הקורא של apprConfirmDecl בתיבת האישורים השתנה');
+      t.has(ui, "esc(x.method||'')+'\\',\\''+esc(x.customer_id||'')+'\\')",
+        '⛔⛔ הכפתור אינו מעביר את מזהה הלקוח — בורר השיוך לא יופיע בייצור');
+      const go = B82.noCmt(B82.body(ui, 'apprConfirmDeclGo'));
+      t.has(go, 'debt_target', '⛔⛔ הבחירה אינה נשלחת לשרת — העובד בוחר והשרת מתעלם');
+      t.has(go, "el('ac_target')", '⛔ הבחירה נקראת ממקום אחר מהבורר שהוצג');
+    },
+
+    '[שומר] ⛔ שכבה 2 לא נגעה — B82 אינו יכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.ok(names.indexOf('B82') === -1,
+        '⛔ נוספה טענה לשכבה 2 עבור B82 — הוא נבדק כולו בשכבה 1');
+    },
+
+    '[מודד] ⛔ canary v4.82-B82 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.82-B82/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
