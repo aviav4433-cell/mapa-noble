@@ -135,6 +135,9 @@
 //             B77 — WASH-23: ציר הסטטוס של החשבונית — canary v4.77-B77
 //             B78 — WASH-23ב: ציר הסטטוס בשכר · משימות · רכש · נסיעות — canary v4.78-B78
 //             B79 — WASH-23ג: ציר הסטטוס של המשלוחים (deliveries) — canary v4.79-B79
+//             B80 — WASH-23ג חלק ב': ציר הסטטוס בטבלאות הכסף (charges · payments ·
+//                   paymentDeclarations · futureExpenses · creditProfiles) ובשערי הציוד
+//                   (vehicles · machines) — canary v4.80-B80
 //                   • w22Stat/w22Known/w22Reserving — נקודת אמת אחת לסטטוס,
 //                     זהה תו-בתו בממשק (יש בדיקה). 35 אתרים בשרת + 34 בממשק.
 //                   • הבאג: הזמנה מאושרת שסטטוסה בגיליון נושא רווח קשיח לא
@@ -2655,7 +2658,7 @@ function handle(action, p, db, user) {
       }
       if (p.vehicle_id) {
         var spVeh = db.vehicles.find(function (v) { return v.id === p.vehicle_id; });
-        if (spVeh && spVeh.status !== 'פעיל') return { ok: false, error: 'הרכב שנבחר אינו פעיל (' + spVeh.status + ')' };
+        if (spVeh && !w25Usable(spVeh, VEHICLE_STATUSES, 'פעיל')) return { ok: false, error: 'הרכב שנבחר אינו פעיל (' + spVeh.status + ')' };
       }
       var spNew = {
         id: genId('DELV'), order_id: spDv.order_id, kind: spDv.kind, date: spDv.date,
@@ -2800,7 +2803,7 @@ function handle(action, p, db, user) {
       // כלל החוב (customer_id) מפיקים לו מסמך יחד עם ההזמנות החסרות.
       if (p.customer_id && !p.order_id) {
         var chEI = (db.charges || []).filter(function (ch) {
-          return ch.customer_id === p.customer_id && String(ch.status || 'פתוח') !== 'בוטל'
+          return ch.customer_id === p.customer_id && w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT) !== 'בוטל'
             && !String(ch.invoice_id || '').trim() && !String(ch.order_id || '').trim()
             && Number(ch.amount) > 0;
         }).map(function (ch) { return ch.id; });
@@ -3011,7 +3014,7 @@ function handle(action, p, db, user) {
         if (p.method === 'שליח חיצוני' && !p.external_carrier) return { ok: false, error: 'ציין את שם השליח/חברת ההובלה' };
         if (p.vehicle_id) {
           var tv = db.vehicles.find(function (v) { return v.id === p.vehicle_id; });
-          if (tv && tv.status !== 'פעיל') return { ok: false, error: 'הרכב ' + (tv.plate || tv.id) + ' אינו פעיל (' + tv.status + ')' };
+          if (tv && !w25Usable(tv, VEHICLE_STATUSES, 'פעיל')) return { ok: false, error: 'הרכב ' + (tv.plate || tv.id) + ' אינו פעיל (' + tv.status + ')' };
         }
         trip = {
           id: genId('TRIP'), date: today(), kind: 'העברת מלאי', method: p.method,
@@ -3343,7 +3346,7 @@ function handle(action, p, db, user) {
       var fe = db.futureExpenses.find(function (x) { return x.id === p.id; });
       if (!fe) return { ok: false, error: 'לא נמצא' };
       if (!fexpAlive(fe)) return { ok: false, error: 'ההוצאה נמחקה' };  // B28
-      if (fe.status === 'שולם') return { ok: false, error: 'כבר שולם' };
+      if (w24Stat(fe, FEXP_STATUSES, FEXP_DFLT) === 'שולם') return { ok: false, error: 'כבר שולם' };
       if (fe.source === 'payroll') return { ok: false, error: 'הוצאת שכר מסולקת דרך מסך השכר (תשלום), לא כאן' };
       fe.status = 'שולם';
       writeTable('future_expenses', db.futureExpenses);
@@ -3542,7 +3545,7 @@ function handle(action, p, db, user) {
       if (!rec43) return { ok: false, error: 'רשומה לא נמצאה' };
       if (et43 === 'future_expense') {
         if (!fexpAlive(rec43)) return { ok: false, error: 'ההוצאה נמחקה' };
-        if (rec43.status === 'שולם') return { ok: false, error: 'ההוצאה כבר שולמה — אי אפשר לשנות מועד' };
+        if (w24Stat(rec43, FEXP_STATUSES, FEXP_DFLT) === 'שולם') return { ok: false, error: 'ההוצאה כבר שולמה — אי אפשר לשנות מועד' };
         nm43 = rec43.description || rec43.category || rec43.id;
       } else if (et43 === 'invoice') {
         if (!w23InvActive(rec43)) return { ok: false, error: 'החשבונית בוטלה' };
@@ -4815,7 +4818,7 @@ function syncFutureExpenseForPayroll(db, pr) {
   } else if (fe) {
     fe.amount = remaining;
     if (!isDateStr(fe.due_date)) fe.due_date = dueP;
-    if (fe.status === 'שולם') fe.status = 'ממתין';
+    if (w24Stat(fe, FEXP_STATUSES, FEXP_DFLT) === 'שולם') fe.status = 'ממתין';
   } else {
     db.futureExpenses.push({
       id: genId('FEXP'), source: 'payroll', ref_id: pr.id, employee_id: pr.employee_id,
@@ -5305,6 +5308,48 @@ var TRIP_STATUSES     = ['מתוכננת', 'יצאה', 'הסתיימה', 'בוט
 var DELIVERY_STATUSES = ['מתוכנן', 'בדרך', 'בוצע', 'בוטל', 'הוסר ממסלול', 'התקבלה'];
 var DELIVERY_DFLT     = 'מתוכנן';
 function w24Stat(v, list, dflt){ var s = sVal(v && v.status); return sPick(s, list || []) || dflt || s; }
+
+/* ===== ⭐⭐ B80 / WASH-23ג חלק ב' — ציר הסטטוס בטבלאות הכסף ובשערי הציוד =====
+   B76 סגר orders · B77 invoices · B78 payroll/tasks/purchases/deliveryTrips ·
+   B79 deliveries. אותה מחלקת כשל בדיוק נשארה פתוחה בטבלאות שלמטה: ערך
+   שנקרא מהגיליון עם רווח נגרר, רווח קשיח (\u00A0) או תו כיווניות בלתי נראה
+   שובר השוואת מחרוזת מדויקת, **והכשל שקט**.
+
+   ⛔⛔ שתי טבלאות כאן לא היו בהיקף המתוכנן ונמצאו בספירה מול הקוד החי:
+   charges (ספר החיובים, b54Ledger) ו-payments. חיוב עם 'בוטל ' מלוכלך
+   נעלם מהיתרה; תשלום עם 'שולם ' מלוכלך אינו נספר והלקוח נראה חייב כסף
+   ששילם. שתיהן R6 מלא — b48BalancesAg · custBalance · b2CreditUsedAg.
+
+   ⭐ הכרעות אבי 18.08.2026:
+   (3א) חיוב לא מוכר/ריק = **פתוח** (נספר) · תשלום לא מוכר = **לא נגבה** ·
+   הצהרת תשלום לא מוכרת/ריקה = **ממתין לאישור** · הוצאה עתידית לא
+   מוכרת/ריקה = **ממתין** (לא שולם, נשאר בתזרים B43) · פרופיל אשראי
+   לא מוכר = **לא מאומת ולא מאושר**.
+   (2א) רכב ומכונה: **סטטוס ריק נשאר פעיל** — כך הקוד התנהג עד היום,
+   ושינוי הצד הזה היה משבית בבת אחת כל רכב וכל מכונה שהוקמו בלי סטטוס.
+   **סטטוס לא מוכר חוסם** שיבוץ רכב וטעינת מכונה. זו האבחנה שאין
+   w24Stat לבדה יכולה לבטא, ולכן w25Usable.
+
+   ⛔ w24Stat נשארת המנרמלת היחידה (R8). w25Usable אינה מנרמלת בעצמה —
+   היא עוטפת אותה ומוסיפה אך ורק את אבחנת הריק.
+   ⛔ לפרופיל האשראי אין dflt במכוון: הוא מוחזר לפורטל גם כשאין פרופיל
+   כלל (status ריק), ומיפוי הריק לסטטוס מוכר היה משנה את נוסח ההודעה
+   ללקוח שמעולם לא התחיל אימות.
+   ⛔ כל השמות והרשימות בבלוק הזה חייבים להישאר זהים תו-בתו בין
+   index.html לבין קוד שרת.txt — יש בדיקה שמשווה את גוף הבלוק.
+   ⛔ נרמול להשוואה בלבד — הערך הנשמר בגיליון אינו משתנה, והתצוגה
+   למשתמש ממשיכה להראות את הערך האמיתי כפי שהוא. */
+var CHARGE_STATUSES  = ['פתוח', 'בוטל'];
+var CHARGE_DFLT      = 'פתוח';
+var PAYMENT_STATUSES = ['שולם'];
+var DECL_STATUSES    = ['ממתין לאישור', 'אושר', 'נדחה'];
+var DECL_DFLT        = 'ממתין לאישור';
+var FEXP_STATUSES    = ['ממתין', 'שולם חלקית', 'שולם'];
+var FEXP_DFLT        = 'ממתין';
+var CREDIT_STATUSES  = ['ממתין לאימות', 'ממתין לאישור', 'מאומת', 'מאושר', 'נדחה'];
+var VEHICLE_STATUSES = ['פעיל', 'בטיפול', 'מושבת'];
+var MACHINE_STATUSES = ['פעילה', 'בתיקון', 'מושבתת'];
+function w25Usable(rec, list, okStat){ return sVal(rec && rec.status) === '' || w24Stat(rec, list) === okStat; }
 
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
    ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
@@ -5802,7 +5847,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
     if (opts.machine_id) {
       var mc = db.machines.find(function (x) { return x.id === String(opts.machine_id); });
       if (!mc) return { ok: false, error: 'מכונה ' + opts.machine_id + ' לא נמצאה' };
-      if (mc.status && mc.status !== 'פעילה') return { ok: false, error: 'המכונה ' + mc.id + ' בסטטוס ' + mc.status };
+      if (!w25Usable(mc, MACHINE_STATUSES, 'פעילה')) return { ok: false, error: 'המכונה ' + mc.id + ' בסטטוס ' + mc.status };
       t.machine_id = mc.id;
     }
     if (!t.cart_id) return { ok: false, error: 'חובה לשייך עגלה לפני המעבר ל' + toStage };
@@ -5811,7 +5856,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
        שיוך תקוע, והמשימה המשיכה להתקדם במכונה מקולקלת. מכאן והלאה הניתוק
        אוטומטי (w08DetachMachine), וזו הרשת מתחת. */
     var mcNow = db.machines.find(function (x) { return w15MachKey(x.id) === w15MachKey(t.machine_id); });
-    if (mcNow && sVal(mcNow.status) && sVal(mcNow.status) !== 'פעילה')
+    if (mcNow && !w25Usable(mcNow, MACHINE_STATUSES, 'פעילה'))
       return { ok: false, error: 'המכונה ' + mcNow.id + ' בסטטוס ' + mcNow.status +
         ' — בחר מכונה אחרת לפני קידום השלב (WASH-08)' };
     /* ⭐⭐ B75/WASH-05 — מכונה אחת, משימה אחת. דילוג אפשרי בקוד מנהל עם פירוט. */
@@ -5891,7 +5936,7 @@ function b40SplitLaundry(db, p, todayStr, genIdFn, user) {
     var mc2 = db.machines.find(function (x) { return x.id === String(p.machine_id); });
     if (!mc2) { rollback(); return { ok: false, error: 'מכונה ' + p.machine_id + ' לא נמצאה' }; }
     // אותה בדיקה בדיוק כמו בקידום שלב — מכונה בתיקון/מושבתת אינה מקבלת עבודה
-    if (mc2.status && mc2.status !== 'פעילה') { rollback(); return { ok: false, error: 'המכונה ' + mc2.id + ' בסטטוס ' + mc2.status }; }
+    if (!w25Usable(mc2, MACHINE_STATUSES, 'פעילה')) { rollback(); return { ok: false, error: 'המכונה ' + mc2.id + ' בסטטוס ' + mc2.status }; }
     /* ⭐⭐ B75/WASH-05 — אותו שער בדיוק כמו בקידום שלב (R8, בלי דפוס שני).
        nt כבר ב-db, ולכן מוחרג מהספירה כדי שלא ימצא את עצמו כתפוס. */
     var g05s = w05Gate(db, mc2.id, nt.id, p, user);
@@ -6265,7 +6310,7 @@ var CHARGE_SOURCES = ['השכרה', 'כביסה', 'חוסרים', 'משלוח', 
 var B54_SKIP_ORDER = ['בוטלה', 'טיוטה', 'הצעת מחיר'];
 
 // C10: תשלום נספר רק אם הוא נגבה. status ריק = נגבה (תאימות היסטורית).
-function b54PayCounts(p) { return String((p && p.status) || 'שולם') === 'שולם'; }
+function b54PayCounts(p) { return w25Usable(p, PAYMENT_STATUSES, 'שולם'); }
 
 // סדר ההקצאה בתוך מכולה — שרירותי אך קבוע ומתועד (C7)
 function b54SrcIdx(s) { var i = CHARGE_SOURCES.indexOf(s); return i === -1 ? CHARGE_SOURCES.length : i; }
@@ -6363,7 +6408,7 @@ function b54Ledger(db) {
 
   // ---- 3) חיובים ידניים (C3) ----
   (db.charges || []).forEach(function (ch) {
-    if (String(ch.status || 'פתוח') === 'בוטל') return;
+    if (w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT) === 'בוטל') return;
     var amtAg = toAg(ch.amount);
     if (!(amtAg > 0)) return;
     var row = {
@@ -6512,7 +6557,7 @@ function b54ChargeAdd(db, p, user) {
 function b54ChargeCancel(db, p, user) {
   var ch = (db.charges || []).find(function (x) { return x.id === p.charge_id; });
   if (!ch) return { ok: false, error: 'חיוב לא נמצא' };
-  if (String(ch.status) === 'בוטל') return { ok: false, error: 'החיוב כבר בוטל' };
+  if (w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT) === 'בוטל') return { ok: false, error: 'החיוב כבר בוטל' };
   if (String(ch.invoice_id || '').trim())
     return { ok: false, error: 'החיוב כבר נכלל בחשבונית — יש לבטל או לזכות את החשבונית קודם' };
   var reason = String(p.reason || '').trim();
@@ -6674,7 +6719,7 @@ function b54RawOrderTotalAg(db, o) {
   // חיוב ידני שקושר להזמנה (C3)
   (db.charges || []).forEach(function (ch) {
     if (String(ch.order_id || '').trim() !== o.id) return;
-    if (String(ch.status || 'פתוח') === 'בוטל') return;
+    if (w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT) === 'בוטל') return;
     if (!(toAg(ch.amount) > 0)) return;
     var cv = (db.invoices || []).find(function (v) { return v.id === ch.invoice_id && w23InvActive(v); });
     if (cv && !cv.order_id) return;
@@ -6856,7 +6901,7 @@ function b55PayableTotalAg(db, customerId) {
 // סך ההודעות הפתוחות של לקוח — לתצוגה ולמניעת הצהרת יתר. אינו מקטין חוב.
 function b55OpenDeclAg(db, customerId) {
   return (db.paymentDeclarations || []).filter(function (d) {
-    return d.customer_id === customerId && String(d.status) === B55_DECL_OPEN;
+    return d.customer_id === customerId && w24Stat(d, DECL_STATUSES, DECL_DFLT) === B55_DECL_OPEN;
   }).reduce(function (s, d) { return s + toAg(d.declared_amount); }, 0);
 }
 
@@ -6911,7 +6956,7 @@ function b55EnsureDocsForDebt(db, customerId, invoiceType, user) {
     if (r && r.ok) made.push({ number: r.invoice.number, type: r.invoice.type, url: r.invoice.pdf_url || '' });
   });
   var chIds = (db.charges || []).filter(function (ch) {
-    return ch.customer_id === customerId && String(ch.status || 'פתוח') !== 'בוטל'
+    return ch.customer_id === customerId && w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT) !== 'בוטל'
       && !String(ch.invoice_id || '').trim() && !String(ch.order_id || '').trim()
       && Number(ch.amount) > 0;
   }).map(function (ch) { return ch.id; });
@@ -6952,7 +6997,7 @@ function portalPayDeclare(db, p) {
 
   // idempotency (P2/חמש השאלות): לחיצה כפולה מחזירה את אותה הודעה
   var dup = (db.paymentDeclarations || []).find(function (d) {
-    return d.customer_id === c.id && String(d.status) === B55_DECL_OPEN
+    return d.customer_id === c.id && w24Stat(d, DECL_STATUSES, DECL_DFLT) === B55_DECL_OPEN
       && toAg(d.declared_amount) === toAg(amt) && String(d.method_intent) === method;
   });
   if (dup) return { ok: true, duplicate: true, declaration: b55DeclPub(dup) };
@@ -7055,7 +7100,7 @@ function b55ConfirmDeclaration(db, p, user) {
   if (!b55CanAct(db, p)) return { ok: false, error: 'אישור תשלום מותר למנהל/משרד בלבד' };
   var d = (db.paymentDeclarations || []).find(function (x) { return x.id === p.declaration_id; });
   if (!d) return { ok: false, error: 'הודעת התשלום לא נמצאה' };
-  if (String(d.status) !== B55_DECL_OPEN) return { ok: false, error: 'ההודעה כבר ' + d.status };
+  if (w24Stat(d, DECL_STATUSES, DECL_DFLT) !== B55_DECL_OPEN) return { ok: false, error: 'ההודעה כבר ' + d.status };
   var c = db.customers.find(function (x) { return x.id === d.customer_id; });
   if (!c) return { ok: false, error: 'לקוח לא נמצא' };
 
@@ -7107,7 +7152,7 @@ function b55RejectDeclaration(db, p, user) {
   if (!b55CanAct(db, p)) return { ok: false, error: 'דחיית תשלום מותרת למנהל/משרד בלבד' };
   var d = (db.paymentDeclarations || []).find(function (x) { return x.id === p.declaration_id; });
   if (!d) return { ok: false, error: 'הודעת התשלום לא נמצאה' };
-  if (String(d.status) !== B55_DECL_OPEN) return { ok: false, error: 'ההודעה כבר ' + d.status };
+  if (w24Stat(d, DECL_STATUSES, DECL_DFLT) !== B55_DECL_OPEN) return { ok: false, error: 'ההודעה כבר ' + d.status };
   var reason = String(p.reason || '').trim();
   if (!reason) return { ok: false, error: 'סיבת דחייה חובה' };
   d.status = B55_DECL_NO;
@@ -7160,7 +7205,7 @@ function b55MessageClose(db, p, user) {
 function b55PendingForInbox(db) {
   var open = b54CustomerOpenAg(db);
   var decl = (db.paymentDeclarations || []).filter(function (d) {
-    return String(d.status) === B55_DECL_OPEN;
+    return w24Stat(d, DECL_STATUSES, DECL_DFLT) === B55_DECL_OPEN;
   }).map(function (d) {
     var c = db.customers.find(function (x) { return x.id === d.customer_id; }) || {};
     return {
@@ -7556,7 +7601,7 @@ function nobleStageStart(db, p, user) {
   var mbc = String(p.machine_barcode || '').trim();
   var mach = db.machines.find(function (m) { return String(m.barcode) === mbc || String(m.id) === mbc; });
   if (!mach) return { ok: false, error: 'מכונה לא נמצאה — בדוק את הברקוד' };
-  if (sVal(mach.status) && sVal(mach.status) !== 'פעילה') return { ok: false, error: 'המכונה ' + mach.id + ' אינה פעילה (סטטוס: ' + mach.status + ')' };
+  if (!w25Usable(mach, MACHINE_STATUSES, 'פעילה')) return { ok: false, error: 'המכונה ' + mach.id + ' אינה פעילה (סטטוס: ' + mach.status + ')' };
   /* WASH-04: sPick מחזיר את הערך **הקנוני** מהרשימה — ולכן מרגע זה
      `stage` הוא הקבוע שלנו ולא הערך המלוכלך מהגיליון. '' = אין התאמה
      אמיתית, ומקבל טיפול מפורש בשורה הבאה (⛔ אסור להמשיך בשקט). */
@@ -8503,7 +8548,7 @@ function b1CreateInvoice(db, p, user) {
     // B54: חשבונית מחיובים מסומנים — נתיב מסמך אחד לכל המקורות
     var wantIds = [].concat(p.charge_ids).map(function (x) { return String(x); });
     var chs = (db.charges || []).filter(function (c) {
-      return wantIds.indexOf(String(c.id)) > -1 && String(c.status || 'פתוח') !== 'בוטל' && !String(c.invoice_id || '').trim();
+      return wantIds.indexOf(String(c.id)) > -1 && w24Stat(c, CHARGE_STATUSES, CHARGE_DFLT) !== 'בוטל' && !String(c.invoice_id || '').trim();
     });
     if (!chs.length) return { ok: false, error: 'לא נמצאו חיובים פתוחים להפקת חשבונית' };
     var cid0 = chs[0].customer_id;
@@ -8997,7 +9042,7 @@ function b3DepositObj(db, customerId) {
   return {
     exists: true,
     status: pr.status || '',
-    verified: !!pr.gateway_token && pr.status === 'מאומת',
+    verified: !!pr.gateway_token && w24Stat(pr, CREDIT_STATUSES) === 'מאומת',
     has_token: !!pr.gateway_token,
     guarantee_type: pr.guarantee_type || '',
     approval_pending: pr.approval_pending === 'כן',
@@ -9057,7 +9102,7 @@ function b3StartVerification(db, customerId) {
   var c = db.customers.find(function (x) { return x.id === customerId; });
   if (!c) return { ok: false, error: 'לקוח לא נמצא' };
   var pr = b3EnsureProfile(db, c.id);
-  if (pr.status === 'מאומת' && pr.gateway_token) {
+  if (w24Stat(pr, CREDIT_STATUSES) === 'מאומת' && pr.gateway_token) {
     return { ok: true, already_verified: true, deposit: b3DepositObj(db, c.id) };
   }
   var state = genId('B3ST') + sha256Hex(String(Math.random()) + c.id).substring(0, 12);
@@ -10259,7 +10304,7 @@ function b34TripCreate(db, p, user) {
   if (!drv) return { ok: false, error: 'בחר נהג פעיל' };
   if (p.vehicle_id) {
     var v = db.vehicles.find(function (x) { return x.id === p.vehicle_id; });
-    if (v && v.status && v.status !== 'פעיל') return { ok: false, error: 'הרכב שנבחר אינו פעיל (' + v.status + ')' };
+    if (v && !w25Usable(v, VEHICLE_STATUSES, 'פעיל')) return { ok: false, error: 'הרכב שנבחר אינו פעיל (' + v.status + ')' };
   }
   var seq = db.deliveryTrips.filter(function (t) { return String(t.date) === String(p.date) && String(t.driver_id) === String(p.driver_id) && w24Stat(t, TRIP_STATUSES) !== 'בוטלה'; }).length + 1;
   var tr = {
