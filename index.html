@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.79-B79 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.80-B80 · 18.08.2026</div>
   </div>
 </div>
 
@@ -2305,7 +2305,7 @@ function collectCustModal(cid){
    הם נספרים בחוב הלקוח אך אינם ניתנים לגבייה עד שמופק להם מסמך. */
 function b55LooseCharges(cid){
   return (DB.charges||[]).filter(function(ch){
-    return ch.customer_id===cid && String(ch.status||'פתוח')!=='בוטל'
+    return ch.customer_id===cid && w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT)!=='בוטל'
       && !String(ch.invoice_id||'').trim() && !String(ch.order_id||'').trim()
       && Number(ch.amount)>0;
   });
@@ -3084,6 +3084,48 @@ var TRIP_STATUSES     = ['מתוכננת', 'יצאה', 'הסתיימה', 'בוט
 var DELIVERY_STATUSES = ['מתוכנן', 'בדרך', 'בוצע', 'בוטל', 'הוסר ממסלול', 'התקבלה'];
 var DELIVERY_DFLT     = 'מתוכנן';
 function w24Stat(v, list, dflt){ var s = sVal(v && v.status); return sPick(s, list || []) || dflt || s; }
+
+/* ===== ⭐⭐ B80 / WASH-23ג חלק ב' — ציר הסטטוס בטבלאות הכסף ובשערי הציוד =====
+   B76 סגר orders · B77 invoices · B78 payroll/tasks/purchases/deliveryTrips ·
+   B79 deliveries. אותה מחלקת כשל בדיוק נשארה פתוחה בטבלאות שלמטה: ערך
+   שנקרא מהגיליון עם רווח נגרר, רווח קשיח (\u00A0) או תו כיווניות בלתי נראה
+   שובר השוואת מחרוזת מדויקת, **והכשל שקט**.
+
+   ⛔⛔ שתי טבלאות כאן לא היו בהיקף המתוכנן ונמצאו בספירה מול הקוד החי:
+   charges (ספר החיובים, b54Ledger) ו-payments. חיוב עם 'בוטל ' מלוכלך
+   נעלם מהיתרה; תשלום עם 'שולם ' מלוכלך אינו נספר והלקוח נראה חייב כסף
+   ששילם. שתיהן R6 מלא — b48BalancesAg · custBalance · b2CreditUsedAg.
+
+   ⭐ הכרעות אבי 18.08.2026:
+   (3א) חיוב לא מוכר/ריק = **פתוח** (נספר) · תשלום לא מוכר = **לא נגבה** ·
+   הצהרת תשלום לא מוכרת/ריקה = **ממתין לאישור** · הוצאה עתידית לא
+   מוכרת/ריקה = **ממתין** (לא שולם, נשאר בתזרים B43) · פרופיל אשראי
+   לא מוכר = **לא מאומת ולא מאושר**.
+   (2א) רכב ומכונה: **סטטוס ריק נשאר פעיל** — כך הקוד התנהג עד היום,
+   ושינוי הצד הזה היה משבית בבת אחת כל רכב וכל מכונה שהוקמו בלי סטטוס.
+   **סטטוס לא מוכר חוסם** שיבוץ רכב וטעינת מכונה. זו האבחנה שאין
+   w24Stat לבדה יכולה לבטא, ולכן w25Usable.
+
+   ⛔ w24Stat נשארת המנרמלת היחידה (R8). w25Usable אינה מנרמלת בעצמה —
+   היא עוטפת אותה ומוסיפה אך ורק את אבחנת הריק.
+   ⛔ לפרופיל האשראי אין dflt במכוון: הוא מוחזר לפורטל גם כשאין פרופיל
+   כלל (status ריק), ומיפוי הריק לסטטוס מוכר היה משנה את נוסח ההודעה
+   ללקוח שמעולם לא התחיל אימות.
+   ⛔ כל השמות והרשימות בבלוק הזה חייבים להישאר זהים תו-בתו בין
+   index.html לבין קוד שרת.txt — יש בדיקה שמשווה את גוף הבלוק.
+   ⛔ נרמול להשוואה בלבד — הערך הנשמר בגיליון אינו משתנה, והתצוגה
+   למשתמש ממשיכה להראות את הערך האמיתי כפי שהוא. */
+var CHARGE_STATUSES  = ['פתוח', 'בוטל'];
+var CHARGE_DFLT      = 'פתוח';
+var PAYMENT_STATUSES = ['שולם'];
+var DECL_STATUSES    = ['ממתין לאישור', 'אושר', 'נדחה'];
+var DECL_DFLT        = 'ממתין לאישור';
+var FEXP_STATUSES    = ['ממתין', 'שולם חלקית', 'שולם'];
+var FEXP_DFLT        = 'ממתין';
+var CREDIT_STATUSES  = ['ממתין לאימות', 'ממתין לאישור', 'מאומת', 'מאושר', 'נדחה'];
+var VEHICLE_STATUSES = ['פעיל', 'בטיפול', 'מושבת'];
+var MACHINE_STATUSES = ['פעילה', 'בתיקון', 'מושבתת'];
+function w25Usable(rec, list, okStat){ return sVal(rec && rec.status) === '' || w24Stat(rec, list) === okStat; }
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
 function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
@@ -4077,7 +4119,7 @@ function b49fSince(){ var d=new Date(); d.setDate(d.getDate()-B49F_DAYS); return
 function b49fAutoCancelled(){
   var since = b49fSince();
   return (DB.deliveries||[]).filter(function(d){
-    return String(d.status)==='בוטל' && String(d.trip_auto_cancel||'').trim()!=='' && dYmd(d.date)>=since;
+    return w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בוטל' && String(d.trip_auto_cancel||'').trim()!=='' && dYmd(d.date)>=since;
   }).sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
 }
 function b49fCancelledHtml(){
@@ -4179,7 +4221,7 @@ function b34TripsTodayHtml(){
 function b34TripForm(){
   var drivers = (DB.employees||[]).filter(e=>e.role==='נהג' && e.active!=='לא');
   if(!drivers.length) return toast('אין נהגים פעילים במערכת', true);
-  var vehicles = (DB.vehicles||[]).filter(v=>v.active!=='לא' && (!v.status || v.status==='פעיל'));
+  var vehicles = (DB.vehicles||[]).filter(v=>v.active!=='לא' && w25Usable(v, VEHICLE_STATUSES, 'פעיל'));
   openModal('<h2>תכנון נסיעה</h2>'+
     '<div class="grid2">'+
     '<div class="frow"><label>תאריך</label><input id="tp_date" type="date" value="'+todayYMD()+'"></div>'+
@@ -4738,7 +4780,7 @@ function splitDeliveryForm(did){
   var lines = DB.orderLines.filter(l=>l.order_id===d.order_id);
   if(!lines.length) return toast('אין שורות פריטים להזמנה זו', true);
   var drivers = DB.employees.filter(e=>e.role==='נהג'&&e.active!=='לא');
-  var vehicles = (DB.vehicles||[]).filter(v=>v.status==='פעיל');
+  var vehicles = (DB.vehicles||[]).filter(v=>w25Usable(v, VEHICLE_STATUSES, 'פעיל'));
   openModal('<h2>פיצול משלוח</h2>'+
     '<p class="muted" style="font-size:13px">בחר כמה מכל פריט עובר למשלוח החדש. השאר יישאר במשלוח המקורי'+(d.driver?' (נהג: '+esc(d.driver)+')':'')+'. חלוקת הפריטים תירשם בהערות שני המשלוחים.</p>'+
     '<table><tr><th>פריט</th><th>סה"כ בהזמנה</th><th>למשלוח החדש</th></tr>'+
@@ -4773,7 +4815,7 @@ function driverForm(did){
       drivers.map(e=>'<option value="'+ea(e.name)+'"'+(e.name===curD?' selected':'')+'>'+esc(e.name)+'</option>').join('')+'</select>'
     : '<input id="f_driver" placeholder="שם הנהג" value="'+ea(curD)+'">';
   var vehHtml = '<select id="f_dveh"><option value="">—</option>'+
-    DB.vehicles.filter(v=>v.status==='פעיל'||v.id===curV).map(v=>'<option value="'+ea(v.id)+'"'+(v.id===curV?' selected':'')+'>'+esc(v.plate||v.id)+' '+esc(v.model||'')+'</option>').join('')+'</select>';
+    DB.vehicles.filter(v=>w25Usable(v, VEHICLE_STATUSES, 'פעיל')||v.id===curV).map(v=>'<option value="'+ea(v.id)+'"'+(v.id===curV?' selected':'')+'>'+esc(v.plate||v.id)+' '+esc(v.model||'')+'</option>').join('')+'</select>';
   openModal('<h2>'+(curD?'שינוי שיבוץ רכב/נהג':'שיבוץ נהג ורכב')+'</h2>'+
     (curD?'<p class="muted" style="font-size:13px">שיבוץ נוכחי: '+esc(curD)+'</p>':'')+
     '<div class="frow"><label>נהג</label>'+drvHtml+'</div>'+
@@ -4975,7 +5017,7 @@ var B54_SKIP_ORDER = ['בוטלה','טיוטה','הצעת מחיר'];
 var B54_SRC_COLOR = {'השכרה':'var(--navy2)','כביסה':'var(--teal)','חוסרים':'var(--danger)','משלוח':'#8a5a1f','כללי':'#5a5f68'};
 
 /* C10: תשלום נספר רק אם נגבה. status ריק = נגבה (תאימות היסטורית). */
-function b54PayCounts(p){ return String((p&&p.status)||'שולם')==='שולם'; }
+function b54PayCounts(p){ return w25Usable(p, PAYMENT_STATUSES, 'שולם'); }
 function b54SrcIdx(s){ var i=CHARGE_SOURCES.indexOf(s); return i===-1? CHARGE_SOURCES.length : i; }
 function b54Alloc(baseAg, weights){
   var n=weights.length, out=[], i;
@@ -5041,7 +5083,7 @@ function b54LedgerFE(){
   });
 
   (DB.charges||[]).forEach(function(ch){
-    if(String(ch.status||'פתוח')==='בוטל') return;
+    if(w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT)==='בוטל') return;
     var amtAg=toAg(ch.amount);
     if(!(amtAg>0)) return;
     var row={source:CHARGE_SOURCES.indexOf(ch.source)>-1?ch.source:'כללי',
@@ -5166,7 +5208,7 @@ function b54RawOrderTotalAgFE(o){
   });
   (DB.charges||[]).forEach(function(ch){
     if(String(ch.order_id||'').trim()!==o.id) return;
-    if(String(ch.status||'פתוח')==='בוטל') return;
+    if(w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT)==='בוטל') return;
     if(!(toAg(ch.amount)>0)) return;
     var cv=(DB.invoices||[]).find(function(v){ return v.id===ch.invoice_id && w23InvActive(v); });
     if(cv && !cv.order_id) return;
@@ -5296,7 +5338,7 @@ async function b54SaveCharge(){
   if(!desc) return toast('תיאור החיוב חובה', true);
   /* בדיקת כפילות רכה — אזהרה, לא חסימה */
   var dup=(DB.charges||[]).some(function(c){
-    return c.customer_id===cid && String(c.status||'פתוח')!=='בוטל' &&
+    return c.customer_id===cid && w24Stat(c, CHARGE_STATUSES, CHARGE_DFLT)!=='בוטל' &&
       String(c.description||'')===desc && Math.abs(Number(c.amount||0)-amt)<0.005; });
   if(dup && !confirm('קיים כבר חיוב זהה ללקוח זה (אותו תיאור ואותו סכום). להוסיף בכל זאת?')) return;
   B54_BUSY=1;
@@ -5391,7 +5433,7 @@ function w15AuditHtml(r){
           (m.stage? ' · '+esc(m.stage):'')+' · '+esc(m.load_kg)+' ק"ג'+
           (m.capacity? ' מתוך '+esc(m.capacity)+(m.pct!==''? ' ('+esc(m.pct)+'%)':'') : ' · לא הוגדרה קיבולת')+
           ' · '+esc(m.load_count)+' מנות'+
-          (m.status && m.status!=='פעילה'? ' · <b style="color:var(--danger)">'+esc(m.status)+'</b>':'')+'</div>'; }).join('')+'</div>')
+          (!w25Usable(m, MACHINE_STATUSES, 'פעילה')? ' · <b style="color:var(--danger)">'+esc(m.status)+'</b>':'')+'</div>'; }).join('')+'</div>')
     : 'אין מכונות עם שלב אוטומטי מוגדר — הניצולת לא תוצג עד שיוגדר.';
   return '<div style="margin-top:10px">'+
     sec('משימות כביסה פתוחות', r.tasks_no_kg===0,
@@ -5935,7 +5977,7 @@ var FEXP_RANGE = 'all', FEXP_UNTIL = '', FEXP_SHOWDEL = false;
 // כל ההוצאות העתידיות שאינן מחוקות (מחיקה רכה מסתירה מכל תצוגה וחישוב)
 function fexpAll(){ return (DB.futureExpenses||[]).filter(x=>String(x.deleted||'')!=='כן'); }
 function fexpDeleted(){ return (DB.futureExpenses||[]).filter(x=>String(x.deleted||'')==='כן'); }
-function fexpOpen(){ return fexpAll().filter(x=>x.status!=='שולם'); }
+function fexpOpen(){ return fexpAll().filter(x=>w24Stat(x, FEXP_STATUSES, FEXP_DFLT)!=='שולם'); }
 // האם רשומה נכנסת לטווח הזמן שנבחר. רשומה בלי תאריך יעד לא נכנסת לאף טווח.
 function fexpInRange(x){
   if(FEXP_RANGE==='all') return true;
@@ -5961,7 +6003,7 @@ function futureExpensesHtml(){
   var allMode = (FEXP_RANGE==='all');
   var noDate  = allMode? [] : openAll.filter(x=>!x.due_date);
   var withDate= allMode? openAll.slice() : openAll.filter(x=>x.due_date && fexpInRange(x));
-  var paid = fexpAll().filter(x=>x.status==='שולם');
+  var paid = fexpAll().filter(x=>w24Stat(x, FEXP_STATUSES, FEXP_DFLT)==='שולם');
   withDate.sort(function(a,b){
     var u = (URG_ORDER[a.urgency]||9)-(URG_ORDER[b.urgency]||9);
     if(u) return u;
@@ -5980,7 +6022,7 @@ function futureExpensesHtml(){
         (x.due_date?esc(x.due_date):'<button class="btn ghost sm" onclick="fexpDueForm(\''+x.id+'\')">השלם תאריך</button>')+
         (overdue?' ⚠':'')+
         /* B43: דחייה/הקדמה של מועד קיים — מנהל בלבד, עם סיבה, ונרשם ביומן */
-        (x.due_date&&ROLE==='מנהל'&&x.status!=='שולם'?' <button class="btn ghost sm" onclick="b43DueForm(\'future_expense\',\''+x.id+'\')">שנה</button>':'')+
+        (x.due_date&&ROLE==='מנהל'&&w24Stat(x, FEXP_STATUSES, FEXP_DFLT)!=='שולם'?' <button class="btn ghost sm" onclick="b43DueForm(\'future_expense\',\''+x.id+'\')">שנה</button>':'')+
         ' '+b43HistBtn('future_expense',x.id)+'</td>'+
       '<td class="tot">'+ils(x.amount)+'</td>'+
       '<td>'+(pd>0?ils(pd):'—')+'</td>'+
@@ -6613,9 +6655,9 @@ async function saveCreditLimit(cid){
 function custDepositCard(cid){
   var pr = (DB.creditProfiles||[]).find(function(p){ return p.customer_id===cid; });
   var body;
-  if(pr && pr.status==='מאומת' && pr.gateway_token){
+  if(pr && w24Stat(pr, CREDIT_STATUSES)==='מאומת' && pr.gateway_token){
     body = '<span style="color:var(--ok)">✓ כרטיס אשראי מאומת</span>'+(pr.verified_at?' <span class="muted">· '+esc(String(pr.verified_at).slice(0,10))+'</span>':'');
-  } else if(pr && pr.status==='מאושר'){
+  } else if(pr && w24Stat(pr, CREDIT_STATUSES)==='מאושר'){
     body = '<span style="color:var(--ok)">✓ ערבות חלופית מאושרת'+(pr.guarantee_type?' ('+esc(pr.guarantee_type)+')':'')+'</span>'+b3GuaranteeDetail(pr);
   } else if(pr && pr.approval_pending==='כן'){
     body = '<span style="color:var(--amber)">בקשת ערבות ממתינה לאישור'+(pr.guarantee_type?' ('+esc(pr.guarantee_type)+')':'')+'</span>'+b3GuaranteeDetail(pr)+
@@ -7354,7 +7396,7 @@ async function doScan(){
     /* B39: סריקת מכונה במסך הסריקה הכללי — עד כה החזירה "ברקוד לא נמצא" */
     var mSc = r.entity;
     el('scanRes').innerHTML = '<div class="card" style="text-align:center"><div style="color:var(--navy2,#1F4E78)">'+b39Icon(b39MachineKind(mSc),44)+'</div>'+
-      '<b>'+esc(mSc.type||'מכונה')+'</b> <span class="chip" style="background:'+(mSc.status==='פעילה'?'var(--ok)':mSc.status==='בתיקון'?'var(--amber)':'var(--danger)')+'">'+esc(mSc.status||'')+'</span>'+
+      '<b>'+esc(mSc.type||'מכונה')+'</b> <span class="chip" style="background:'+(w24Stat(mSc, MACHINE_STATUSES)==='פעילה'?'var(--ok)':w24Stat(mSc, MACHINE_STATUSES)==='בתיקון'?'var(--amber)':'var(--danger)')+'">'+esc(mSc.status||'')+'</span>'+
       '<div class="muted" style="margin:6px 0">'+esc(mSc.id)+(mSc.auto_stage?' · שלב: '+esc(mSc.auto_stage):'')+(mSc.location?' · '+esc(mSc.location):'')+'</div>'+
       '<button class="btn sm" onclick="openMach(\''+esc(mSc.id)+'\')">פתח כרטיס מכונה</button></div>';
   } else if(r.kind==='package'){
@@ -7733,7 +7775,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.79-B79';
+var B61_CANARY = 'v4.80-B80';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -9748,7 +9790,7 @@ function b39PrintLabel(code, label){
 function liveUnits(iid){ return (DB.units||[]).filter(u=>u.item_id===iid && u.deleted!=='כן'); }
 function fexpPaid(id){ return Math.round(((DB.expensePayments||[]).filter(x=>x.fexp_id===id).reduce((s,x)=>s+Number(x.amount||0),0))*100)/100; }
 function fexpRemain(fe){ return Math.round((Number(fe.amount||0)-fexpPaid(fe.id))*100)/100; }
-function supOpenFexp(sid){ return fexpAll().filter(x=>String(x.supplier_id||'')===String(sid) && x.status!=='שולם'); }
+function supOpenFexp(sid){ return fexpAll().filter(x=>String(x.supplier_id||'')===String(sid) && w24Stat(x, FEXP_STATUSES, FEXP_DFLT)!=='שולם'); }
 function supBalance(sid){ return Math.round(supOpenFexp(sid).reduce((s,x)=>s+fexpRemain(x),0)*100)/100; }
 function payDocsOf(kind,pid){ return (DB.paymentDocs||[]).filter(d=>d.pay_kind===kind && String(d.pay_id)===String(pid)); }
 var UNITS_SHOW_DEL = false;
@@ -11994,22 +12036,22 @@ function portalChargesHtml(d){
 
   /* הודעות תשלום שנשלחו וממתינות לאימות */
   var decl = (d.declarations||[]);
-  var openDecl = decl.filter(function(x){ return x.status==='ממתין לאישור'; });
+  var openDecl = decl.filter(function(x){ return w24Stat(x, DECL_STATUSES, DECL_DFLT)==='ממתין לאישור'; });
   if(declared>0.009 || openDecl.length){
     h += '<div style="border:1px solid var(--amber);border-radius:10px;padding:9px;margin-top:8px;font-size:13px">'+
       '<b style="color:var(--amber)">ממתין לאימות המשרד: '+ils(declared)+'</b>'+
       '<div class="muted" style="font-size:12px;margin-top:3px">החוב יתעדכן אחרי שנאמת את קבלת הכסף. תקבל הודעה כאן.</div>'+
       '</div>';
   }
-  var decided = decl.filter(function(x){ return x.status!=='ממתין לאישור'; }).slice(0,4);
+  var decided = decl.filter(function(x){ return w24Stat(x, DECL_STATUSES, DECL_DFLT)!=='ממתין לאישור'; }).slice(0,4);
   if(decided.length){
     h += '<div style="margin-top:6px">'+decided.map(function(x){
       return '<div class="row" style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line)">'+
-        '<div class="grow">'+esc(x.date)+' · '+ils(x.status==='אושר'? (x.confirmed||x.amount) : x.amount)+' · '+esc(x.method)+
-        (x.status==='נדחה'&&x.reason?'<div class="muted">סיבה: '+esc(x.reason)+'</div>':'')+
-        (x.status==='אושר'&&x.receipt_number?'<div class="muted">קבלה '+esc(String(x.receipt_number))+'</div>':'')+
+        '<div class="grow">'+esc(x.date)+' · '+ils(w24Stat(x, DECL_STATUSES, DECL_DFLT)==='אושר'? (x.confirmed||x.amount) : x.amount)+' · '+esc(x.method)+
+        (w24Stat(x, DECL_STATUSES, DECL_DFLT)==='נדחה'&&x.reason?'<div class="muted">סיבה: '+esc(x.reason)+'</div>':'')+
+        (w24Stat(x, DECL_STATUSES, DECL_DFLT)==='אושר'&&x.receipt_number?'<div class="muted">קבלה '+esc(String(x.receipt_number))+'</div>':'')+
         '</div>'+
-        '<span class="chip" style="background:'+(x.status==='אושר'?'var(--ok)':'var(--danger)')+';color:#fff">'+esc(x.status)+'</span></div>';
+        '<span class="chip" style="background:'+(w24Stat(x, DECL_STATUSES, DECL_DFLT)==='אושר'?'var(--ok)':'var(--danger)')+';color:#fff">'+esc(x.status)+'</span></div>';
     }).join('')+'</div>';
   }
 
@@ -12155,16 +12197,16 @@ function portalDepositHtml(dep){
       (dep.verified_at?'<div class="muted" style="font-size:12px">אומת בתאריך: '+esc(String(dep.verified_at).slice(0,10))+'</div>':'')+
       '</div></div><div class="muted" style="font-size:12px;margin-top:4px">האימות בוצע פעם אחת ואינו נדרש שוב.</div></div>';
   }
-  if(dep.status==='מאושר'){
+  if(w24Stat(dep, CREDIT_STATUSES)==='מאושר'){
     return box+'<div class="row"><div class="grow"><b style="color:var(--ok)">✓ ערבות חלופית מאושרת</b>'+
       (dep.guarantee_type?' <span class="muted">('+esc(dep.guarantee_type)+')</span>':'')+'</div></div></div>';
   }
-  if(dep.approval_pending || dep.status==='ממתין לאישור'){
+  if(dep.approval_pending || w24Stat(dep, CREDIT_STATUSES)==='ממתין לאישור'){
     return box+'<div class="row"><div class="grow"><b style="color:var(--amber)">בקשת ערבות ממתינה לאישור המשרד</b>'+
       (dep.guarantee_type?' <span class="muted">('+esc(dep.guarantee_type)+')</span>':'')+'</div></div>'+
       '<div class="muted" style="font-size:12px;margin-top:4px">נציג ייצור איתך קשר טלפוני להשלמת האישור.</div></div>';
   }
-  var pending = dep.status==='ממתין לאימות';
+  var pending = w24Stat(dep, CREDIT_STATUSES)==='ממתין לאימות';
   return box+
     (pending?'<div style="color:var(--amber);font-weight:600;margin-bottom:6px">אימות הכרטיס טרם הושלם</div>'
             :'<div style="margin-bottom:6px">לצורך פתיחת מסגרת השכרה נדרש אימות אמצעי תשלום חד-פעמי.</div>')+
@@ -12530,7 +12572,7 @@ function transferForm(){
     '<div class="frow"><label>עלות שינוע (₪)</label><input id="f_tcost" type="number" min="0"></div></div>'+
     '<div id="trDrv" style="display:none"><div class="grid2">'+
     '<div class="frow"><label>נהג</label><select id="f_tdriver"><option value="">—</option>'+DB.employees.filter(e=>e.active!=='לא').map(e=>'<option value="'+e.id+'">'+esc(e.name)+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>רכב</label><select id="f_tveh"><option value="">—</option>'+DB.vehicles.filter(v=>v.status==='פעיל').map(v=>'<option value="'+v.id+'">'+esc(v.plate||v.id)+' '+esc(v.model||'')+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>רכב</label><select id="f_tveh"><option value="">—</option>'+DB.vehicles.filter(v=>w25Usable(v, VEHICLE_STATUSES, 'פעיל')).map(v=>'<option value="'+v.id+'">'+esc(v.plate||v.id)+' '+esc(v.model||'')+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>ק"מ בהתחלה</label><input id="f_tkm" type="number"></div></div></div>'+
     '<div id="trExt" style="display:none"><div class="frow"><label>שם השליח / חברת הובלה</label><input id="f_tcarrier"></div></div>'+
     '<button class="btn" onclick="doTransfer()">העבר</button>');
@@ -12559,7 +12601,8 @@ function b46VehWarns(v){
   return w;
 }
 function b46VehStatusColor(v){
-  return v.status==='פעיל' ? 'var(--ok)' : (v.status==='בטיפול' ? 'var(--amber)' : 'var(--danger)');
+  var sV46 = w24Stat(v, VEHICLE_STATUSES);
+  return sV46==='פעיל' ? 'var(--ok)' : (sV46==='בטיפול' ? 'var(--amber)' : 'var(--danger)');
 }
 /* B46: צי הרכב עבר לדפוס האריח האחיד. הפעולות (עריכה, מחיקה, תרשומות, קישורים)
    עברו לכרטיס הרכב — openVeh — בדיוק כמו בעגלות ובמכונות. */
@@ -12567,7 +12610,7 @@ function rFleet(){
   var vehTile = function(v){
     var warns = b46VehWarns(v);
     var stCol = b46VehStatusColor(v);
-    var col = (v.status==='פעיל' && warns.length) ? 'var(--amber)' : stCol;
+    var col = (w24Stat(v, VEHICLE_STATUSES)==='פעיל' && warns.length) ? 'var(--amber)' : stCol;
     var fltV = b42FaultOf('רכב', v.id);   // B56 — תקלה פתוחה גוברת על כל דגל אחר
     if(fltV) col = 'var(--danger)';
     return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(v.plate||v.id)+(v.model?' · '+esc(v.model):'')+'" onclick="openVeh(\''+esc(v.id)+'\')">'+
@@ -12658,7 +12701,7 @@ function vehForm(v){
     '<div class="frow"><label>טיפול הבא (תאריך)</label><input id="fv_nserv" type="date" value="'+esc(v.next_service_date||'')+'"></div>'+
     '<div class="frow"><label>טיפול הבא (ק"מ)</label><input id="fv_nkm" type="number" value="'+esc(v.next_service_km||'')+'"></div>'+
     '<div class="frow"><label>נהג קבוע</label><select id="fv_driver"><option value="">—</option>'+DB.employees.filter(e=>e.active!=='לא').map(e=>'<option value="'+e.id+'"'+(v.assigned_driver_id===e.id?' selected':'')+'>'+esc(e.name)+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>סטטוס</label><select id="fv_status">'+['פעיל','בטיפול','מושבת'].map(t=>'<option'+(v.status===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>סטטוס</label><select id="fv_status">'+VEHICLE_STATUSES.map(t=>'<option'+(w24Stat(v, VEHICLE_STATUSES)===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
     '<div class="frow"><label>תאריך רכישה</label><input id="fv_pdate" type="date" value="'+esc(v.purchase_date||'')+'"></div>'+
     '<div class="frow"><label>עלות רכישה</label><input id="fv_pcost" type="number" value="'+esc(v.purchase_cost||'')+'"></div></div>'+
     '<div class="frow"><label>הערות</label><input id="fv_notes" value="'+esc(v.notes||'')+'"></div>'+
@@ -12985,7 +13028,7 @@ function machForm(m){
     b39PickerHtml('f_mtype2','סוג מכונה', types.map(t=>t.name), m.type||'', 'הוספת סוג מכונה')+
     '<div class="grid2">'+
     '<div class="frow"><label>שלב אוטומטי — סריקת המכונה קובעת את השלב</label><select id="f_mstage"><option value="">ללא (לא ברצפת הייצור)</option>'+NOBLE_MACHINE_STAGES.map(st=>'<option'+(m.auto_stage===st?' selected':'')+'>'+st+'</option>').join('')+'</select></div>'+
-    '<div class="frow"><label>סטטוס</label><select id="f_mstat">'+['פעילה','בתיקון','מושבתת'].map(st=>'<option'+(m.status===st?' selected':'')+'>'+st+'</option>').join('')+'</select></div></div>'+
+    '<div class="frow"><label>סטטוס</label><select id="f_mstat">'+MACHINE_STATUSES.map(st=>'<option'+(w24Stat(m, MACHINE_STATUSES)===st?' selected':'')+'>'+st+'</option>').join('')+'</select></div></div>'+
     b39PickerHtml('f_machloc','מיקום', b39AllLocations(), m.location||'', 'הוספת מיקום חדש')+
     '<div class="grid2">'+
     '<div class="frow"><label>טיפול אחרון</label><input id="f_mlast" type="date" value="'+esc(m.last_service||'')+'"></div>'+
@@ -13035,8 +13078,8 @@ function b42Meta(type){
   if(type==='עגלה') return {type:'עגלה', arr:'carts', field:'condition', states:['תקינה','דורשת טיפול','מושבתת'], onFault:'דורשת טיפול'};
   /* B56 — רכב. שדה המצב הוא vehicles.status, והערכים זהים לאלה שבטופס הרכב
      (vehForm) כדי שלא ייווצרו שני מילונים לאותו שדה. */
-  if(type==='רכב')  return {type:'רכב', arr:'vehicles', field:'status', states:['פעיל','בטיפול','מושבת'], onFault:'בטיפול'};
-  return {type:'מכונה', arr:'machines', field:'status', states:['פעילה','בתיקון','מושבתת'], onFault:'בתיקון'};
+  if(type==='רכב')  return {type:'רכב', arr:'vehicles', field:'status', states:VEHICLE_STATUSES, onFault:'בטיפול'};
+  return {type:'מכונה', arr:'machines', field:'status', states:MACHINE_STATUSES, onFault:'בתיקון'};
 }
 function b42Row(type,id){ return (DB[b42Meta(type).arr]||[]).find(function(x){ return String(x.id)===String(id); }); }
 function b42Label(type,id){
@@ -13707,7 +13750,7 @@ function floorBoardRender(){
   h+='<div class="section-title"><h2>מכונות</h2></div><div class="row" style="flex-wrap:wrap;gap:8px">';
   if(!r.machines.length) h+='<div class="card empty grow">לא הוגדרו מכונות — הוסף במסך עגלות ומכונות</div>';
   r.machines.forEach(function(m){
-    var off = sVal(m.status) && sVal(m.status)!=='פעילה';
+    var off = !w25Usable(m, MACHINE_STATUSES, 'פעילה');
     var loads = m.loads || (m.busy?[m.busy]:[]);
     var bg = loads.length?'var(--amber)':off?'var(--danger)':'var(--ok)';
     var capTxt = m.capacity? (m.load_kg||0)+'/'+m.capacity+' ק"ג' : (m.load_kg? m.load_kg+' ק"ג':'');
@@ -13833,7 +13876,7 @@ function floorRenderInfo(){
       '<button class="btn ghost grow" '+big+' onclick="floorStart()">התחל שלב</button></div>'+
       (machines.length? '<div class="muted" style="font-size:12px;margin-top:8px">מצב המכונות: '+
         machines.map(function(m){
-          var off = sVal(m.status) && sVal(m.status)!=='פעילה';
+          var off = !w25Usable(m, MACHINE_STATUSES, 'פעילה');
           var clr = off?'var(--danger)':(m.load_count?'var(--amber)':'var(--ok)');
           return '<span style="display:inline-block;margin:2px 0 2px 8px;color:'+clr+'">● '+esc(m.id)+' ('+esc(m.auto_stage||'')+')'+
             (off?' — '+esc(m.status):(m.load_count? ' — '+m.load_count+' מנות'+(m.load_kg?' · '+m.load_kg+' ק"ג':'')+(m.capacity?' מתוך '+m.capacity:''):' — פנויה'))+'</span>';
