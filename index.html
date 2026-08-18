@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.75-B75 · 17.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.76-B76 · 17.08.2026</div>
   </div>
 </div>
 
@@ -1406,7 +1406,7 @@ function printOrderForm(oid){
   // B16b: חתימת המסירה האחרונה (אספקה) המקושרת להזמנה זו, אם קיימת
   var sigDel = DB.deliveries.filter(d=>d.order_id===oid && d.kind==='אספקה' && d.signature_url)
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))[0];
-  printDoc(o.status==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה', null,
+  printDoc(w22Stat(o)==='הצעת מחיר'?'הצעת מחיר':'טופס הזמנה', null,
     custBlock(o.customer_id)+
     '<p><b>סוג:</b> '+esc(o.type)+' · <b>מתאריך:</b> '+esc(o.start_date)+' · <b>עד:</b> '+esc(o.end_date)+(o.notes?'<br><b>הערות:</b> '+esc(o.notes):'')+'</p>'+
     linesTable(lines)+
@@ -1447,7 +1447,7 @@ function printAgreement(cid){
     custBlock(cid)+'<pre>'+esc(setting('agreement_text'))+'</pre>', {signatures:true});
 }
 function printStatement(cid){
-  var orders = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','הצעת מחיר'].includes(o.status));
+  var orders = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','הצעת מחיר'].includes(w22Stat(o)));
   var tot=0, paid=0;
   var rows = orders.map(function(o){ var t=orderBalance(o.id)+orderPaid(o.id), p=orderPaid(o.id); tot+=t; paid+=p;
     return '<tr><td>'+esc(o.start_date)+'</td><td>'+esc(o.type)+'</td><td>'+esc(o.status)+'</td><td>'+ils(t)+'</td><td>'+ils(p)+'</td><td>'+ils(t-p)+'</td></tr>'; }).join('');
@@ -1997,7 +1997,7 @@ function go(v, o){
 function rDash(){
   var today = ymdLocal();
   var week = ymdLocal(new Date(Date.now()+6*864e5));
-  var openOrd = DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status));
+  var openOrd = DB.orders.filter(o=>['מאושרת','סופקה'].includes(w22Stat(o)));
   var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date===today);
   var delDue = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today).sort((a,b)=>a.date>b.date?1:-1);
   var debt = DB.customers.reduce(function(s,c){ var b=custBalance(c.id); return s+(b>0?b:0); },0);
@@ -2011,7 +2011,7 @@ function rDash(){
     var wash = DB.laundryTasks.filter(t=>t.item_id===i.id&&t.stage!=='מוכן').reduce((s,t)=>s+Number(t.qty),0);
     return (total-wash) < Number(i.min_stock);
   });
-  var upcoming = DB.orders.filter(o=>w21IsRental(o) && o.status==='מאושרת' && o.start_date<=week && o.end_date>=today);   /* ⭐ B75/WASH-21 */
+  var upcoming = DB.orders.filter(o=>w21IsRental(o) && w22Stat(o)==='מאושרת' && o.start_date<=week && o.end_date>=today);   /* ⭐ B75/WASH-21 */
   el('main').innerHTML =
     b43DashBanner(today)+   /* B43: מה דורש טיפול כספי היום — באיחור + להיום, בשני הכיוונים */
     '<div class="gridkpi">'+
@@ -2127,7 +2127,7 @@ function revenueChartSvg(){
 function ordersDonutSvg(){
   var COLORS = {'הצעת מחיר':'#CBD5E1','טיוטה':'#94A3B8','מאושרת':'var(--teal)','סופקה':'var(--amber)','הוחזרה':'var(--navy2)','הושלמה':'var(--ok)','בוטלה':'var(--danger)'};
   var counts = {};
-  (DB.orders||[]).forEach(function(o){ var st=o.status||'אחר'; counts[st]=(counts[st]||0)+1; });
+  (DB.orders||[]).forEach(function(o){ var st=w22Stat(o)||'אחר'; counts[st]=(counts[st]||0)+1; });   /* ⭐ B76/WASH-22 — סטטוס מלוכלך פתח פרוסה נפרדת בדונאט */
   var keys = Object.keys(counts);
   var total = keys.reduce((s,k)=>s+counts[k],0);
   if(!total) return '<div class="empty">אין נתונים עדיין — צור הזמנה ראשונה והגרף יתמלא</div>';
@@ -2162,7 +2162,7 @@ function revMonthDetail(mk){
 }
 /* NC4 (משימה 5): פירוט הזמנות לפי סטטוס — לחיצה על מקרא הדונאט */
 function ordersStatusDetail(st){
-  var list = (DB.orders||[]).filter(o=>o.status===st).slice().reverse();
+  var list = (DB.orders||[]).filter(o=>w22Stat(o)===sVal(st)).slice().reverse();
   openModal('<h2>הזמנות בסטטוס: '+esc(st)+' ('+list.length+')</h2>'+
     '<p class="muted" style="margin-bottom:8px">לחיצה על שורה פותחת את ההזמנה המלאה.</p>'+
     '<div style="max-height:340px;overflow-y:auto">'+
@@ -2269,7 +2269,7 @@ function collectListModal(){
 /* שורות החוב של לקוח, מהישן לחדש — אותה הקצאה שהשרת עושה */
 function collectDocRows(cid){
   var rows = [];
-  DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status)).forEach(function(o){
+  DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(w22Stat(o))).forEach(function(o){
     var b = orderBalance(o.id);
     if(b>0.01) rows.push({kind:'order', id:o.id, label:'הזמנה '+(o.order_number?'#'+o.order_number:o.id)+' · '+(o.start_date||''), b:b, sort:String(o.created_at||o.start_date||''), click:"openOrder('"+o.id+"')"});
   });
@@ -2352,7 +2352,7 @@ function docOptsHtml(id, cur, onchg, allowCombined){
 /* הזמנות בעלות יתרה שטרם הופק להן מסמך */
 function collectMissingInv(cid, docKind, docId){
   if(docKind==='invoice') return [];
-  var os = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(o.status) && orderBalance(o.id)>0.01);
+  var os = DB.orders.filter(o=>o.customer_id===cid && !['בוטלה','טיוטה','הצעת מחיר'].includes(w22Stat(o)) && orderBalance(o.id)>0.01);
   if(docKind==='order') os = os.filter(o=>String(o.id)===String(docId));
   return os.filter(o=>!DB.invoices.some(v=>v.order_id===o.id && v.status!=='בוטלה'));
 }
@@ -2552,7 +2552,7 @@ function b49dIntakeOfOrder(oid){
    שהרצפה תראה הזמנה שתאריכה שגוי מאשר שההזמנה תיעלם ממנה. */
 function b49dPendingOrders(){
   return ((DB&&DB.orders)||[]).filter(function(o){
-    return w17IsWash(o) && ['מאושרת','סופקה'].indexOf(String(o.status))>-1 && !b49dIntakeOfOrder(o.id);   /* ⭐ B75/WASH-21 */
+    return w17IsWash(o) && ['מאושרת','סופקה'].indexOf(w22Stat(o))>-1 && !b49dIntakeOfOrder(o.id);   /* ⭐ B75/WASH-21 */
   }).sort(function(a,b){
     return String(b49eLegDate(a,'הלוך')||'').localeCompare(String(b49eLegDate(b,'הלוך')||''));
   });
@@ -2606,7 +2606,7 @@ function b49dOrderIntakeHtml(o){
       (Number(ik.price_per_kg)>0? ' · '+ils(ik.price_per_kg)+' לק"ג':'')+
       (Number(ik.total_charge)>0? ' · לחיוב '+ils(ik.total_charge):'')+'</div></div>'+
       (b49dCanIntake()?'<button class="btn ghost sm" onclick="closeModal();FLOOR_TAB=\'board\';go(\'floor\')">ללוח החי ←</button>':'')+'</div>';
-  } else if(['מאושרת','סופקה'].indexOf(String(o.status))>-1){
+  } else if(['מאושרת','סופקה'].indexOf(w22Stat(o))>-1){
     body = '<div class="row"><div class="grow"><span style="color:'+st.color+';font-weight:600">'+esc(st.txt)+'</span>'+
       '<div class="muted" style="font-size:12.5px">טרם נפתחה קליטה במכבסה. פתח אותה כשהכביסה מגיעה פיזית למפעל — הפעולה גם תסגור את נסיעת האיסוף.</div></div>'+
       (b49dCanIntake()?'<button class="btn sm" onclick="b49dGoIntake(\''+o.id+'\')">פתח קליטה במכבסה</button>':'')+'</div>';
@@ -2655,8 +2655,8 @@ function renderOrdersList(){
   var box = el('ordList'); if(!box) return;
   var q = (el('ord_q')?el('ord_q').value:'').trim().toLowerCase();
   var list = DB.orders.slice().sort((a,b)=>a.start_date<b.start_date?1:-1);
-  if(ORD_TAB==='open') list = list.filter(o=>ORD_CLOSED_STATUSES.indexOf(o.status)===-1);
-  else if(ORD_TAB==='closed') list = list.filter(o=>ORD_CLOSED_STATUSES.indexOf(o.status)>-1);
+  if(ORD_TAB==='open') list = list.filter(o=>ORD_CLOSED_STATUSES.indexOf(w22Stat(o))===-1);
+  else if(ORD_TAB==='closed') list = list.filter(o=>ORD_CLOSED_STATUSES.indexOf(w22Stat(o))>-1);
   if(q) list = list.filter(function(o){
     var num = String(o.order_number||'').toLowerCase();
     return (num && (num.indexOf(q)>-1 || ('#'+num).indexOf(q)>-1)) || cust(o.customer_id).toLowerCase().indexOf(q)>-1;
@@ -2742,7 +2742,7 @@ async function createOrder(isQuote){
 /* ===== B49e: אופן המסירה והוכחת המסירה בכרטיס ההזמנה (P1-P4, P8) ===== */
 function b49eCanEditShip(){ return ['מנהל','משרד'].indexOf(ROLE)>-1; }
 function b49eOrderShipHtml(o){
-  if(String(o.status)==='בוטלה') return '';
+  if(w22Stat(o)==='בוטלה') return '';
   var canEdit = b49eCanEditShip();
   var rows = B49E_LEGS.map(function(leg){
     var mode = b49eShipMode(o,leg);
@@ -2887,7 +2887,7 @@ function openOrder(oid){
   var inv = DB.invoices.find(v=>v.order_id===oid && v.status!=='בוטלה');
   var delivs = DB.deliveries.filter(d=>d.order_id===oid);
   var total = orderTotal(oid), bal = orderBalance(oid);
-  var editable = (o.status==='טיוטה'||o.status==='הצעת מחיר');
+  var editable = (w22Stat(o)==='טיוטה'||w22Stat(o)==='הצעת מחיר');
   /* B29: משלוח שכבר "בדרך" אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד (אכיפה גם בשרת) */
   var inTransit = delivs.some(d=>d.kind!=='איסוף' && d.status==='בדרך');
   /* ===== B62/T2 — פעולה ראשית אחת גלויה, השאר ב-⋯ =====
@@ -2899,21 +2899,21 @@ function openOrder(oid){
   var pri = '', note = '', more = [];
   var invBtn = '<button class="btn" onclick="closeMore();doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
   var cancelBtn = '<button class="btn dng" onclick="closeMore();doCancel(\''+oid+'\')">בטל הזמנה</button>';
-  if(o.status==='הצעת מחיר'){
+  if(w22Stat(o)==='הצעת מחיר'){
     pri = '<button class="btn pri" onclick="doAct(\'convertQuote\',\''+oid+'\',\'הומרה להזמנה\')">המר להזמנה</button>';
     more.push(cancelBtn);
-  } else if(o.status==='טיוטה'){
+  } else if(w22Stat(o)==='טיוטה'){
     pri = '<button class="btn pri" onclick="doAct(\'approveOrder\',\''+oid+'\',\'אושרה — המלאי שוריין ונוצרו משלוחים\')">אשר (בדיקת מלאי)</button>';
     more.push(cancelBtn);
-  } else if(o.status==='מאושרת'){
+  } else if(w22Stat(o)==='מאושרת'){
     if(inTransit && ROLE!=='מנהל') note = '<span class="muted" style="font-size:12.5px">המשלוח בדרך אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד</span>';
     else pri = '<button class="btn pri warn" onclick="doAct(\'deliverOrder\',\''+oid+'\',\'סומנה כסופקה\')">סמן כסופקה'+(inTransit?' (מנהל)':'')+'</button>';
     if(!inv) more.push(invBtn);
     more.push(cancelBtn);
-  } else if(o.status==='סופקה'){
+  } else if(w22Stat(o)==='סופקה'){
     pri = '<button class="btn pri" onclick="returnForm(\''+oid+'\')">קבל החזרה</button>';
     if(!inv) more.push(invBtn);
-  } else if((o.status==='הוחזרה'||o.status==='הושלמה') && !inv){
+  } else if((w22Stat(o)==='הוחזרה'||w22Stat(o)==='הושלמה') && !inv){
     pri = '<button class="btn pri" onclick="closeMore();doInvoiceForm(\''+oid+'\')">הפק חשבונית</button>';
   }
   openModal('<h2>'+esc(cust(o.customer_id))+' <span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></h2>'+
@@ -2952,7 +2952,7 @@ function openOrder(oid){
 function b62OrderActions(o, oid, pri, note, more){
   var printBtn = '<button class="btn" onclick="closeMore();printOrderForm(\''+oid+'\')">'+
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> '+
-    (o.status==='הצעת מחיר'?'הדפס הצעת מחיר':'הדפס טופס הזמנה')+'</button>';
+    (w22Stat(o)==='הצעת מחיר'?'הדפס הצעת מחיר':'הדפס טופס הזמנה')+'</button>';
   var list = (more||[]).concat([printBtn, notesBtn('order',oid), tagBtn('order',oid)]);
   return '<div class="actrow">'+(pri||'')+(note||'')+' '+moreMenu(list)+'</div>';
 }
@@ -3017,6 +3017,17 @@ function w17IsWash(o){ return !!o && sVal(o.type)==='כביסה'; }
    ⛔ זהה תו-בתו ל-w21IsRental בקוד השרת. יש בדיקה שמשווה את הגופים.
    ============================================================ */
 function w21IsRental(o){ return !!o && sVal(o.type)!=='כביסה'; }
+/* ⭐⭐ B76/WASH-22 — ציר הסטטוס. w22Stat היא נקודת האמת היחידה ל"מה
+   הסטטוס של ההזמנה", וחייבת להישאר זהה תו-בתו לקוד השרת (יש בדיקה).
+   ⛔ נרמול להשוואה בלבד — הערך בגיליון ובתצוגה אינו משתנה.
+   ⛔ הכרעת אבי 17.08.2026: סטטוס לא מוכר וסטטוס ריק **משריינים מלאי**
+     (w22Reserving / b40ItemBreakdown) — במלאי בלבד, בלי ריכוך בשאר האתרים.
+   ⛔ שתי הרשימות זהות לשרת — יש בדיקה שמשווה אותן תו-בתו. */
+var ORDER_STATUSES = ['הצעת מחיר', 'טיוטה', 'מאושרת', 'סופקה', 'הוחזרה', 'הושלמה', 'בוטלה'];
+var RESERVING_STATUSES = ['מאושרת', 'סופקה'];
+function w22Stat(o){ var s = sVal(o && o.status); return sPick(s, ORDER_STATUSES) || s; }
+function w22Known(o){ return sPick(o && o.status, ORDER_STATUSES) !== ''; }
+function w22Reserving(o){ return !!o && (RESERVING_STATUSES.indexOf(w22Stat(o)) > -1 || !w22Known(o)); }
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
 function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
@@ -3934,7 +3945,7 @@ function b38ReturnsNeedingAttention(){
   var OPEN = ['מתוכנן','בדרך'];
   var out = [];
   (DB.orders||[]).forEach(function(o){
-    if(['מאושרת','סופקה'].indexOf(String(o.status))===-1) return;
+    if(['מאושרת','סופקה'].indexOf(w22Stat(o))===-1) return;
     b38PlannedForOrder(o).forEach(function(pl){
       var plD = dYmd(pl.date);
       if(!plD || plD > t) return;                          // עדיין לא הגיע המועד
@@ -4608,9 +4619,9 @@ function openDelivery(did){
      היה צריך לפתוח את ההזמנה. עכשיו הפעולה יושבת כאן, ראשית. */
   /* B49d: נסיעת איסוף של הזמנת כביסה — הפעולה של הרגע היא פתיחת קליטה במכבסה,
      לא "קליטת החזרה" (שהיא מסלול ההשכרה ואינה חלה כאן). */
-  var isWash49d = o.id && w17IsWash(o) && isReturn && ['מאושרת','סופקה'].indexOf(String(o.status))>-1;   /* ⭐ B75/WASH-21 */
+  var isWash49d = o.id && w17IsWash(o) && isReturn && ['מאושרת','סופקה'].indexOf(w22Stat(o))>-1;   /* ⭐ B75/WASH-21 */
   var wash49dIk = isWash49d? b49dIntakeOfOrder(o.id) : null;
-  var canRecv = isMgr && isReturn && !isWash49d && d.status!=='בוצע' && o.id && o.status==='סופקה';
+  var canRecv = isMgr && isReturn && !isWash49d && d.status!=='בוצע' && o.id && w22Stat(o)==='סופקה';
   var recvBtn = canRecv? '<button class="btn pri" onclick="closeModal();returnForm(\''+o.id+'\')">קבל החזרה (ללא שקילה)</button>' : '';
   var pri = '';
   if(isWash49d && wash49dIk) pri = '<span class="chip" style="background:var(--ok);color:#fff;padding:9px 12px">✔ נקלטה במכבסה — '+esc(wash49dIk.id)+' · '+esc(wash49dIk.status)+'</span>';
@@ -4657,7 +4668,7 @@ function openDelivery(did){
       (wash49dIk?' הקליטה כבר נפתחה: '+esc(wash49dIk.id)+'.':' פתיחת הקליטה גם תסגור את נסיעת האיסוף הזו.')+'</div>':'')+
     ((isMgr && isReturn && !isWash49d && d.status!=='בוצע' && !canRecv)?
       '<div class="muted" style="margin-top:10px;font-size:12.5px">'+
-      (o.id? (o.status==='הוחזרה'||o.status==='הושלמה'? 'ההחזרה כבר נקלטה — ההזמנה בסטטוס '+esc(o.status)+'.'
+      (o.id? (w22Stat(o)==='הוחזרה'||w22Stat(o)==='הושלמה'? 'ההחזרה כבר נקלטה — ההזמנה בסטטוס '+esc(o.status)+'.'
             : 'לא ניתן לקלוט החזרה: ההזמנה בסטטוס '+esc(o.status||'—')+' (נדרש "סופקה").')
           : 'לנסיעה זו אין הזמנה מקושרת.')+'</div>':'')+
     '<div class="actrow">'+pri+more+'</div>'+
@@ -4925,7 +4936,7 @@ function b54SrcChip(src){
 function b54LedgerFE(){
   if(DB && DB._b54Ledger) return DB._b54Ledger;
   var rows=[];
-  var orders=(DB.orders||[]).filter(function(o){ return B54_SKIP_ORDER.indexOf(o.status)===-1; });
+  var orders=(DB.orders||[]).filter(function(o){ return B54_SKIP_ORDER.indexOf(w22Stat(o))===-1; });
   var invActive=(DB.invoices||[]).filter(function(v){ return v.status!=='בוטלה'; });
   var invById={}; invActive.forEach(function(v){ invById[v.id]=v; });
   var byOrder={}, byInv={}, containers=[], loose=[];
@@ -5205,7 +5216,7 @@ function b54ChargeForm(cid){
 function b54FillOrders(){
   var cid=(el('b54_cust')||{}).value||'', box=el('b54_ord');
   if(!box) return;
-  var list=(DB.orders||[]).filter(function(o){ return o.customer_id===cid && B54_SKIP_ORDER.indexOf(o.status)===-1; })
+  var list=(DB.orders||[]).filter(function(o){ return o.customer_id===cid && B54_SKIP_ORDER.indexOf(w22Stat(o))===-1; })
     .slice().sort(function(a,b){ return String(b.start_date||'').localeCompare(String(a.start_date||'')); });
   box.innerHTML='<option value="">— ללא —</option>'+list.map(function(o){
     return '<option value="'+o.id+'">הזמנה '+esc(o.order_number||o.id)+' · '+esc(o.type||'')+' · '+esc(o.start_date||'')+'</option>'; }).join('');
@@ -6696,8 +6707,9 @@ function b40ItemBreakdown(iid, wh){
     var o = (DB.orders||[]).find(x=>x.id===l.order_id); if(!o) return;
     if(!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — היה String(o.type)!=='השכרה' גולמי: השכרה מלוכלכת נראתה זמינה */
     if(!inWh(o.warehouse_id)) return;
-    if(B40_OUT_STATUSES.indexOf(String(o.status))>-1) out.push({line:l, order:o});
-    else if(B40_RESERVED_STATUSES.indexOf(String(o.status))>-1) reserved.push({line:l, order:o});
+    var st76 = w22Stat(o);   /* ⭐⭐ B76/WASH-22 — היה String(o.status) גולמי */
+    if(B40_OUT_STATUSES.indexOf(st76)>-1) out.push({line:l, order:o});
+    else if(B40_RESERVED_STATUSES.indexOf(st76)>-1 || !w22Known(o)) reserved.push({line:l, order:o});   /* ⭐⭐ B76/WASH-22 — סטטוס לא מוכר או ריק משריין (הכרעת אבי) */
   });
   (DB.laundryTasks||[]).filter(t=>t.item_id===iid && t.stage!=='מוכן' && inWh(t.warehouse_id)).forEach(t=>laundry.push(t));
   var ready = (DB.laundryTasks||[]).filter(t=>t.item_id===iid && sVal(t.stage)==='מוכן' && inWh(t.warehouse_id) &&   /* WASH-14 */
@@ -6771,7 +6783,7 @@ function openItemHistory(iid){
   var rows = [];
   (DB.orderLines||[]).filter(l=>l.item_id===iid).forEach(function(l){
     var o = (DB.orders||[]).find(x=>x.id===l.order_id); if(!o) return;
-    if(['טיוטה','הצעת מחיר','בוטלה'].indexOf(String(o.status))>-1) return;
+    if(['טיוטה','הצעת מחיר','בוטלה'].indexOf(w22Stat(o))>-1) return;
     rows.push({date:o.start_date||'', order:o, line:l});
   });
   rows.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
@@ -7663,7 +7675,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.75-B75';
+var B61_CANARY = 'v4.76-B76';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -8785,7 +8797,7 @@ function b50UtilRows(p){
   };
   (DB.orders||[]).forEach(function(o){
     if(!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — דוח הניצולת */
-    if(B54_SKIP_ORDER.indexOf(String(o.status))>-1) return;
+    if(B54_SKIP_ORDER.indexOf(w22Stat(o))>-1) return;
     var s = dYmd(o.start_date||''), e = dYmd(o.end_date||o.start_date||'');
     if(!s) return;
     if(!e || e < s) e = s;
@@ -11083,7 +11095,7 @@ function calEvents(){
   var events = [];
   /* B49e: התוויות ביומן נגזרות מאופן המסירה של כל רגל — לא ממחיר השינוע (P2).
      רגל באיסוף עצמי אינה נסיעה, ולכן מסומנת בבירור ובצבע נייטרלי. */
-  DB.orders.filter(o=>['מאושרת','סופקה'].includes(o.status)).forEach(function(o){
+  DB.orders.filter(o=>['מאושרת','סופקה'].includes(w22Stat(o))).forEach(function(o){
     var nm = cust(o.customer_id);
     var laundry = !w21IsRental(o);   /* ⭐ B75/WASH-21 */
     B49E_LEGS.forEach(function(leg){
@@ -15015,7 +15027,7 @@ function b44CaseChip(c){
 }
 function b44PickBlockHtml(oid){
   var o = (DB.orders||[]).find(function(x){ return x.id===oid; }); if(!o) return '';
-  if(['בוטלה','הצעת מחיר'].indexOf(o.status)>-1) return '';
+  if(['בוטלה','הצעת מחיר'].indexOf(w22Stat(o))>-1) return '';
   var lines = (DB.orderLines||[]).filter(function(l){ return l.order_id===oid; });
   if(!lines.length) return '';
   var picked = b44PickedByItem(oid);
@@ -15047,7 +15059,7 @@ function b44PickBlockHtml(oid){
               '<button class="btn ghost sm" onclick="b44OrderScanForm(\''+oid+'\')">סריקת חבילות להזמנה</button></div>'
           : '<div class="card" style="background:#FFF3CD;border-color:#E8A33D;font-size:13px;margin:8px 0;padding:9px 11px">'+
               'ליקוט אפשרי רק בהזמנה בסטטוס <b>מאושרת</b> או <b>סופקה</b>. ההזמנה הזו בסטטוס <b>'+esc(o.status)+'</b> — '+
-              (o.status==='טיוטה'?'לחץ על "אשר (בדיקת מלאי)" למעלה כדי לפתוח את הליקוט.':'לא ניתן ללקט אליה כרגע.')+'</div>')
+              (w22Stat(o)==='טיוטה'?'לחץ על "אשר (בדיקת מלאי)" למעלה כדי לפתוח את הליקוט.':'לא ניתן ללקט אליה כרגע.')+'</div>')
       : '');
 }
 
