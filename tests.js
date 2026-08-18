@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.77-B77', 'ה-canary לא עודכן ל-B77');
+      t.eq(inJs, 'v4.78-B78', 'ה-canary לא עודכן ל-B78');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.77-B77 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.77-B77', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.77-B77/g) || []).length, 2,
+      t.has(s, 'v4.78-B78', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7682,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.77-B77 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.77-B77/g) || []).length, 2,
+      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7983,8 +7983,8 @@ SPECS.push({
       t.hasNot(led, "v.status!=='בוטלה'", '⛔⛔ השוואת סטטוס חשבונית גולמית חזרה ל-b54LedgerFE');
       t.has(led, 'B54_SKIP_ORDER.indexOf(w22Stat(o))', '⛔ B76 נשבר בממשק');
       const code = H.stripComments(ui);
-      /* ⚠ x מוחרג בכוונה: x.status!=='בוטלה' בממשק הוא deliveryTrips (WASH-24, B78) */
-      const bad = (code.match(/\b(?:v|iv|cv|inv)\.status\s*(?:===|!==)\s*'בוטלה'/g) || []);
+      /* ⭐ B78: החריגה של x הוסרה — deliveryTrips עברו ל-w24Stat, אין יותר חור */
+      const bad = (code.match(/\b(?:v|iv|cv|inv|x)\.status\s*(?:===|!==)\s*'בוטלה'/g) || []);
       t.eq(bad.length, 0,
         '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס חשבונית גולמיות בממשק: ' + bad.join(' · '));
     },
@@ -8017,9 +8017,503 @@ SPECS.push({
       t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.77-B77 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.77-B77/g) || []).length, 2,
+      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+
+/* ============================================================
+   B78 — WASH-23ב — ציר הסטטוס בארבע הטבלאות שנותרו
+   payroll · tasks · purchases · delivery_trips
+   ============================================================ */
+
+const B78 = {
+  /* ארבעה סוגי לכלוך שנצפו בגיליון: רווח קשיח, רווח מוביל,
+     רווח נגרר, ותו כיווניות בלתי נראה. */
+  dirty(v) { return [v + '\u00A0', ' ' + v, v + ' ', '\u200E' + v]; },
+  UNKNOWN: ['', 'אושרה', 'טיוטא', 'שולם'],
+
+  payDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'E1', name: 'אברהם', active: 'כן', role: 'מכבסה', hourly_rate: 50 }];
+    db.payroll = [{ id: 'PR1', employee_id: 'E1', month: '2026-07', hours: 100,
+      hourly_rate: 50, base_pay: 5000, bonus: 0, bonus_note: '', total: 5000,
+      status: status, pay_type: 'שעתי' }];
+    db.payrollPayments = [];
+    db.futureExpenses = [];
+    return db;
+  },
+  taskDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'E1', name: 'אברהם', active: 'כן', role: 'משרד' }];
+    db.tasks = [{ id: 'TK1', title: 'לבדוק מלאי', assignee_id: 'E1',
+      due_date: '2026-07-01', priority: 'רגילה', status: status,
+      created_by: 'מנהל', created_at: '2026-07-01 08:00' }];
+    db.taskComments = [];
+    return db;
+  },
+  purDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.suppliers = [{ id: 'SUP1', name: 'ספק א', active: 'כן' }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן' }];
+    db.purchases = [{ id: 'PU1', supplier_id: 'SUP1', date: '2026-08-01',
+      status: status, notes: '', invoice_number: '', receipt_number: '',
+      details: '', payment_mode: '', fexp_id: '' }];
+    db.purchaseLines = [{ id: 'PL1', purchase_id: 'PU1', item_id: 'IT1', qty: 5, unit_cost: 10 }];
+    db.stockMoves = [];
+    return db;
+  },
+  tripDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'DR1', name: 'נהג א', active: 'כן', role: 'נהג' },
+                    { id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+    db.deliveryTrips = [{ id: 'TRIP1', date: '2026-08-20', driver_id: 'DR1',
+      vehicle_id: '', seq: 1, planned_time: '08:00', status: status,
+      notes: '', created_at: '2026-08-19 10:00' }];
+    db.deliveries = [];
+    return db;
+  },
+
+  /* חתימת גוף פונקציה מקוד המקור, בלי הערות.
+     ⚠ לקח B75/B76/B77: H.stripComments נתקע במצב מחרוזת בקוד השרת —
+     חותכים בתוך הגוף שחולץ בלבד, לא על הקובץ כולו. */
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return s ? s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '') : s; }
+};
+
+SPECS.push({
+  file: 't24-b78-srv',
+  title: 'B78 — WASH-23ב — ציר הסטטוס בשכר · משימות · רכש · נסיעות (שרת)',
+  needs: 'server',
+  requires: ['w24Stat', 'PAYROLL_STATUSES', 'TASK_STATUSES', 'PURCHASE_STATUSES',
+             'TRIP_STATUSES', 'sVal', 'sPick', 'b67PayOneRow', 'b68PayrollFor',
+             'syncFutureExpenseForPayroll', 'w22Stat', 'w23InvActive', 'handle'],
+
+  tests: {
+
+    /* ================= העוזר עצמו ================= */
+
+    '⛔ w24Stat מנרמל ומחזיר את הערך הקנוני מהרשימה': (t, { srv }) => {
+      B78.dirty('טיוטה').concat(['טיוטה']).forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.PAYROLL_STATUSES, 'טיוטה'), 'טיוטה',
+          '⛔ w24Stat לא ניקה את ' + JSON.stringify(st));
+      });
+      B78.dirty('הושלמה').forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.TASK_STATUSES), 'הושלמה',
+          '⛔ w24Stat לא ניקה משימה ' + JSON.stringify(st));
+      });
+      B78.dirty('בוטלה').forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.TRIP_STATUSES), 'בוטלה',
+          '⛔ w24Stat לא ניקה נסיעה ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔⛔ הכרעת אבי 2א: סטטוס שכר לא מוכר או ריק = טיוטה': (t, { srv }) => {
+      B78.UNKNOWN.forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.PAYROLL_STATUSES, 'טיוטה'), 'טיוטה',
+          '⛔⛔ סטטוס שכר לא מוכר ' + JSON.stringify(st) + ' לא נחשב טיוטה — כסף עלול לצאת');
+      });
+      t.eq(srv.w24Stat(null, srv.PAYROLL_STATUSES, 'טיוטה'), 'טיוטה',
+        '⛔ רשומת שכר חסרה לא נחשבה טיוטה');
+    },
+
+    '⛔ לשלוש הטבלאות האחרות אין dflt — הערך המנורמל חוזר כמות שהוא': (t, { srv }) => {
+      [['TASK_STATUSES', 'משהו אחר'], ['PURCHASE_STATUSES', 'בוטל'], ['TRIP_STATUSES', 'נדחתה']]
+        .forEach(([list, st]) => {
+          t.eq(srv.w24Stat({ status: st + '\u00A0' }, srv[list]), st,
+            '⛔ w24Stat מיפתה סטטוס לא מוכר לסטטוס מוכר ב-' + list);
+        });
+    },
+
+    /* ================= ⛔⛔ הכסף: שער התשלום ================= */
+
+    '⛔⛔ שכר בסטטוס טיוטה מלוכלך נשאר חסום לתשלום': (t, { srv }) => {
+      B78.dirty('טיוטה').concat(['טיוטה']).forEach(st => {
+        const db = B78.payDb(srv, st);
+        const r = srv.b67PayOneRow(db, db.payroll[0], 1000, 'העברה', '', '2026-08-18', 'מנהל');
+        t.eq(r.ok, false,
+          '⛔⛔ יצא כסף על שכר בסטטוס טיוטה ' + JSON.stringify(st) + ' שלא אושר');
+        t.eq(db.payrollPayments.length, 0, '⛔⛔ נרשמה שורת תשלום למרות שהשער נדחה');
+      });
+    },
+
+    '⛔⛔ שכר בסטטוס לא מוכר חסום לתשלום (הכרעה 2א)': (t, { srv }) => {
+      B78.UNKNOWN.forEach(st => {
+        const db = B78.payDb(srv, st);
+        const r = srv.b67PayOneRow(db, db.payroll[0], 1000, 'העברה', '', '2026-08-18', 'מנהל');
+        t.eq(r.ok, false,
+          '⛔⛔ יצא כסף על שכר בסטטוס לא מוכר ' + JSON.stringify(st));
+      });
+    },
+
+    '⭐ שכר מאושר מלוכלך כן ניתן לתשלום — לא רככנו את השער לצד השני': (t, { srv }) => {
+      B78.dirty('אושר').concat(['אושר']).forEach(st => {
+        const db = B78.payDb(srv, st);
+        const r = srv.b67PayOneRow(db, db.payroll[0], 1000, 'העברה', '', '2026-08-18', 'מנהל');
+        t.eq(r.ok, true,
+          '⛔ שכר מאושר עם סטטוס ' + JSON.stringify(st) + ' נחסם לתשלום — ' + (r && r.error));
+      });
+    },
+
+    '⛔ שולם במלואו מלוכלך — אי אפשר להוסיף תוספת/ניכוי': (t, { srv }) => {
+      B78.dirty('שולם במלואו').concat(['שולם במלואו']).forEach(st => {
+        const db = B78.payDb(srv, st);
+        const r = srv.handle('addPayrollAdjustment',
+          { payroll_id: 'PR1', type: 'תוספת', amount: 100, category: 'בונוס' }, db, 'מנהל');
+        t.eq(r.ok, false,
+          '⛔ שונה שכר ששולם במלואו, סטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔ אישור שכר: טיוטה מלוכלכת עוברת, מאושר מלוכלך נדחה': (t, { srv }) => {
+      B78.dirty('טיוטה').forEach(st => {
+        const db = B78.payDb(srv, st);
+        const r = srv.handle('approvePayroll', { payroll_id: 'PR1' }, db, 'מנהל');
+        t.eq(r.ok, true, '⛔ טיוטה מלוכלכת ' + JSON.stringify(st) + ' לא ניתנה לאישור — ' + (r && r.error));
+        t.eq(db.payroll[0].status, 'אושר', '⛔ הסטטוס לא נכתב כ־אושר');
+      });
+      B78.dirty('אושר').forEach(st => {
+        const db = B78.payDb(srv, st);
+        t.eq(srv.handle('approvePayroll', { payroll_id: 'PR1' }, db, 'מנהל').ok, false,
+          '⛔ שכר שכבר אושר (' + JSON.stringify(st) + ') אושר פעמיים');
+      });
+    },
+
+    /* ================= ⛔⛔ R6 — התזרים לא זז ================= */
+
+    '⛔⛔ R6: יתרות הלקוחות זהות לפני ואחרי, על כל סטטוס שכר': (t, { srv }) => {
+      const mk = (st) => {
+        const db = B78.payDb(srv, st);
+        db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 1000000 }];
+        db.invoices = [{ id: 'IV1', number: '5001', order_id: '', customer_id: 'C1',
+          date: '2026-08-01', subtotal: 1000, vat_rate: 18, vat: 180, total: 1180,
+          status: 'פתוחה', type: 'חשבונית' }];
+        return db;
+      };
+      ['אושר'].concat(B78.dirty('טיוטה')).concat(B78.UNKNOWN).forEach(st => {
+        const db = mk(st);
+        srv.b54Bump();
+        const bal = srv.b48BalancesAg(db)['C1'] || 0;
+        const used = srv.b2CreditUsedAg(db, 'C1');
+        const open = srv.b54CustomerOpenAg(db)['C1'] || 0;
+        srv.b54Bump();
+        t.eq(bal, 118000, '⛔⛔ היתרה זזה בגלל סטטוס שכר ' + JSON.stringify(st));
+        t.eq(bal, used, '⛔⛔ R6 נשבר: b48BalancesAg מול b2CreditUsedAg על ' + JSON.stringify(st));
+        t.eq(bal, open, '⛔⛔ R6 נשבר: b48BalancesAg מול b54CustomerOpenAg על ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔⛔ מלכודת 4: הוצאה עתידית נוצרת רק לשכר שאינו טיוטה': (t, { srv }) => {
+      /* ⛔ syncFutureExpenseForPayroll כותב להוצאות עתידיות והן בתזרים (B43).
+         טיוטה — נקייה או מלוכלכת או לא מוכרת — אינה התחייבות (B67). */
+      B78.dirty('טיוטה').concat(['טיוטה']).concat(B78.UNKNOWN).forEach(st => {
+        const db = B78.payDb(srv, st);
+        srv.handle('addPayrollAdjustment',
+          { payroll_id: 'PR1', type: 'תוספת', amount: 100, category: 'בונוס' }, db, 'מנהל');
+        t.eq((db.futureExpenses || []).length, 0,
+          '⛔⛔ נוצרה הוצאה עתידית לטיוטה בסטטוס ' + JSON.stringify(st) + ' — התזרים זז');
+      });
+      B78.dirty('אושר').forEach(st => {
+        const db = B78.payDb(srv, st);
+        srv.handle('addPayrollAdjustment',
+          { payroll_id: 'PR1', type: 'תוספת', amount: 100, category: 'בונוס' }, db, 'מנהל');
+        t.eq((db.futureExpenses || []).length, 1,
+          '⛔⛔ שכר מאושר מלוכלך ' + JSON.stringify(st) + ' לא נכנס לתזרים — התחייבות נעלמה');
+      });
+    },
+
+    '⛔ b67EmployeeDebt: טיוטה מלוכלכת אינה חוב': (t, { srv }) => {
+      B78.dirty('טיוטה').concat(B78.UNKNOWN).forEach(st => {
+        t.eq(srv.b67EmployeeDebt(B78.payDb(srv, st), 'E1'), 0,
+          '⛔ טיוטה בסטטוס ' + JSON.stringify(st) + ' נספרה כחוב לעובד');
+      });
+      t.eq(srv.b67EmployeeDebt(B78.payDb(srv, 'אושר\u00A0'), 'E1'), 5000,
+        '⛔ שכר מאושר מלוכלך לא נספר כחוב');
+    },
+
+    /* ================= משימות ================= */
+
+    '⛔ משימה הושלמה מלוכלכת אינה נחשבת פתוחה — סגירת תקלה': (t, { srv }) => {
+      B78.dirty('הושלמה').concat(['הושלמה']).forEach(st => {
+        const db = B78.taskDb(srv, st);
+        db.assetFaults = [{ id: 'F1', asset_type: 'מכונה', asset_id: 'MACH-001',
+          status: 'פתוחה', task_id: 'TK1', next_step: 'בדיקה', description: '' }];
+        db.assets = []; db.machines = [{ id: 'MACH-001', status: 'פעילה', type: 'מכונה' }];
+        db.assetFaultEvents = [];
+        const before = db.tasks[0].status;
+        srv.handle('b42CloseFault',
+          { fault_id: 'F1', outcome: 'תוקן', note: 'הוחלף חלק' }, db, 'מנהל');
+        t.eq(db.tasks[0].status, before,
+          '⛔ משימה שכבר הושלמה (' + JSON.stringify(st) + ') נדרסה שוב');
+      });
+    },
+
+    '⛔ moveTask מקבל סטטוס מלוכלך וכותב את הערך הקנוני': (t, { srv }) => {
+      B78.dirty('הושלמה').forEach(st => {
+        const db = B78.taskDb(srv, 'פתוחה');
+        const r = srv.handle('moveTask', { task_id: 'TK1', status: st }, db, 'מנהל');
+        t.eq(r.ok, true, '⛔ סטטוס משימה מלוכלך ' + JSON.stringify(st) + ' נדחה כלא חוקי');
+        t.eq(db.tasks[0].status, 'הושלמה',
+          '⛔⛔ נכתב לגיליון סטטוס מלוכלך חדש: ' + JSON.stringify(db.tasks[0].status));
+      });
+      t.eq(srv.handle('moveTask', { task_id: 'TK1', status: 'לא קיים' },
+        B78.taskDb(srv, 'פתוחה'), 'מנהל').ok, false, '⛔ סטטוס משימה לא חוקי התקבל');
+    },
+
+    /* ================= רכש ================= */
+
+    '⛔ רכש טיוטה מלוכלך עדיין מקבל שורות ועדיין ניתן לקליטה': (t, { srv }) => {
+      B78.dirty('טיוטה').concat(['טיוטה']).forEach(st => {
+        const db = B78.purDb(srv, st);
+        const r = srv.handle('create',
+          { table: 'purchase_lines', row: { purchase_id: 'PU1', item_id: 'IT1', qty: 3, unit_cost: 10 } },
+          db, 'מנהל');
+        t.eq(r.ok, true,
+          '⛔ לא ניתן היה להוסיף שורה לרכש טיוטה בסטטוס ' + JSON.stringify(st) + ' — ' + (r && r.error));
+      });
+      B78.dirty('התקבלה').forEach(st => {
+        const db = B78.purDb(srv, st);
+        t.eq(srv.handle('create',
+          { table: 'purchase_lines', row: { purchase_id: 'PU1', item_id: 'IT1', qty: 3, unit_cost: 10 } },
+          db, 'מנהל').ok, false,
+          '⛔⛔ נוספה שורה לרכש שכבר התקבל (' + JSON.stringify(st) + ') — המלאי ייקלט פעמיים');
+      });
+    },
+
+    '⛔⛔ רכש שכבר התקבל מלוכלך אינו נקלט שוב למלאי': (t, { srv }) => {
+      B78.dirty('התקבלה').forEach(st => {
+        const db = B78.purDb(srv, st);
+        const r = srv.handle('receivePurchase',
+          { purchase_id: 'PU1', due_date: '2026-09-01', payment_mode: 'לתשלום בהמשך' }, db, 'מנהל');
+        t.eq(r.ok, false,
+          '⛔⛔ רכש בסטטוס ' + JSON.stringify(st) + ' נקלט פעמיים — מלאי כפול וחוב כפול לספק');
+        t.eq((db.stockMoves || []).length, 0, '⛔⛔ נרשמה תנועת מלאי כפולה');
+      });
+    },
+
+    /* ================= נסיעות ================= */
+
+    '⛔ נסיעה בוטלה מלוכלכת אינה נספרת במספור הנסיעות': (t, { srv }) => {
+      B78.dirty('בוטלה').concat(['בוטלה']).forEach(st => {
+        const db = B78.tripDb(srv, st);
+        const r = srv.b34TripCreate(db,
+          { date: '2026-08-20', driver_id: 'DR1', planned_time: '10:00' }, 'מנהל');
+        t.eq(r.ok, true, '⛔ יצירת נסיעה נכשלה — ' + (r && r.error));
+        t.eq(r.trip.seq, 1,
+          '⛔ נסיעה מבוטלת בסטטוס ' + JSON.stringify(st) + ' נספרה במספור — הנהג יראה נסיעה 2 בלי נסיעה 1');
+      });
+      const db2 = B78.tripDb(srv, 'מתוכננת');
+      t.eq(srv.b34TripCreate(db2, { date: '2026-08-20', driver_id: 'DR1' }, 'מנהל').trip.seq, 2,
+        '⛔ נסיעה פעילה לא נספרה במספור');
+    },
+
+    '⛔ b34TripSetStatus מקבל סטטוס מלוכלך וכותב את הערך הקנוני': (t, { srv }) => {
+      B78.dirty('יצאה').forEach(st => {
+        const db = B78.tripDb(srv, 'מתוכננת');
+        const r = srv.b34TripSetStatus(db, { trip_id: 'TRIP1', status: st }, 'מנהל');
+        t.eq(r.ok, true, '⛔ סטטוס נסיעה מלוכלך ' + JSON.stringify(st) + ' נדחה');
+        t.eq(db.deliveryTrips[0].status, 'יצאה',
+          '⛔⛔ נכתב לגיליון סטטוס נסיעה מלוכלך: ' + JSON.stringify(db.deliveryTrips[0].status));
+      });
+      t.eq(srv.b34TripSetStatus(B78.tripDb(srv, 'מתוכננת'),
+        { trip_id: 'TRIP1', status: 'נדחתה' }, 'מנהל').ok, false,
+        '⛔ סטטוס נסיעה לא חוקי התקבל');
+    },
+
+    /* ================= ⭐ דליפת WASH-22 שנמצאה באצווה הזו ================= */
+
+    '⭐⭐ דליפת WASH-22: הזמנת טיוטה מלוכלכת כן מקבלת שורות פריטים': (t, { srv }) => {
+      ['טיוטה', 'טיוטה\u00A0', ' טיוטה', 'הצעת מחיר\u00A0'].forEach(st => {
+        const db = H.emptyDb(srv);
+        db.settings = [];
+        db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 1000000 }];
+        db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', rent_price: 25 }];
+        db.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', type: 'השכרה',
+          status: st, start_date: '2026-09-01', end_date: '2026-09-05', warehouse_id: '' }];
+        db.orderLines = [];
+        const r = srv.handle('create',
+          { table: 'order_lines', row: { order_id: 'O1', item_id: 'IT1', qty: 5, unit_price: 25 } },
+          db, 'מנהל');
+        t.eq(r.ok, true,
+          '⛔⛔ לא ניתן היה להוסיף שורת פריט להזמנה בסטטוס ' + JSON.stringify(st) + ' — ' + (r && r.error));
+      });
+    },
+
+    /* ================= שומרי מקור ================= */
+
+    '⛔⛔ אין יותר השוואת סטטוס גולמית בארבע הטבלאות (שרת)': (t, { H }) => {
+      const sv = B78.noCmt(H.serverSrc());
+      const bad = (sv.match(/\b(?:pr|pr2|prA|prV|prRow|keep|ex|tk|tkE|tC|pp|pu|po|tr|t)\.status\s*(?:===|!==)\s*'(?:טיוטה|אושר|שולם חלקית|שולם במלואו|פתוחה|בתהליך|הושלמה|התקבלה|מתוכננת|יצאה|הסתיימה|בוטלה)'/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס גולמיות בשרת: ' + bad.join(' · '));
+    },
+
+    '⛔⛔ שערי השכר עוברים דרך w24Stat ולא דרך sVal חשוף': (t, { H }) => {
+      const sv = H.serverSrc();
+      const one = B78.noCmt(B78.body(sv, 'b67PayOneRow'));
+      t.ok(one, 'b67PayOneRow נעלם מקוד השרת');
+      t.has(one, "w24Stat(prRow, PAYROLL_STATUSES, 'טיוטה')",
+        '⛔⛔ שער התשלום אינו עובר דרך w24Stat');
+      t.hasNot(one, "sVal(prRow.status)",
+        '⛔⛔ שער התשלום חזר להשוואת sVal חשופה');
+      const dbt = B78.noCmt(B78.body(sv, 'b67EmployeeOpenRows'));
+      t.ok(dbt, 'b67EmployeeOpenRows נעלם מקוד השרת');
+      t.has(dbt, "w24Stat(pr, PAYROLL_STATUSES, 'טיוטה')",
+        '⛔ חישוב החוב הפתוח של העובד אינו עובר דרך w24Stat');
+      const sync = B78.noCmt(B78.body(sv, 'syncFutureExpenseForPayroll'));
+      t.ok(sync, 'syncFutureExpenseForPayroll נעלם');
+    },
+
+    '⛔⛔ b67PayOneRow נשאר מסלול הכתיבה היחיד (B67 לא נשבר)': (t, { H }) => {
+      const sv = H.serverSrc();
+      t.eq((sv.match(/db\.payrollPayments\.push\(/g) || []).length, 1,
+        '⛔⛔ נוצרה לוגיקת תשלום שכר שנייה');
+      t.has(sv, 'B67_WRITE_DEFER', '⛔ B67_WRITE_DEFER נעלם');
+    },
+
+    '⛔ B76 · B77 לא נשברו — נקודות האמת הקודמות במקומן': (t, { srv, H }) => {
+      const sv = H.serverSrc();
+      t.has(sv, 'function w22Stat', '⛔ w22Stat נעלם');
+      t.has(sv, 'function w23InvActive', '⛔ w23InvActive נעלם');
+      t.eq(srv.w22Stat({ status: 'מאושרת\u00A0' }), 'מאושרת', '⛔ w22Stat נשבר');
+      t.eq(srv.w23InvActive({ status: ' בוטלה' }), false, '⛔ w23InvActive נשבר');
+      t.eq(srv.w21IsRental({ type: '' }), true, '⛔ w21IsRental נשבר');
+    }
+  }
+});
+
+SPECS.push({
+  file: 't24-b78-ui',
+  title: 'B78 — WASH-23ב — ציר הסטטוס בארבע הטבלאות בממשק: זהות תו-בתו · הסורק המורחב',
+  needs: 'ui',
+  requires: ['w24Stat', 'PAYROLL_STATUSES', 'TASK_STATUSES', 'PURCHASE_STATUSES',
+             'TRIP_STATUSES', 'sVal', 'sPick', 'b67DraftRows', 'w22Stat', 'w23InvActive'],
+
+  tests: {
+
+    '⛔⛔ w24Stat וארבע הרשימות זהים תו-בתו בין הקבצים': (t, { H }) => {
+      const sv = H.serverSrc(), ui = H.uiScript();
+      const a = B78.body(sv, 'w24Stat'), b = B78.body(ui, 'w24Stat');
+      t.ok(a && b, '⛔⛔ w24Stat חסר באחד הקבצים');
+      t.eq(a.replace(/\s+/g, ' '), b.replace(/\s+/g, ' '),
+        '⛔⛔ w24Stat התפצל בין הקבצים — שני צדדים יכריעו אחרת על אותה רשומה');
+      ['PAYROLL_STATUSES', 'TASK_STATUSES', 'PURCHASE_STATUSES', 'TRIP_STATUSES'].forEach(v => {
+        const re = new RegExp('var ' + v + '\\s*=[^;]*;');
+        const x = (sv.match(re) || [])[0], y = (ui.match(re) || [])[0];
+        t.ok(x && y, '⛔⛔ ' + v + ' חסר באחד הקבצים');
+        t.eq(x.replace(/\s+/g, ' '), y.replace(/\s+/g, ' '), '⛔⛔ ' + v + ' התפצל בין הקבצים');
+      });
+    },
+
+    '⛔⛔ הממשק מסכים עם השרת: טיוטה מלוכלכת אינה חוב': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['טיוטה', 'טיוטה\u00A0', ' טיוטה', '', 'אושרה'].forEach(st => {
+        w.DB.employees = [{ id: 'E1', name: 'אברהם', active: 'כן', role: 'מכבסה' }];
+        w.DB.payroll = [{ id: 'PR1', employee_id: 'E1', month: '2026-07', hours: 100,
+          hourly_rate: 50, base_pay: 5000, total: 5000, status: st, pay_type: 'שעתי' }];
+        w.DB.payrollPayments = [];
+        t.eq(w.b67EmpDebt('E1'), 0,
+          '⛔⛔ הממשק ספר טיוטה בסטטוס ' + JSON.stringify(st) + ' כחוב — סתירה מול השרת');
+        t.eq(w.b67DraftRows().length, 1,
+          '⛔ שורת הטיוטה ' + JSON.stringify(st) + ' לא הופיעה בסיכום הטיוטות');
+      });
+    },
+
+    '⛔ הממשק: שכר מאושר מלוכלך כן נספר כחוב': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.employees = [{ id: 'E1', name: 'אברהם', active: 'כן', role: 'מכבסה' }];
+      w.DB.payroll = [{ id: 'PR1', employee_id: 'E1', month: '2026-07', hours: 100,
+        hourly_rate: 50, base_pay: 5000, total: 5000, status: 'אושר\u00A0', pay_type: 'שעתי' }];
+      w.DB.payrollPayments = [];
+      t.eq(w.b67EmpDebt('E1'), 5000, '⛔ שכר מאושר מלוכלך לא נספר כחוב בממשק');
+      t.eq(w.b67DraftRows().length, 0, '⛔ שכר מאושר הופיע כטיוטה');
+    },
+
+    '⛔ לוח המשימות: משימה הושלמה מלוכלכת יושבת בעמודה הנכונה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['הושלמה', 'הושלמה\u00A0', ' הושלמה', '\u200Eהושלמה'].forEach(st => {
+        w.DB.tasks = [{ id: 'TK1', title: 'לבדוק מלאי', assignee_id: '',
+          due_date: '2026-01-01', priority: 'רגילה', status: st }];
+        w.DB.taskComments = [];
+        w.go('tasks');
+        const html = w.document.getElementById('app').innerHTML;
+        t.hasNot(html, 'באיחור!',
+          '⛔ משימה שהושלמה (' + JSON.stringify(st) + ') סומנה באיחור בלוח');
+      });
+    },
+
+    '⛔ נסיעה בוטלה מלוכלכת אינה מוצגת בטבלת הנסיעות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['בוטלה', 'בוטלה\u00A0', ' בוטלה', 'בוטלה '].forEach(st => {
+        w.DB.deliveryTrips = [{ id: 'TRIP1', date: '2099-01-01', driver_id: 'DR1',
+          seq: 1, planned_time: '08:00', status: st }];
+        w.DB.employees = [{ id: 'DR1', name: 'נהג א', active: 'כן', role: 'נהג' }];
+        w.DB.deliveries = [];
+        t.eq(w.b34TripsTodayHtml(), '',
+          '⛔ נסיעה מבוטלת בסטטוס ' + JSON.stringify(st) + ' הוצגה בטבלת הנסיעות');
+      });
+      w.DB.deliveryTrips = [{ id: 'TRIP1', date: '2099-01-01', driver_id: 'DR1',
+        seq: 1, planned_time: '08:00', status: 'מתוכננת\u00A0' }];
+      const h = w.b34TripsTodayHtml();
+      t.ok(h.indexOf('TRIP1') > -1, '⛔ נסיעה מתוכננת מלוכלכת נעלמה מהטבלה');
+      t.ok(h.indexOf("b34DoTripStatus('TRIP1','יצאה')") > -1,
+        '⛔⛔ כפתור "יצאה" לא הופיע לנסיעה מתוכננת מלוכלכת — הנהג תקוע');
+    },
+
+    '⛔ רכש טיוטה מלוכלך: כפתורי השורה והקליטה מופיעים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['טיוטה', 'טיוטה\u00A0', ' טיוטה'].forEach(st => {
+        w.DB.suppliers = [{ id: 'SUP1', name: 'ספק א', active: 'כן' }];
+        w.DB.purchases = [{ id: 'PU1', supplier_id: 'SUP1', date: '2026-08-01', status: st }];
+        w.DB.purchaseLines = []; w.DB.items = [];
+        w.go('purchasing');
+        const html = w.document.getElementById('app').innerHTML;
+        t.ok(html.indexOf("purLineForm('PU1')") > -1,
+          '⛔ כפתור "+ שורה" נעלם ברכש טיוטה בסטטוס ' + JSON.stringify(st));
+        t.ok(html.indexOf("doReceivePur('PU1')") > -1,
+          '⛔⛔ כפתור "קבל למלאי" נעלם ברכש טיוטה בסטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔⛔ אין יותר השוואת סטטוס גולמית בארבע הטבלאות (ממשק)': (t, { H }) => {
+      const ui = B78.noCmt(H.uiScript());
+      /* ⚠ x מופיע גם על הצהרות תשלום בפורטל (x.status==='אושר') — שם
+         מדובר ב-paymentDeclarations, טבלה שאינה בהיקף WASH-23ב. */
+      const bad = (ui.match(/\b(?:p|t|tr|pu)\.status\s*(?:===|!==)\s*'(?:טיוטה|אושר|שולם חלקית|שולם במלואו|פתוחה|בתהליך|הושלמה|התקבלה|מתוכננת|יצאה|הסתיימה|בוטלה)'/g) || [])
+        .concat(ui.match(/\bx\.status\s*(?:===|!==)\s*'(?:טיוטה|שולם במלואו|בתהליך|הושלמה|התקבלה|מתוכננת|יצאה|הסתיימה|בוטלה)'/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס גולמיות בממשק: ' + bad.join(' · '));
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-23ב אינו יכולת דפדפן': (t, { H }) => {
+      const ui = H.uiScript();
+      t.has(ui, 'function b61Tests', '⛔ כרטיס הבדיקה העצמית נעלם');
+      const b61 = B78.noCmt(B78.body(ui, 'b61Tests'));
+      t.ok(b61, 'b61Tests נעלם מהממשק');
+      t.hasNot(b61, 'w24Stat',
+        '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ב הוא לוגיקת שרת/ממשק, לא יכולת דפדפן');
+    },
+
+    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
