@@ -137,7 +137,7 @@
 //             B79 — WASH-23ג: ציר הסטטוס של המשלוחים (deliveries) — canary v4.79-B79
 //             B80 — WASH-23ג חלק ב': ציר הסטטוס בטבלאות הכסף (charges · payments ·
 //                   paymentDeclarations · futureExpenses · creditProfiles) ובשערי הציוד
-//                   (vehicles · machines) — canary v4.80-B80
+//                   (vehicles · machines) — canary v4.81-B81
 //                   • w22Stat/w22Known/w22Reserving — נקודת אמת אחת לסטטוס,
 //                     זהה תו-בתו בממשק (יש בדיקה). 35 אתרים בשרת + 34 בממשק.
 //                   • הבאג: הזמנה מאושרת שסטטוסה בגיליון נושא רווח קשיח לא
@@ -768,7 +768,7 @@ var SLIM_POLICY = {
   // ווידג'ט ההתראות במסך היומן — הממתינות והנכשלות חייבות להופיע בכל גיל
   notifications: {
     days: 90, ts: ['sent_at', 'scheduled_for'],
-    keep: function (r) { var st = String(r.status || ''); return st === 'ממתין' || st === 'נכשל'; }
+    keep: function (r) { var st = w24Stat(r, NOTIF_STATUSES); return st === 'ממתין' || st === 'נכשל'; }   /* ⭐ B81/WASH-23ג */
   },
   // דוח ביצועי המכבסה מוגבל ל-90 יום (הכפתור הארוך ביותר) + שקילות היום
   laundry_events: { days: 180, ts: ['ts'] },
@@ -1443,7 +1443,7 @@ function bld01Candidates(db) {
     var mine = intakes.filter(function (ik) { return String(ik.order_id || '') === String(o.id); });
     var openIntake = mine.some(b56IntakeOpen);   // B66: אותה הגדרה בדיוק כמו b56CloseLaundryOrder
     if (openIntake) return;                                   // עדיין בעבודה — לא היסטורית
-    var delivered = mine.filter(function (ik) { return sVal(ik.status) === 'נמסר'; });
+    var delivered = mine.filter(function (ik) { return w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT) === 'נמסר'; });   /* ⭐ B81/WASH-23ג */
     if (!delivered.length) return;                            // מעולם לא נמסרה — אין מה לרפא
 
     var kind = b49eLegKind(o, 'חזור');
@@ -2505,7 +2505,7 @@ function handle(action, p, db, user) {
         var usedBy = db.items.filter(function (i) { return String(i.location || '') === shCode; });
         if (usedBy.length) return { ok: false, error: 'המדף מוגדר כמיקום קבוע של ' + usedBy.length + ' פריטים — שנה אותם קודם בכרטיס הפריט' };
       }
-      if (p.table === 'carts' && arr2[idx].status !== 'פנויה')
+      if (p.table === 'carts' && w24Stat(arr2[idx], CART_STATUSES, CART_DFLT) !== 'פנויה')   /* ⭐ B81/WASH-23ג */
         return { ok: false, error: 'העגלה בשימוש — שחרר אותה קודם' };
       if (p.table === 'employees') {
         if (db.payroll.some(function (x) { return x.employee_id === p.id; }) || db.attendance.some(function (x) { return x.employee_id === p.id; }))
@@ -3081,7 +3081,7 @@ function handle(action, p, db, user) {
       var un2 = db.units.find(function (x) { return x.id === p.unit_id; });
       if (!un2) return { ok: false, error: 'יחידה לא נמצאה' };
       if (UNIT_STATUSES.indexOf(p.status) === -1) return { ok: false, error: 'סטטוס לא חוקי' };
-      if (un2.status === 'גרוט') return { ok: false, error: 'יחידה גרוטה — סופית' };
+      if (w24Stat(un2, UNIT_STATUSES) === 'גרוט') return { ok: false, error: 'יחידה גרוטה — סופית' };   /* ⭐ B81: לא מוכר אינו גרוט */
       var was = un2.status;
       un2.status = p.status;
       if (p.status === 'גרוט') {
@@ -3374,7 +3374,13 @@ function handle(action, p, db, user) {
         var u27 = db.units.find(function (x) { return x.id === uid; });
         if (!u27) return;
         // חסימה: יחידה שמשויכת להזמנה פתוחה או נמצאת בכביסה
-        if (['בשימוש', 'בכביסה', 'אצל לקוח'].indexOf(String(u27.status)) > -1) { blocked.push(uid); return; }
+        /* ⭐⭐ B81/WASH-23ג — הממצא החמור של האצווה. יחידה עם 'אצל לקוח '
+           מלוכלך לא נחסמה ונמחקה, ומלאי שנמצא פיזית אצל לקוח נעלם
+           מהמערכת בשקט. ⛔ סטטוס לא מוכר נחשב תפוס וחוסם
+           (UNIT_DEL_DFLT). ⛔ סטטוס **ריק** נשאר כפי שהיה וניתן למחיקה —
+           בדיוק כמו הכרעת 2א של B80. */
+        var uSt27 = sVal(u27.status) === '' ? '' : w24Stat(u27, UNIT_STATUSES, UNIT_DEL_DFLT);
+        if (UNIT_BUSY.indexOf(uSt27) > -1) { blocked.push(uid); return; }
         done.push(uid);
       });
       if (!done.length) return { ok: false, error: 'כל היחידות שנבחרו בשימוש ולא ניתן למחוק אותן' };
@@ -4230,7 +4236,7 @@ function handle(action, p, db, user) {
       if (p.fault_id) {
         fltE = db.assetFaults.find(function (f) { return f.id === p.fault_id; });
         if (!fltE) return { ok: false, error: 'תקלה לא נמצאה' };
-        if (fltE.status !== 'פתוחה') return { ok: false, error: 'התקלה כבר סגורה — אי אפשר להוסיף לה שלבים' };
+        if (w24Stat(fltE, FAULT_STATUSES, FAULT_DFLT) !== 'פתוחה') return { ok: false, error: 'התקלה כבר סגורה — אי אפשר להוסיף לה שלבים' };   /* ⭐ B81/WASH-23ג */
       }
       var aE = null;
       var atE = p.asset_type || (fltE ? fltE.asset_type : '');
@@ -4348,7 +4354,7 @@ function handle(action, p, db, user) {
       if (!vCF.ok) return vCF;
       var fC = db.assetFaults.find(function (f) { return f.id === p.fault_id; });
       if (!fC) return { ok: false, error: 'תקלה לא נמצאה' };
-      if (fC.status !== 'פתוחה') return { ok: false, error: 'התקלה כבר סגורה' };
+      if (w24Stat(fC, FAULT_STATUSES, FAULT_DFLT) !== 'פתוחה') return { ok: false, error: 'התקלה כבר סגורה' };   /* ⭐ B81/WASH-23ג */
       var outC = String(p.outcome || '');
       if (!Object.prototype.hasOwnProperty.call(B42_OUTCOMES, outC)) return { ok: false, error: 'יש לבחור תוצאת סגירה' };
       var noteC = String(p.close_note || '').trim();
@@ -5351,6 +5357,60 @@ var VEHICLE_STATUSES = ['פעיל', 'בטיפול', 'מושבת'];
 var MACHINE_STATUSES = ['פעילה', 'בתיקון', 'מושבתת'];
 function w25Usable(rec, list, okStat){ return sVal(rec && rec.status) === '' || w24Stat(rec, list) === okStat; }
 
+/* ===== ⭐⭐ B81 / WASH-23ג חלק ג' — ציר הסטטוס בתשע הטבלאות שנותרו =====
+   האצווה האחרונה במחלקת WASH-23. B76 סגר orders · B77 invoices ·
+   B78 payroll/tasks/purchases/deliveryTrips · B79 deliveries · B80 טבלאות
+   הכסף ושערי הציוד. כאן נסגרות תשע הטבלאות שנותרו:
+   units · carts · laundry_intakes · asset_faults · task_comments · cases ·
+   notifications · technician_visits · customer_messages.
+
+   ⭐ הכרעת אבי 18.08.2026 (1א) — ברירת המחדל לסטטוס לא מוכר:
+   · units — לא מוכר **אינו** גרוט, כדי שלכלוך לא תצא יחידה מהמלאי.
+     ⛔⛔ אבל **בשער המחיקה לא מוכר נחשב תפוס וחסום.** זה הממצא
+     החמור של האצווה: יחידה עם 'אצל לקוח ' מלוכלך לא נחסמה
+     ונמחקה — מלאי שנמצא פיזית אצל לקוח נעלם מהמערכת בשקט.
+     ⛔ **סטטוס ריק נשאר כשהיה** (ניתן למחיקה) — כמו הכרעת 2א של B80.
+   · asset_faults — לא מוכר/ריק = 'פתוחה'. תקלה אינה נעלמת בשקט.
+   · cases — לא מוכר/ריק = 'משויך'. לא מציגים כפנוי מארז שאולי תפוס.
+   · carts — לא מוכר/ריק = 'בשימוש'. לא משבצים עגלה שאולי תפוסה.
+   · laundry_intakes — לא מוכר/ריק = 'התקבל', כלומר **פתוח**. הקליטה
+     נשארת על לוח הכביסה ואינה נעלמת מרצפת הייצור.
+   · notifications · task_comments · technician_visits · customer_messages —
+     ⛔ **בלי dflt במכוון, נרמול בלבד.** בהתראות מיפוי לסטטוס מוכר היה
+     או שולח פעמיים או מסמן כנשלח משהו שלא נשלח; בהערת משימה ''
+     הוא ערך **חוקי** ברשימה ולא לכלוך; בביקור טכנאי ובהודעת
+     לקוח מדובר בתצוגה בלבד.
+
+   ⛔ w24Stat נשארת המנרמלת היחידה (R8), ו-w25Usable נשארת לשער שבו ריק
+   מותר. **אין כאן שם עוזר חדש** — רק רשימות שעוברות דרכן.
+   ⛔ NOBLE_STAGES ו-B49D_CLOSED_INTAKE קיימות משכבר בשני הקבצים והן
+   רשימת הסטטוסים של הקליטה — אין להגדיר אותן שנית (R8).
+   ⛔⛔ carts.status הוא 'פנויה'/'בשימוש' בלבד. **שדה התקלות של עגלה
+   הוא carts.condition** — R5/B56. אין לערבב ביניהם.
+   ⛔ אין להחיל את הרשימות האלה על p.status שמגיע מהמשתמש — שם מדובר
+   בוולידציית קלט ולא בנרמול ערך שנקרא מהגיליון.
+   ⛔ כל השמות והרשימות בבלוק הזה חייבים להישאר זהים תו-בתו בין
+   index.html לבין קוד שרת.txt — יש בדיקה שמשווה אותם.
+   ⛔ נרמול להשוואה בלבד — הערך הנשמר בגיליון אינו משתנה, והתצוגה
+   למשתמש ממשיכה להראות את הערך האמיתי כפי שהוא. */
+var UNIT_BUSY         = ['בשימוש', 'בכביסה', 'אצל לקוח'];
+var UNIT_DEL_DFLT     = 'אצל לקוח';
+var FAULT_STATUSES    = ['פתוחה', 'סגורה'];
+var FAULT_DFLT        = 'פתוחה';
+var CASE_STATUSES     = ['פנוי', 'משויך'];
+var CASE_DFLT         = 'משויך';
+var CART_STATUSES     = ['פנויה', 'בשימוש'];
+var CART_DFLT         = 'בשימוש';
+var INTAKE_DFLT       = 'התקבל';
+var NOTIF_STATUSES    = ['ממתין', 'נשלח', 'נכשל'];
+var TCOMMENT_STATUSES = ['', 'לביצוע', 'טופל'];
+var VISIT_STATUSES    = ['מתוכנן', 'בוצע', 'בוטל'];
+var MSG_STATUSES      = ['חדשה', 'בטיפול', 'נענתה', 'נסגרה'];
+var MSG_OPEN          = ['חדשה', 'בטיפול'];
+/* ⭐ B81: הליטרל ['במשלוח','נמסר'] הופיע שלוש פעמים בקוד השרת — הגדרה אחת
+   בלבד, בדיוק כמו B5_OPEN_STATUSES ב-B79. קליטה שיצאה מהמכבסה. */
+var W23G_SHIPPED      = ['במשלוח', 'נמסר'];
+
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
    ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
    רווח כפול, רווח קשיח (\u00A0) או תו כיווניות RTL בלתי נראה
@@ -5604,7 +5664,7 @@ function assignCart(db, taskId, cartId, user) {
   var t = db.laundryTasks.find(function (x) { return x.id === taskId; });
   var c = db.carts.find(function (x) { return x.id === cartId; });
   if (!t || !c) return { ok: false, error: 'משימה או עגלה לא נמצאו' };
-  if (sVal(c.status) !== 'פנויה') return { ok: false, error: 'העגלה ' + cartId + ' אינה פנויה' };
+  if (w24Stat(c, CART_STATUSES, CART_DFLT) !== 'פנויה') return { ok: false, error: 'העגלה ' + cartId + ' אינה פנויה' };   /* ⭐ B81/WASH-23ג */
   if (t.cart_id) { releaseCart(db, t.cart_id); }
   t.cart_id = cartId;
   c.status = 'בשימוש';
@@ -5984,7 +6044,7 @@ function b49cTaskIntake(db, t) {
   return nobleIntakeById(db, t.intake_id);
 }
 function b49cIntakeClosed(ik) {
-  return !ik || ['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1;
+  return !ik || B49D_CLOSED_INTAKE.indexOf(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)) > -1;   /* ⭐ B81/WASH-23ג */
 }
 
 /* פתיחת קליטת NOBLE פנימית מהחזרת הזמנה.
@@ -6081,7 +6141,7 @@ function b49cCloseIntake(db, intake, w) {
 function b49cAfterAdvance(db, t, fromStage, toStage, cartBefore, user) {
   var out = { events: 0, closed: false, released: [], portion_kg: '' };
   var ik = b49cTaskIntake(db, t);
-  if (!ik || ['במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1) return out;
+  if (!ik || W23G_SHIPPED.indexOf(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)) > -1) return out;   /* ⭐ B81/WASH-23ג */
   var w = b49cWorkerRef(db, t.worker || user);
   var isFinish = (toStage === 'מוכן');
 
@@ -6234,7 +6294,7 @@ function b49dAddCarts(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var ik = nobleIntakeById(db, String(p.intake_id || ''));
   if (!ik) return { ok: false, error: 'קליטה לא נמצאה' };
-  if (B49D_CLOSED_INTAKE.indexOf(String(ik.status)) > -1)
+  if (B49D_CLOSED_INTAKE.indexOf(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)) > -1)   /* ⭐ B81/WASH-23ג */
     return { ok: false, error: 'הקליטה כבר ' + ik.status + ' — לא ניתן להוסיף אליה עגלות' };
   var g16a = w16OrderGate(db, ik.order_id, 'להוסיף לה עגלות');   /* ⭐⭐ B75/WASH-16 */
   if (!g16a.ok) return g16a;
@@ -6249,7 +6309,7 @@ function b49dAddCarts(db, p, user) {
     var bind = nobleActiveBinding(db, c.id);
     if (bind && bind.intake_id === ik.id) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה הזו' };
     if (bind) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה פעילה' };
-    if (sVal(c.status) !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
+    if (w24Stat(c, CART_STATUSES, CART_DFLT) !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };   /* ⭐ B81/WASH-23ג */
     carts.push(c);
   }
   carts.forEach(function (c) {
@@ -6401,7 +6461,7 @@ function b54Ledger(db) {
     var oid = String(ik.order_id || '').trim();
     if (oid && byOrder[oid]) { byOrder[oid].rows.push(row); return; }
     // קליטה חופשית שנמסרה וטרם רוכזה לחשבונית — נרשמת בספר, אינה חוב (כמו היום)
-    if (sVal(ik.status) === 'נמסר') {   /* ⛔ WASH-04 · כסף: סטטוס מלוכלך הוציא את החיוב מספר החיובים */
+    if (w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT) === 'נמסר') {   /* ⛔ WASH-04 · כסף · ⭐ B81 */
       row.customer_id = ik.customer_id; row.pending = 1; loose.push(row);
     }
   });
@@ -7218,7 +7278,7 @@ function b55PendingForInbox(db) {
     };
   });
   var msgs = (db.customerMessages || []).filter(function (m) {
-    return m.direction === 'מלקוח' && ['חדשה', 'בטיפול'].indexOf(String(m.status)) > -1;
+    return m.direction === 'מלקוח' && MSG_OPEN.indexOf(w24Stat(m, MSG_STATUSES)) > -1;   /* ⭐ B81/WASH-23ג */
   }).map(function (m) {
     var c = db.customers.find(function (x) { return x.id === m.customer_id; }) || {};
     return {
@@ -7306,7 +7366,7 @@ function nobleLastReleasedIntake(db, cartId) {
   db.intakeCarts.forEach(function (b) {
     if (b.cart_id !== cartId || sVal(b.active) === 'כן') return;
     var ik = nobleIntakeById(db, b.intake_id);
-    if (!ik || ['מוכן', 'במשלוח'].indexOf(sVal(ik.status)) === -1) return;
+    if (!ik || ['מוכן', 'במשלוח'].indexOf(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)) === -1) return;   /* ⭐ B81/WASH-23ג */
     var ts = String(b.release_ts || b.bind_ts || '');
     if (!best || ts >= bestTs) { best = ik; bestTs = ts; }
   });
@@ -7377,7 +7437,7 @@ function nobleOpenStart(db, intakeId, cartId) {
 function nobleMachineLoad(db) {
   var out = {};
   db.laundryIntakes.forEach(function (ik) {
-    if (sVal(ik.status) === 'נמסר') return;
+    if (w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT) === 'נמסר') return;   /* ⭐ B81/WASH-23ג */
     db.intakeCarts.forEach(function (b) {
       if (b.intake_id !== ik.id || sVal(b.active) !== 'כן') return;
       nobleOpenStarts(db, ik.id, b.cart_id).forEach(function (ev) {
@@ -7546,7 +7606,7 @@ function nobleIntake(db, p, user) {
     if (seen[c.id]) return { ok: false, error: 'העגלה ' + c.id + ' נסרקה פעמיים' };
     seen[c.id] = 1;
     if (nobleActiveBinding(db, c.id)) return { ok: false, error: 'העגלה ' + c.id + ' כבר משויכת לקליטה פעילה' };
-    if (sVal(c.status) !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };
+    if (w24Stat(c, CART_STATUSES, CART_DFLT) !== 'פנויה') return { ok: false, error: 'העגלה ' + c.id + ' אינה פנויה (סטטוס: ' + c.status + ')' };   /* ⭐ B81/WASH-23ג */
     carts.push(c);
   }
   /* B49d: המחיר לק"ג נלקח מכרטיס הלקוח כבר בפתיחת הקליטה, לא רק בשקילה.
@@ -7597,7 +7657,7 @@ function nobleStageStart(db, p, user) {
   var intake = r.intake, cart = r.cart;
   if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
   var blk = nobleBlockReleased(r); if (blk) return blk;
-  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  if (B49D_CLOSED_INTAKE.indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };   /* ⭐ B81/WASH-23ג */
   var mbc = String(p.machine_barcode || '').trim();
   var mach = db.machines.find(function (m) { return String(m.barcode) === mbc || String(m.id) === mbc; });
   if (!mach) return { ok: false, error: 'מכונה לא נמצאה — בדוק את הברקוד' };
@@ -7677,7 +7737,7 @@ function nobleWeigh(db, p, user) {
   var intake = r.intake, cart = r.cart;
   if (!cart) return { ok: false, error: 'יש לסרוק ברקוד עגלה' };
   var blkW = nobleBlockReleased(r); if (blkW) return blkW;
-  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  if (B49D_CLOSED_INTAKE.indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };   /* ⭐ B81/WASH-23ג */
   /* ⭐⭐ B75/WASH-16 — שקילה היא יצירת חיוב (B70/WASH-03). הזמנה שנסגרה או
      שכבר הופקה לה חשבונית אינה מקבלת חיוב נוסף. אותו שער בדיוק כמו
      פתיחת הקליטה — אין דפוס שני (R8). */
@@ -7708,7 +7768,7 @@ function nobleWeigh(db, p, user) {
   intake.net_weight_kg = roll.net;
   intake.total_charge = roll.charge;
   intake.price_per_kg = price;
-  if (['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול'].indexOf(sVal(intake.status)) > -1) intake.status = 'באריזה';
+  if (['התקבל', 'בכביסה', 'בייבוש', 'בגיהוץ וקיפול'].indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) > -1) intake.status = 'באריזה';   /* ⭐ B81/WASH-23ג */
   writeTable('laundry_intakes', db.laundryIntakes);
   return { ok: true, net_kg: net, tare_kg: tare, charge: charge, cart_seq: mine.length, cart_weighs: mine.length,
     intake_total_net: roll.net, intake_total_charge: roll.charge,
@@ -7729,7 +7789,7 @@ function nobleWeighFix(db, p, user) {
   if (sVal(ev.event_type) !== 'שקילה') return { ok: false, error: 'הרשומה שנבחרה אינה שקילה' };
   var intake = nobleIntakeById(db, ev.intake_id);
   if (!intake) return { ok: false, error: 'הקליטה של השקילה לא נמצאה' };
-  if (['במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1)
+  if (W23G_SHIPPED.indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) > -1)   /* ⭐ B81/WASH-23ג */
     return { ok: false, error: 'הקליטה כבר ' + intake.status + ' — לאחר שיצאה ללקוח תיקון נעשה בחשבונית ולא בשקילה' };
   var v = b38VerifyManagerPin(db, p.mgr_pin, user); if (!v.ok) return v;
   var cancel = p.cancel === true || p.cancel === 'כן';
@@ -7765,8 +7825,8 @@ function nobleMarkReady(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
   var intake = r.intake;
-  if (sVal(intake.status) === 'מוכן') return { ok: false, error: 'הקליטה כבר מסומנת כמוכנה' };
-  if (sVal(intake.status) === 'במשלוח' || sVal(intake.status) === 'נמסר') return { ok: false, error: 'הקליטה כבר ' + intake.status };
+  if (w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT) === 'מוכן') return { ok: false, error: 'הקליטה כבר מסומנת כמוכנה' };   /* ⭐ B81/WASH-23ג */
+  if (W23G_SHIPPED.indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) > -1) return { ok: false, error: 'הקליטה כבר ' + intake.status };   /* ⭐ B81/WASH-23ג */
   var roll = nobleWeighRollup(db, intake.id);
   if (!roll.count) return { ok: false, error: 'לא ניתן לסמן מוכן — לא בוצעה שקילה לאף עגלה' };
   var activeCartIds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן'; })
@@ -7834,7 +7894,7 @@ function nobleReleaseCart(db, p, user) {
   var bind = nobleActiveBinding(db, cart.id);
   if (!bind) {
     // כבר משוחררת — מיישרים את הסטטוס אם נשאר תקוע ומחזירים הצלחה
-    if (sVal(cart.status) !== 'פנויה') { cart.status = 'פנויה'; writeTable('carts', db.carts); }
+    if (w24Stat(cart, CART_STATUSES, CART_DFLT) !== 'פנויה') { cart.status = 'פנויה'; writeTable('carts', db.carts); }   /* ⭐ B81/WASH-23ג */
     return { ok: true, cart_id: cart.id, already: true, auditNote: 'שחרור עגלה ' + cart.id + ' (לא הייתה משויכת)' };
   }
   var intake = nobleIntakeById(db, bind.intake_id);
@@ -7856,7 +7916,7 @@ function nobleReleaseCart(db, p, user) {
     });
   });
   var others = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן' && b.cart_id !== cart.id; });
-  if (!others.length && ['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) === -1 && !force)
+  if (!others.length && B49D_CLOSED_INTAKE.indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) === -1 && !force)   /* ⭐ B81/WASH-23ג */
     return {
       ok: false, need_force: true, last_cart: true,
       error: 'זו העגלה האחרונה בקליטה ' + intake.id + ' והיא עדיין בעבודה. שחרור ישאיר את הקליטה בלי עגלות. אשר כדי להמשיך'
@@ -7878,7 +7938,7 @@ function nobleDriverScan(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
   var intake = r.intake;
-  if (sVal(intake.status) !== 'מוכן') return { ok: false, error: 'ניתן להעמיס רק קליטה במצב "מוכן" (מצב נוכחי: ' + intake.status + ')' };
+  if (w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT) !== 'מוכן') return { ok: false, error: 'ניתן להעמיס רק קליטה במצב "מוכן" (מצב נוכחי: ' + intake.status + ')' };   /* ⭐ B81/WASH-23ג */
   var cust = intake.customer_id ? db.customers.find(function (c) { return c.id === intake.customer_id; }) : null;
   /* ⭐ B75/WASH-13 — היה order_id:'' קבוע. קליטה שנפתחה מהזמנת כביסה (B49d)
      ידעה את מזהה ההזמנה כל הזמן, והמשלוח שיצא ממנה נותר תלוש ממנה: כרטיס
@@ -7908,7 +7968,7 @@ function nobleDeliver(db, p, user) {
   var w = nobleWorker(db, p, user); if (!w.ok) return w;
   var r = nobleResolveIntake(db, p); if (r.error) return { ok: false, error: r.error };
   var intake = r.intake;
-  if (sVal(intake.status) !== 'במשלוח') return { ok: false, error: 'ניתן לסמן נמסר רק לקליטה במצב "במשלוח" (מצב נוכחי: ' + intake.status + ')' };
+  if (w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT) !== 'במשלוח') return { ok: false, error: 'ניתן לסמן נמסר רק לקליטה במצב "במשלוח" (מצב נוכחי: ' + intake.status + ')' };   /* ⭐ B81/WASH-23ג */
   // B19d (L6): אכיפה בצד השרת — גם משלוח מכבסה לא נסגר בלי חתימת לקוח או צילום מסירה.
   if (intake.delivery_id) {
     var dlvChk = db.deliveries.find(function (d) { return d.id === intake.delivery_id; });
@@ -8015,7 +8075,7 @@ function nobleCartProgress(db, intakeId, cartId) {
 
 // זמן משוער (בדקות) לסיום קליטה: לכל עגלה — חצי מהשלב הפתוח + השלבים שטרם בוצעו; הקובע הוא האיטי מבין העגלות
 function nobleEtaMin(db, intake, avgs) {
-  if (['מוכן', 'במשלוח', 'נמסר'].indexOf(sVal(intake.status)) > -1) return 0;
+  if (B49D_CLOSED_INTAKE.indexOf(w24Stat(intake, NOBLE_STAGES, INTAKE_DFLT)) > -1) return 0;   /* ⭐ B81/WASH-23ג */
   var binds = db.intakeCarts.filter(function (b) { return b.intake_id === intake.id && sVal(b.active) === 'כן'; });
   var eta = 0;
   binds.forEach(function (b) {
@@ -8064,7 +8124,7 @@ function w18Advance(db, p, user) {
     return { ok: false, error: 'רק מנהל או משרד רשאים לקדם שלב ידנית מלוח הכביסה. בשטח — סרוק עגלה ומכונה במסך רצפת הייצור' };
   var ik = nobleIntakeById(db, String(p.intake_id || '').trim());
   if (!ik) return { ok: false, error: 'קליטה לא נמצאה' };
-  if (['במשלוח', 'נמסר'].indexOf(sVal(ik.status)) > -1)
+  if (W23G_SHIPPED.indexOf(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)) > -1)   /* ⭐ B81/WASH-23ג */
     return { ok: false, error: 'הקליטה כבר ' + ik.status + ' — אין לקדם אותה מלוח הכביסה' };
   var cartId = String(p.cart_id || '').trim();
   if (!cartId) return { ok: false, error: 'יש לבחור עגלה' };
@@ -8101,7 +8161,7 @@ function w18Advance(db, p, user) {
   });
   /* 3. סטטוס הקליטה עוקב אחרי הפעולה האחרונה — בדיוק כמו
      nobleStageStart ו-b49cAfterAdvance. אין כאן שדה חדש ואין שינוי סכימה. */
-  if (sVal(ik.status) !== to) { ik.status = to; writeTable('laundry_intakes', db.laundryIntakes); }
+  if (w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT) !== to) { ik.status = to; writeTable('laundry_intakes', db.laundryIntakes); }   /* ⭐ B81/WASH-23ג */
   return {
     ok: true, intake_id: ik.id, cart_id: cartId, stage: to, from: from, closed: closed,
     auditNote: 'WASH-18 קידום ידני · ' + ik.id + ' · ' + cartId + ' · ' +
@@ -8121,7 +8181,7 @@ function nobleBoard(db) {
   /* B49c: כביסה פנימית של MAPA אינה נמסרת לעולם — לכן קליטה פנימית שהגיעה
      ל"מוכן" הושלמה וירדה מהלוח החי. בלעדי זה היא הייתה נשארת "פעילה" לנצח. */
   var active = db.laundryIntakes.filter(function (i) {
-    return sVal(i.status) !== 'נמסר' && !(sVal(i.internal) === 'כן' && String(i.ready_ts || ''));
+    return w24Stat(i, NOBLE_STAGES, INTAKE_DFLT) !== 'נמסר' && !(sVal(i.internal) === 'כן' && String(i.ready_ts || ''));   /* ⭐ B81/WASH-23ג */
   });
   var intakes = active.map(function (ik) {
     var binds = db.intakeCarts.filter(function (b) { return b.intake_id === ik.id && sVal(b.active) === 'כן'; });
@@ -8179,7 +8239,7 @@ function nobleCreateInvoice(db, p, user) {
   // C8: קליטה שנפתחה מהזמנה (B49d) יוצאת מהחשבונית המרוכזת — היא מחויבת
   // דרך חשבונית ההזמנה. קליטה חופשית / פנימית — ללא שינוי כלל.
   var open = db.laundryIntakes.filter(function (i) {
-    if (i.customer_id !== cust.id || sVal(i.internal) === 'כן' || sVal(i.status) !== 'נמסר') return false;   /* ⛔ WASH-04 · כסף */
+    if (i.customer_id !== cust.id || sVal(i.internal) === 'כן' || w24Stat(i, NOBLE_STAGES, INTAKE_DFLT) !== 'נמסר') return false;   /* ⛔ WASH-04 · כסף · ⭐ B81 */
     if (String(i.invoice_id || '').trim()) return false;
     if (!(Number(i.total_charge) > 0)) return false;
     var oid = String(i.order_id || '').trim();
@@ -9308,7 +9368,7 @@ function b4Queue(db, type, recipient, channel, vars, dedupKey) {
 function b4SendQueued(db) {
   var changed = false, sentCount = 0;
   db.notifications.forEach(function (n) {
-    if (n.status !== 'ממתין') return;
+    if (w24Stat(n, NOTIF_STATUSES) !== 'ממתין') return;   /* ⭐ B81: לא מוכר אינו נשלח */
     if (n.channel && n.channel !== 'email') return; // ערוצים נוספים (SMS/וואטסאפ) — לא ב-Phase 1
     var vars = {};
     try { vars = JSON.parse(n.payload || '{}'); } catch (e) { }
@@ -10628,7 +10688,7 @@ function b42SetState(db, a, state) {
 
 function b42OpenFault(db, assetType, assetId) {
   return (db.assetFaults || []).find(function (f) {
-    return f.asset_type === assetType && String(f.asset_id) === String(assetId) && f.status === 'פתוחה';
+    return f.asset_type === assetType && String(f.asset_id) === String(assetId) && w24Stat(f, FAULT_STATUSES, FAULT_DFLT) === 'פתוחה';   /* ⭐ B81/WASH-23ג */
   }) || null;
 }
 
