@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.83-B83', 'ה-canary לא עודכן ל-B83');
+      t.eq(inJs, 'v4.84-B84', 'ה-canary לא עודכן ל-B84');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -2758,11 +2758,16 @@ SPECS.push({
       t.eq(sm.missing.length, 3, 'רשימת המסכים החסרים שגויה');
     },
 
+    /* ⚠⚠ B84 — שלוש הבדיקות הבאות נכתבו מחדש. עד B83 הן נשענו על
+       b65WidthSummary/B65_WMAP, שהתבררו כמודדים את רוחב החלון ולא את
+       דרישת התוכן (ראה הבלוק של B84 ב-index.html). המנגנון הפסיבי נשאר
+       חי ונבדק למעלה; הטענה ובלוק ההעתקה עברו לפרובה של B84. */
+
     '⭐⭐ הטענה של BLD-05 נכשלת כל עוד לא נמדדו כל ששת המסכים': (t, { w, srv, H }) => {
       /* זו הנקודה: מספר חלקי גרוע ממספר חסר, כי הוא נראה כמו תשובה.
          כל עוד חסר מסך אחד — הבדיקה אדומה ואבי רואה בדיוק מה חסר. */
       H.login(w, 'מנהל', srv);
-      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
       /* ⚠ מלכודת: גם הטענה הישנה (ACT-05 · BLD-05) מכילה 'BLD-05'.
          הבורר חייב להיות ייחודי לטענה החדשה, אחרת נבדקת הישנה. */
       const find = () => w.b61Tests().filter(x => x.n.indexOf('רוחב מרבי') > -1)[0];
@@ -2770,9 +2775,9 @@ SPECS.push({
       t.ok(!!test, 'הטענה של BLD-05 אינה קיימת בכרטיס הבדיקה העצמית');
       t.no(test.f().ok, 'הטענה עברה למרות שלא נמדד שום מסך');
 
-      w.B65_WIDE.forEach(v => { w.B65_WMAP[v] = { need: 1100, win: 1512, mode: 'side', rail: 206, over: 0 }; });
+      w.B65_WIDE.forEach(v => { w.B84_MAP[v] = { needWin: 1100, over: 0, what: 'התוכן', at: 818, win: 1512 }; });
       const full = find().f();
-      t.ok(full.ok, 'הטענה נכשלה למרות שכל ששת המסכים נמדדו');
+      t.ok(full.ok, 'הטענה נכשלה למרות שכל ששת המסכים נמדדו ואף אחד לא גלש');
       t.has(full.note, '1100', 'המספר המכריע אינו מופיע בטענה');
     },
 
@@ -2780,8 +2785,8 @@ SPECS.push({
       /* התקלה שחסמה את BLD-05 ארבע פעמים: b61Text העתיק **רק כשלים**,
          ולכן כשהפריסה נכנסה — והיא נכנסה — המספר לא הגיע לצ'אט מעולם. */
       H.login(w, 'מנהל', srv);
-      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
-      w.B65_WIDE.forEach(v => { w.B65_WMAP[v] = { need: 1210, win: 1512, mode: 'side', rail: 206, over: 0 }; });
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      w.B65_WIDE.forEach(v => { w.B84_MAP[v] = { needWin: 1210, over: 0, what: 'התוכן', at: 818, win: 1512 }; });
       w.B61_RES = { at: new Date(), pass: 20, fail: 0, rows: [],
                     env: { canary: w.B61_CANARY, browser: 'x', os: 'y', vw: 1512, vh: 900, dpr: 2, touch: false, mode: 'side', tz: 'Asia/Jerusalem', role: 'מנהל' } };
       const txt = w.b61Text();
@@ -2792,8 +2797,8 @@ SPECS.push({
 
     'מסכים שטרם נמדדו מסומנים בבלוק ההעתקה': (t, { w, srv, H }) => {
       H.login(w, 'מנהל', srv);
-      Object.keys(w.B65_WMAP).forEach(k => { delete w.B65_WMAP[k]; });
-      w.B65_WMAP.orders = { need: 1000, win: 1512, mode: 'side', rail: 206, over: 0 };
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      w.B84_MAP.orders = { needWin: 1000, over: 0, what: 'התוכן', at: 818, win: 1512 };
       w.B61_RES = { at: new Date(), pass: 20, fail: 0, rows: [],
                     env: { canary: w.B61_CANARY, browser: 'x', os: 'y', vw: 1512, vh: 900, dpr: 2, touch: false, mode: 'side', tz: 'Asia/Jerusalem', role: 'מנהל' } };
       t.has(w.b61Text(), 'טרם נמדדו', 'הבלוק אינו מציין אילו מסכים חסרים');
@@ -7298,10 +7303,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.83-B83', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.has(s, 'v4.84-B84', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7687,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8017,9 +8022,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8511,9 +8516,9 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ב הוא לוגיקת שרת/ממשק, לא יכולת דפדפן');
     },
 
-    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -10072,9 +10077,9 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — הפריט הוא לוגיקת שרת/ממשק');
     },
 
-    '⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -10619,9 +10624,9 @@ SPECS.push({
         '⛔ נוספה טענה לשכבה 2 עבור B82 — הוא נבדק כולו בשכבה 1');
     },
 
-    '[מודד] ⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '[מודד] ⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -11095,9 +11100,283 @@ SPECS.push({
       t.hasNot(b, 'bld10', '⛔ נוספה טענה לכרטיס הבדיקה העצמית בלי צורך (חלק 11)');
     },
 
-    '[מודד] ⛔ canary v4.83-B83 בשני המקומות בממשק': (t, { H }) => {
+    '[מודד] ⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.83-B83/g) || []).length, 2,
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+
+/* ============================================================================
+   t30 — B84: מד ההתאמה ל-1024px + כיווץ רצועת הצד
+   ----------------------------------------------------------------------------
+   ⛔⛔ למה החלק הזה קיים: הריצה של הבדיקה העצמית ב-18.08.2026 החזירה
+   ~1478px בכל ארבעה-עשר המסכים — אותו מספר בדיוק, וגדול מרוחב החלון
+   (1422). זה לא היה מדידה אלא ארטיפקט: main.scrollWidth שווה
+   ל-main.clientWidth כשאין גלישה, ועוד 56 שנספרו פעמיים. הבדיקות כאן
+   נועלות את התיקון כדי שהמספר המדומה לא יחזור.
+   ⚠ jsdom חסר מנוע פריסה, ולכן המדידה עצמה נבדקת עם clientWidth/scrollWidth
+   מוגדרים ידנית. המספר האמיתי מגיע משכבה 2 בלבד (R11).
+   ============================================================================ */
+
+SPECS.push({
+  file: 't30-b84-ui',
+  title: 'B84 — מד ההתאמה ל-1024px + כיווץ רצועת הצד',
+  needs: 'ui',
+  requires: ['b84ProbeMain', 'b84Record', 'b84FitSummary', 'b84Reset', 'b84He',
+             'B84_MAP', 'B84_DONE', 'B84_TARGET_WIN', 'B84_RAIL_W', 'B84_MAIN_W',
+             'B84_MAX_PROBES', 'B84_KEY', 'B65_WIDE', 'B65_WMAP', 'B65_WKEY',
+             'b65MeasureNow', 'b65RecordWidth', 'b65WidthSummary',
+             'b61Tests', 'b61Text', 'b61Card', 'navMode', 'go', 'render'],
+
+  tests: {
+
+    /* ---------- הבאג שהוליד את האצווה ---------- */
+
+    '[מודד] ⛔⛔ b65MeasureNow אינה סופרת את ריפוד main פעמיים': (t, { H }) => {
+      const src = H.stripComments(H.indexSrc());
+      const seg = src.slice(src.indexOf('function b65MeasureNow'),
+                            src.indexOf('function b65RecordWidth'));
+      t.ok(seg.length > 50, 'לא נמצא הגוף של b65MeasureNow');
+      t.hasNot(seg, '+ 56', '⛔ ריפוד main נספר פעמיים — זה המספר המדומה של B83');
+      t.has(seg, 'widest + navW', 'הנוסחה אינה תוכן + רצועה');
+    },
+
+    '[מודד] ⛔ יעד המדידה הוא 1024 והפרובה מכווצת ל-818': (t, { w }) => {
+      t.eq(w.B84_TARGET_WIN, 1024, 'יעד נקודת השבירה של BLD-05 השתנה');
+      t.eq(w.B84_RAIL_W, 206, 'רוחב הרצועה שהמדידה מניחה השתנה');
+      t.eq(w.B84_MAIN_W, 818, 'רוחב main שנמדד אינו 1024 פחות הרצועה');
+    },
+
+    /* ---------- הפרובה ---------- */
+
+    '[מודד] ⛔⛔ הפרובה מודדת גלישה אמיתית ומשחזרת את סגנון main': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const m = w.document.querySelector('main');
+      t.ok(!!m, 'אין אלמנט main');
+      m.style.cssText = 'color: red;';
+      Object.defineProperty(m, 'clientWidth', { value: 1216, configurable: true });
+      Object.defineProperty(m, 'scrollWidth', { value: 900,  configurable: true });
+      const r = w.b84ProbeMain(818);
+      t.ok(!!r, 'הפרובה החזירה null למרות שיש רוחב למדוד');
+      t.eq(r.over, 82, 'הגלישה מול 818px חושבה שגוי');
+      t.eq(r.needWin, 1106, 'הרוחב הדרוש לחלון אינו תוכן + רצועה');
+      t.eq(m.style.cssText.replace(/\s/g, ''), 'color:red;',
+        '⛔⛔ סגנון main לא שוחזר — הפרובה משאירה את הפריסה שבורה');
+    },
+
+    '[מודד] ⛔ תוכן שנכנס ב-818 מדווח גלישה אפס': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const m = w.document.querySelector('main');
+      Object.defineProperty(m, 'clientWidth', { value: 1216, configurable: true });
+      Object.defineProperty(m, 'scrollWidth', { value: 700,  configurable: true });
+      const r = w.b84ProbeMain(818);
+      t.eq(r.over, 0, 'תוכן צר מ-818 דווח כגולש');
+      t.eq(r.needWin, 906, 'הרוחב הדרוש חושב שגוי לתוכן שנכנס');
+    },
+
+    '[מודד] ⛔ בלי פריסה הפרובה מחזירה null ואינה מפילה את render': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      /* ⚠ חלון jsdom משותף לכל בדיקות החלק, ובדיקה קודמת הגדירה clientWidth.
+         מעמידים אפס במפורש — זה בדיוק המצב של סביבה בלי מנוע פריסה. */
+      Object.defineProperty(w.document.querySelector('main'), 'clientWidth',
+        { value: 0, configurable: true });
+      t.eq(w.b84ProbeMain(818), null, 'הפרובה החזירה ערך למרות ש-jsdom חסר פריסה');
+      w.b84Record();
+      w.go('orders');
+      t.eq(w.VIEW, 'orders', 'render נשבר בגלל המדידה');
+    },
+
+    /* ---------- הרישום ---------- */
+
+    '[מודד] ⛔ b84Record אינו רושם כשמצב הניווט אינו סרגל צד': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 800);
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      Object.keys(w.B84_DONE).forEach(k => { delete w.B84_DONE[k]; });
+      const m = w.document.querySelector('main');
+      Object.defineProperty(m, 'clientWidth', { value: 1216, configurable: true });
+      Object.defineProperty(m, 'scrollWidth', { value: 900,  configurable: true });
+      w.b84Record();
+      t.eq(Object.keys(w.B84_MAP).length, 0,
+        '⛔ נרשמה מדידה במצב שאינו סרגל צד — היא מודדת פריסה אחרת לגמרי');
+    },
+
+    '[מודד] ⛔ יש תקרת פרובות למסך בסשן — המדידה אינה רצה בכל רינדור לנצח': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 1422);
+      Object.keys(w.B84_DONE).forEach(k => { delete w.B84_DONE[k]; });
+      const m = w.document.querySelector('main');
+      Object.defineProperty(m, 'clientWidth', { value: 1216, configurable: true });
+      Object.defineProperty(m, 'scrollWidth', { value: 900,  configurable: true });
+      for (let i = 0; i < 10; i++) w.b84Record();
+      t.eq(w.B84_DONE[w.VIEW], w.B84_MAX_PROBES, 'תקרת הפרובות אינה נאכפת');
+      t.ok(w.B84_MAX_PROBES >= 2 && w.B84_MAX_PROBES <= 5,
+        'התקרה אינה סבירה — רינדור ראשון עשוי להיות שלד');
+    },
+
+    '[מודד] ⛔ נשמר המקסימום — מדידה קטנה יותר אינה דורסת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      H.setWidth(w, 1422);
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      Object.keys(w.B84_DONE).forEach(k => { delete w.B84_DONE[k]; });
+      const m = w.document.querySelector('main');
+      Object.defineProperty(m, 'clientWidth', { value: 1216, configurable: true });
+      Object.defineProperty(m, 'scrollWidth', { value: 1000, configurable: true });
+      w.b84Record();
+      const big = w.B84_MAP[w.VIEW].needWin;
+      Object.defineProperty(m, 'scrollWidth', { value: 700, configurable: true });
+      w.b84Record();
+      t.eq(w.B84_MAP[w.VIEW].needWin, big, 'מדידה קטנה יותר דרסה את המקסימום');
+    },
+
+    /* ---------- הטענה בכרטיס ---------- */
+
+    '[מודד] ⛔⛔ הטענה נכשלת כשמסך גולש ב-818 — ולא רק כשחסרה מדידה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      w.B65_WIDE.forEach(v => { w.B84_MAP[v] = { needWin: 1100, over: 0, what: 'התוכן', at: 818, win: 1422 }; });
+      w.B84_MAP.finance = { needWin: 1380, over: 356, what: 'טבלה', at: 818, win: 1422 };
+      const r = w.b61Tests().filter(x => x.n.indexOf('רוחב מרבי') > -1)[0].f();
+      t.no(r.ok, '⛔⛔ הטענה עברה למרות שמסך גולש — זה בדיוק הכשל השקט של B83');
+      t.has(r.note, 'כספים', 'הטענה אינה אומרת איזה מסך גולש');
+      t.has(r.note, '1380', 'הטענה אינה מוסרת את המספר המכריע');
+    },
+
+    '[מודד] ⛔ הטענה נכשלת כשחסר מסך רחב, ומפרטת מי חסר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      w.B84_MAP.orders = { needWin: 1000, over: 0, what: 'התוכן', at: 818, win: 1422 };
+      const r = w.b61Tests().filter(x => x.n.indexOf('רוחב מרבי') > -1)[0].f();
+      t.no(r.ok, 'הטענה עברה על מדידה חלקית');
+      t.has(r.note, 'כספים', 'רשימת המסכים החסרים אינה בעברית ואינה מפורטת');
+    },
+
+    '[מודד] ⛔ הטענה עוברת רק כשכל הששה נמדדו וכולם נכנסים': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      w.B65_WIDE.forEach(v => { w.B84_MAP[v] = { needWin: 990, over: 0, what: 'התוכן', at: 818, win: 1422 }; });
+      const r = w.b61Tests().filter(x => x.n.indexOf('רוחב מרבי') > -1)[0].f();
+      t.ok(r.ok, 'הטענה נכשלה למרות שהכל נמדד והכל נכנס');
+      t.has(r.note, '1024', 'הטענה אינה אומרת מול איזה רוחב היא נבדקה');
+    },
+
+    '[מודד] ⛔ בלוק ההעתקה מדווח גלישה ולא רק מספר': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      Object.keys(w.B84_MAP).forEach(k => { delete w.B84_MAP[k]; });
+      w.B84_MAP.finance = { needWin: 1380, over: 356, what: 'טבלה', at: 818, win: 1422 };
+      w.B61_RES = { at: new Date(), pass: 20, fail: 0, rows: [],
+                    env: { canary: w.B61_CANARY, browser: 'x', os: 'y', vw: 1422, vh: 650, dpr: 1, touch: true, mode: 'side', tz: 'Asia/Jerusalem', role: 'מנהל' } };
+      const txt = w.b61Text();
+      t.has(txt, 'גולש ב-356px', 'בלוק ההעתקה אינו מדווח כמה המסך גולש');
+      t.has(txt, 'טבלה', 'בלוק ההעתקה אינו אומר מה גולש');
+    },
+
+    /* ---------- האיפוס ---------- */
+
+    '[מודד] ⛔ כפתור איפוס המדידה קיים בכרטיס': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.has(w.b61Card(), 'b84Reset()',
+        '⛔ בלי איפוס, מפה שנצברה בחלון רחב חוסמת כל מדידה חדשה לנצח');
+    },
+
+    '[מודד] ⛔ האיפוס מנקה את שתי המפות ואת האחסון': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.B84_MAP.orders  = { needWin: 1300, over: 0, what: 'התוכן', at: 818, win: 1422 };
+      w.B65_WMAP.orders = { need: 1478, win: 1422, mode: 'side', rail: 206, over: 0 };
+      w.B84_DONE.orders = 3;
+      w.b84Reset();
+      t.eq(Object.keys(w.B84_MAP).length, 0, 'מפת ההתאמה לא נוקתה');
+      t.eq(Object.keys(w.B65_WMAP).length, 0, 'המפה הפסיבית הישנה לא נוקתה');
+      t.eq(Object.keys(w.B84_DONE).length, 0, 'מונה הפרובות לא אופס');
+    },
+
+    /* ---------- R8 / R10 — בלי דפוס שני ובלי בקשות ---------- */
+
+    '[מודד] ⛔ המדידה נשענת על B65_WIDE ואינה מגדירה רשימת מסכים שנייה': (t, { H }) => {
+      const src = H.stripComments(H.indexSrc());
+      const seg = src.slice(src.indexOf('function b84FitSummary'),
+                            src.indexOf('function b84Reset'));
+      t.ok(seg.length > 50, 'לא נמצא הגוף של b84FitSummary');
+      t.has(seg, 'B65_WIDE', '⛔ R8 — נבנתה רשימת מסכים שנייה במקום להשתמש בקיימת');
+    },
+
+    '[מודד] ⛔ בלוק המדידה אינו שולח בקשת שרת ואינו נוגע בהיסטוריה': (t, { H }) => {
+      const src = H.stripComments(H.indexSrc());
+      const seg = src.slice(src.indexOf('function b84ProbeMain'),
+                            src.indexOf('function b84Reset'));
+      t.ok(seg.length > 100, 'לא נמצא בלוק המדידה של B84');
+      t.hasNot(seg, 'api(', '⛔ R10 — המדידה קוראת לשרת');
+      t.hasNot(seg, 'history.back', 'history.back חדר למדידה');
+      t.hasNot(seg, 'history.go', 'history.go חדר למדידה');
+    },
+
+    /* ---------- רצועת הצד — 61px (הכרעת אבי 2ב) ---------- */
+
+    '[מודד] ⛔⛔ פריטי הרצועה כווצו — 61px שחזרו בלי לוותר על קטגוריה': (t, { H }) => {
+      const s = H.indexSrc();
+      t.has(s, 'padding:5px 30px 5px 14px', '⛔ ריפוד פריט הרצועה לא כווץ');
+      t.has(s, 'font-size:13.5px;line-height:1.3', '⛔ גובה השורה ברצועה לא כווץ');
+      t.hasNot(s, 'padding:8px 30px 8px 14px', 'הריפוד הישן נשאר בקובץ');
+    },
+
+    '[מודד] ⛔ כותרת הקטגוריה והריפוד התחתון של הרצועה כווצו גם הם': (t, { H }) => {
+      const s = H.indexSrc();
+      t.has(s, 'padding:9px 16px 4px', 'ריפוד כותרת הקטגוריה לא כווץ');
+      t.has(s, 'padding:8px 0 12px', 'הריפוד התחתון של הרצועה לא כווץ');
+      t.hasNot(s, 'padding:8px 0 20px', 'הריפוד הישן נשאר בקובץ');
+    },
+
+    '[מודד] ⛔ גם הפס הצר 1100–1279 כווץ — אחרת התיקון נעלם שם': (t, { H }) => {
+      const s = H.indexSrc();
+      t.has(s, 'padding:5px 26px 5px 12px;font-size:13px;line-height:1.3',
+        '⛔ הפס הצר נשאר עם הריפוד הישן');
+      t.has(s, 'padding:9px 13px 4px', 'כותרת הקטגוריה בפס הצר לא כווצה');
+    },
+
+    /* ---------- שומרים: מה שאסור היה להישבר ---------- */
+
+    '[שומר] ⛔ הרצועה עדיין גוללת ואינה חותכת תוכן': (t, { H }) => {
+      const s = H.indexSrc();
+      t.has(s, 'overflow-y:auto;overflow-x:hidden',
+        '⛔ הרצועה איבדה את הגלילה — קטגוריה רביעית תיחתך בשקט');
+    },
+
+    '[שומר] ⛔ טענת גובה הרצועה נשארה בכרטיס הבדיקה העצמית': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.has(names, 'רצועת הצד נכנסת לגובה החלון',
+        'הטענה שגילתה את חוסר 61px הוסרה — אין מי שיאמת את התיקון');
+    },
+
+    '[שומר] ⛔ המדידה הפסיבית של B65 לא הוסרה — היא עדיין תופסת גלישה בחלון הנוכחי': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.has(names, 'המסך הנוכחי אינו גולש לרוחב', 'טענת ACT-05 הוסרה');
+      t.eq(typeof w.b65MeasureNow, 'function', 'b65MeasureNow נמחקה');
+      t.eq(typeof w.b65RecordWidth, 'function', 'b65RecordWidth נמחקה');
+    },
+
+    '[שומר] ⛔ ששת המסכים הרחבים עדיין הרשימה היחידה': (t, { w }) => {
+      t.eq(w.B65_WIDE.length, 6, 'רשימת המסכים הרחבים שינתה גודל');
+      ['items', 'orders', 'finance', 'payroll', 'audit', 'reports']
+        .forEach(v => t.ok(w.B65_WIDE.indexOf(v) > -1, 'מסך רחב חסר מהרשימה: ' + v));
+    },
+
+    '[שומר] ⛔ הרצועה עדיין נגזרת מ-allowedViews ואינה מציגה מסך אסור': (t, { w, srv, H }) => {
+      H.login(w, 'מכבסה', srv);
+      H.setWidth(w, 1422);
+      w.renderNav();
+      const rail = w.document.getElementById('rail');
+      t.hasNot(rail.innerHTML, 'go(\'finance\')',
+        '⛔ הרצועה חושפת מסך שאסור לתפקיד');
+    },
+
+    '[מודד] ⛔ canary v4.84-B84 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.84-B84/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
