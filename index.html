@@ -373,7 +373,7 @@ nav .nitem.on{color:#fff}
   body:not(.driver-mode) #shell{display:flex;align-items:flex-start}
   body:not(.driver-mode) #rail{display:block;position:sticky;top:97px;
       width:206px;flex:none;height:calc(100vh - 97px);min-height:0;
-      overflow-y:auto;overflow-x:hidden;padding:8px 0 20px;
+      overflow-y:auto;overflow-x:hidden;padding:8px 0 12px;
       background:var(--sb);border-inline-end:1px solid rgba(0,0,0,.18)}
   body:not(.driver-mode) main{flex:1;min-width:0;max-width:none;margin:0;
       padding:26px 28px;padding-bottom:52px}
@@ -382,11 +382,11 @@ nav .nitem.on{color:#fff}
      אבי, כי ברצועה של 2–3 קטגוריות אין לו תפקיד. */
   #rail .ngrp.side{display:block;position:static;padding:0;margin:0 0 2px;border:none}
   #rail .gcap{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:600;
-      letter-spacing:.08em;color:var(--sb-mut);padding:13px 16px 5px;white-space:nowrap}
+      letter-spacing:.08em;color:var(--sb-mut);padding:9px 16px 4px;white-space:nowrap}
   #rail .gcap svg{flex:none;width:16px;height:16px}
   #rail .ngrp.side .nitem{display:block;width:100%;text-align:right;background:none;
-      font-size:14px;font-weight:400;color:var(--sb-tx);white-space:nowrap;
-      padding:8px 30px 8px 14px;margin:0;border:none;border-right:3px solid transparent;
+      font-size:13.5px;line-height:1.3;font-weight:400;color:var(--sb-tx);white-space:nowrap;
+      padding:5px 30px 5px 14px;margin:0;border:none;border-right:3px solid transparent;
       border-radius:0;box-shadow:none;min-height:0;overflow:hidden;text-overflow:ellipsis}
   #rail .ngrp.side .nitem:hover{background:var(--sb-hi);color:#fff}
   #rail .ngrp.side .nitem.on{background:rgba(255,255,255,.07);border-right-color:var(--teal);
@@ -405,8 +405,8 @@ nav .nitem.on{color:#fff}
 @media(min-width:1100px) and (max-width:1279px){
   body:not(.driver-mode) #rail{width:182px}
   body:not(.driver-mode) main{padding:22px 18px;padding-bottom:52px}
-  #rail .ngrp.side .nitem{padding:8px 26px 8px 12px;font-size:13.5px}
-  #rail .gcap{padding:12px 13px 5px}
+  #rail .ngrp.side .nitem{padding:5px 26px 5px 12px;font-size:13px;line-height:1.3}
+  #rail .gcap{padding:9px 13px 4px}
   #rail .nitem.lone.side{padding:7px 13px;font-size:13px}
 }
 /* הדגשת תרשומת שמנווטים אליה — רקע שדוהה לאורך ~10 שניות */
@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.83-B83 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.84-B84 · 18.08.2026</div>
   </div>
 </div>
 
@@ -7872,8 +7872,12 @@ function b65MeasureNow(){
   }
   var rail = el('rail');
   var navW = (rail && navMode()==='side') ? rail.getBoundingClientRect().width : 0;
+  /* ⛔⛔ B84 — כאן ישב הבאג שהוליד מספר מדומה: main.scrollWidth כבר
+     כולל את הריפוד של main, והוספת 56 ספרה אותו פעם שנייה. התוצאה הייתה
+     גדולה מרוחב החלון עצמו — כלומר "דרוש" שאינו יכול להתקיים בלי פס
+     גלילה אופקי. need = התוכן + הרצועה, ותו לא. */
   return {
-    need: Math.round(widest + navW + 56),
+    need: Math.round(widest + navW),
     over: widest - m.clientWidth,
     what: what, win: window.innerWidth, mode: navMode(), rail: Math.round(navW)
   };
@@ -7882,6 +7886,7 @@ function b65MeasureNow(){
 /* נרשם המקסימום בלבד: מסך שנפתח פעם אחת ברוחב גדול לא "נמחק" ע"י
    פתיחה מאוחרת בחלון צר. ts נשמר כדי שאפשר יהיה לדעת מתי נמדד. */
 function b65RecordWidth(){
+  try{ b84Record(); }catch(e){}   /* B84 — מד ההתאמה ל-1024, ראה למטה */
   var r = b65MeasureNow(); if(!r) return;
   var v = VIEW || '?';
   var cur = B65_WMAP[v];
@@ -7900,6 +7905,116 @@ function b65WidthSummary(){
   return { seen:keys.length, wideSeen:wide.length, wideTotal:B65_WIDE.length,
            max:maxN, maxView:maxV, missing:B65_WIDE.filter(function(v){ return !B65_WMAP[v]; }) };
 }
+
+
+/* ============================================================
+   B84 / BLD-05 — מד ההתאמה. מה שB65 לא ידע למדוד.
+   ------------------------------------------------------------
+   ⛔⛔ הלקח שהוליד את הבלוק הזה (R9, פעם תשיעית): הריצה של 18.08.2026
+   החזירה ~1478px **בכל ארבעה-עשר המסכים, אותו מספר בדיוק**. הפירוק:
+   1478 − 206 (רצועה) − 56 = 1216 = 1422 (חלון) − 206. כלומר
+   main.scrollWidth היה שווה ל-main.clientWidth בכל מסך — **אף מסך לא
+   גלש**, והמספר שנמסר היה רוחב החלון ועוד 56, לא דרישת תוכן.
+   הקבוצה השנייה (1461) היא בדיוק אותו דבר פחות 17px — פס גלילה של
+   Windows. פריסה נוזלית ממלאת כל רוחב שנותנים לה, ולכן מדידה פסיבית
+   ברוחב אחד אינה יכולה להשיב על שאלת BLD-05.
+
+   ⛔ והרצה שנייה בחלון צר לא הייתה עוזרת: b65RecordWidth שומר מקסימום
+   בלבד, וכל מדידה צרה יותר נזרקת בשקט. לכן נוסף כפתור איפוס.
+
+   השיטה כאן: **פרובה**. מכווצים את main לרוחב שיהיה לו בחלון 1024,
+   מאלצים חישוב פריסה, קוראים כמה התוכן באמת דרש, ומחזירים מיד.
+   ⛔ הכיווץ והשחזור סינכרוניים לחלוטין — הדפדפן אינו מצייר באמצע ריצת
+      סקריפט, ולכן אין הבהוב. השחזור ב-finally, כך שגם חריגה באמצע
+      מחזירה את הפריסה.
+   ⛔ המדידה שמרנית בכוונה: היא מניחה רצועה של 206px וריפוד main של הפס
+      הרחב, בעוד שבחלון 1024 בפועל יחול הפס 1100–1279 (רצועה 182,
+      ריפוד 18) — כלומר יותר מקום. "נכנס" כאן = נכנס גם באמת.
+   ⛔ R8 — אין רשימת מסכים שנייה. B65_WIDE הוא המקור היחיד.
+   ⛔ R10 — אפס בקשות שרת, אפס כתיבה לגיליון. הכל מקומי.
+   ============================================================ */
+var B84_TARGET_WIN = 1024;                       /* השאלה של BLD-05 */
+var B84_RAIL_W     = 206;                        /* הרצועה הרחבה — המקרה המחמיר */
+var B84_MAIN_W     = B84_TARGET_WIN - B84_RAIL_W;/* 818 — מה ש-main יקבל שם */
+var B84_MAX_PROBES = 3;                          /* למסך, לסשן. הרינדור הראשון עשוי להיות שלד */
+var B84_KEY = 'mn_b84fit';
+var B84_DONE = {};
+var B84_MAP = (function(){
+  try{ return JSON.parse(localStorage.getItem(B84_KEY) || '{}') || {}; }catch(e){ return {}; }
+})();
+
+/* מכווץ את main ל-px, מודד, ומשחזר. null כשאין פריסה למדוד (jsdom / מסך מוסתר). */
+function b84ProbeMain(px){
+  var m = document.querySelector('main');
+  if(!m || !m.clientWidth) return null;
+  var saved = m.style.cssText, out = null;
+  try{
+    m.style.flex = 'none';
+    m.style.width = px + 'px';
+    m.style.minWidth = px + 'px';
+    m.style.maxWidth = px + 'px';
+    void m.offsetWidth;                       /* אילוץ חישוב פריסה מחדש */
+    var widest = m.scrollWidth, what = 'התוכן';
+    var boxes = document.querySelectorAll('main table, main .card');
+    for(var i=0;i<boxes.length;i++){
+      /* תיבה עם overflow:auto חותכת את עצמה ואינה מרחיבה את main — לכן
+         נבדקת בנפרד, אחרת טבלה רחבה נעלמת מהמדידה. */
+      if(boxes[i].scrollWidth > boxes[i].clientWidth + 2 && boxes[i].scrollWidth > widest){
+        widest = boxes[i].scrollWidth; what = 'טבלה';
+      }
+    }
+    out = { at:px, widest:widest, over: Math.max(0, widest - px),
+            what:what, needWin: widest + B84_RAIL_W };
+  } finally {
+    m.style.cssText = saved;
+    void m.offsetWidth;
+  }
+  return out;
+}
+
+/* נרשם המקסימום, כמו ב-B65 — אבל כאן המספר אינו תלוי ברוחב החלון שבו נמדד,
+   ולכן המקסימום הוא באמת הדרישה הגדולה ביותר ולא החלון הגדול ביותר. */
+function b84Record(){
+  if(typeof navMode === 'function' && navMode() !== 'side') return;
+  var v = VIEW || '?';
+  if((B84_DONE[v] || 0) >= B84_MAX_PROBES) return;
+  var r = b84ProbeMain(B84_MAIN_W); if(!r) return;
+  B84_DONE[v] = (B84_DONE[v] || 0) + 1;
+  var cur = B84_MAP[v];
+  if(cur && Number(cur.needWin) >= r.needWin) return;
+  B84_MAP[v] = { needWin:r.needWin, over:r.over, what:r.what, at:r.at,
+                 win:window.innerWidth, ts:Date.now() };
+  try{ localStorage.setItem(B84_KEY, JSON.stringify(B84_MAP)); }catch(e){}
+}
+
+function b84FitSummary(){
+  var keys = Object.keys(B84_MAP);
+  var wide = B65_WIDE.filter(function(v){ return B84_MAP[v]; });
+  var maxN = 0, maxV = '', bad = [];
+  keys.forEach(function(v){
+    var x = B84_MAP[v];
+    if(Number(x.needWin) > maxN){ maxN = Number(x.needWin); maxV = v; }
+    if(Number(x.over) > 2) bad.push(v);
+  });
+  return { seen:keys.length, wideSeen:wide.length, wideTotal:B65_WIDE.length,
+           target:B84_TARGET_WIN, max:maxN, maxView:maxV, bad:bad,
+           missing:B65_WIDE.filter(function(v){ return !B84_MAP[v]; }) };
+}
+
+/* ⛔ בלי זה נוצרת בדיוק התקלה של B65: מפה שנצברה בחלון אחד חוסמת לנצח
+   כל מדידה חדשה, כי נשמר מקסימום בלבד. */
+function b84Reset(){
+  Object.keys(B84_MAP).forEach(function(k){ delete B84_MAP[k]; });
+  Object.keys(B65_WMAP).forEach(function(k){ delete B65_WMAP[k]; });
+  Object.keys(B84_DONE).forEach(function(k){ delete B84_DONE[k]; });
+  try{ localStorage.removeItem(B84_KEY); localStorage.removeItem(B65_WKEY); }catch(e){}
+  try{ b61Paint(); }catch(e){}
+  try{ toast('המדידה אופסה — עבור בין המסכים והרץ שוב'); }catch(e){}
+}
+
+var B84_VIEW_HE = { items:'פריטים', orders:'הזמנות', finance:'כספים',
+                    payroll:'שכר', audit:'יומן פעולות', reports:'דוחות' };
+function b84He(v){ return B84_VIEW_HE[v] || v; }
 
 /* ================= B61 / BLD-08 — בדיקה עצמית בדפדפן =================
    למה זה קיים: B60 עבר 60 בדיקות אוטומטיות ב-jsdom ונכשל אצל אבי בלחיצה
@@ -7921,7 +8036,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.83-B83';
+var B61_CANARY = 'v4.84-B84';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -8209,14 +8324,20 @@ function b61Tests(){ return [
    כל עוד לא נראו כל ששת המסכים הרחבים — כי מספר חלקי גרוע ממספר חסר:
    הוא נראה כמו תשובה. */
 { g:'פריסה ותצוגה', n:'רוחב מרבי בכל המסכים שנפתחו (BLD-05 — המספר המכריע)', f:function(){
-    var sm = b65WidthSummary();
+    /* ⛔⛔ B84 — הטענה נשענת על הפרובה ולא על המדידה הפסיבית. עד B83 היא
+       דיווחה את רוחב החלון ולא את דרישת התוכן, ולכן "עברה" בלי להשיב
+       על שום שאלה. עכשיו היא נכשלת בשלושה מצבים נפרדים, וכל אחד אומר
+       לאבי בדיוק מה לעשות. */
+    var sm = b84FitSummary();
     if(!sm.seen) return { ok:false, note:'טרם נמדד שום מסך — פתח מסך אחד וחזור לכאן' };
-    var names = { items:'פריטים', orders:'הזמנות', finance:'כספים', payroll:'שכר', audit:'יומן פעולות', reports:'דוחות' };
-    var miss = sm.missing.map(function(v){ return names[v] || v; }).join(', ');
-    return { ok: sm.wideSeen >= sm.wideTotal,
-      note: 'דרוש למערכת ~' + sm.max + 'px (הכי רחב: ' + (names[sm.maxView] || sm.maxView) + ')' +
-            ' · נמדדו ' + sm.wideSeen + ' מתוך ' + sm.wideTotal + ' מסכים רחבים' +
-            (miss ? ' · ⚠ חסרים: ' + miss : ' · הרשימה מלאה') };
+    if(sm.wideSeen < sm.wideTotal)
+      return { ok:false, note:'נמדדו ' + sm.wideSeen + ' מתוך ' + sm.wideTotal +
+        ' מסכים רחבים · ⚠ חסרים: ' + sm.missing.map(b84He).join(', ') };
+    return { ok: sm.bad.length === 0,
+      note: 'נבדק מול חלון ' + sm.target + 'px · דרוש למערכת ~' + sm.max +
+            'px (הכי רחב: ' + b84He(sm.maxView) + ')' +
+            (sm.bad.length ? ' · ⚠ גולשים: ' + sm.bad.map(b84He).join(', ')
+                           : ' · הכל נכנס') };
 } }
 
 ]; }
@@ -8255,15 +8376,17 @@ function b61Text(){
   L.push('עברו ' + r.pass + ' · נכשלו ' + r.fail);
   /* B65: המדידה נכנסת לבלוק **תמיד**, גם כשהבדיקה עברה. עד כאן הועתקו
      רק כשלים, ולכן המספר שחוסם את BLD-05 מעולם לא הגיע לצ'אט. */
-  var sm = b65WidthSummary();
+  var sm = b84FitSummary();
   if(sm.seen){
     L.push('');
-    L.push('--- רוחב (BLD-05) ---');
+    L.push('--- התאמה ל-' + sm.target + 'px (BLD-05) ---');
     L.push('דרוש מרבי: ~' + sm.max + 'px · מסך: ' + sm.maxView +
            ' · נמדדו ' + sm.wideSeen + '/' + sm.wideTotal + ' מסכים רחבים');
-    Object.keys(B65_WMAP).sort(function(a,b){ return B65_WMAP[b].need - B65_WMAP[a].need; })
-      .forEach(function(v){ var x = B65_WMAP[v];
-        L.push('  ' + v + ': ~' + x.need + 'px (חלון ' + x.win + ' · ' + x.mode + ' · רצועה ' + x.rail + ')'); });
+    Object.keys(B84_MAP).sort(function(a,b){ return B84_MAP[b].needWin - B84_MAP[a].needWin; })
+      .forEach(function(v){ var x = B84_MAP[v];
+        L.push('  ' + v + ': דרוש ~' + x.needWin + 'px · ' +
+               (Number(x.over) > 2 ? '⚠ גולש ב-' + x.over + 'px (' + x.what + ')' : 'נכנס') +
+               ' · נמדד בחלון ' + x.win); });
     if(sm.missing.length) L.push('  ⚠ טרם נמדדו: ' + sm.missing.join(', '));
   }
   if(r.fail){
@@ -8340,7 +8463,8 @@ function b61Card(){
   if(ROLE !== 'מנהל') return '';
   return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">' +
     '<h3 class="grow">בדיקה עצמית בדפדפן (B61 · BLD-08)</h3>' +
-    '<button class="btn sm" onclick="b61Run()"' + (B61_BUSY ? ' disabled' : '') + '>▶ הרץ בדיקה עצמית</button></div>' +
+    '<button class="btn sm" onclick="b61Run()"' + (B61_BUSY ? ' disabled' : '') + '>▶ הרץ בדיקה עצמית</button>' +
+    '<button class="btn sm ghost" onclick="b84Reset()" title="מוחק את מדידות הרוחב שנצברו — לפני מדידה מחדש">↺ אפס מדידת רוחב</button></div>' +
     '<div class="muted" style="font-size:12px;margin-bottom:8px">' +
     'קריאה בלבד — <b>אפס בקשות לשרת</b>, אין כתיבה לגיליון ואין רישום ביומן הפעולות. ' +
     'הבדיקות האוטומטיות שרצות לפני כל מסירה רצות בדפדפן מדומה, ולכן אינן יכולות להוכיח ' +
