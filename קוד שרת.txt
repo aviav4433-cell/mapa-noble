@@ -135,6 +135,17 @@
 //             B77 — WASH-23: ציר הסטטוס של החשבונית — canary v4.77-B77
 //             B78 — WASH-23ב: ציר הסטטוס בשכר · משימות · רכש · נסיעות — canary v4.78-B78
 //             B79 — WASH-23ג: ציר הסטטוס של המשלוחים (deliveries) — canary v4.79-B79
+//             B83 — BLD-09 + BLD-10 — canary v4.83-B83
+//                   ⭐ BLD-09: attendance/payroll יורדות מ-getAll
+//                     (SLIM_POLICY mode:'onDemand') ונשלחות **במלואן** דרך
+//                     b58Tables הקיימת, בבקשה אחת שמביאה את שתיהן יחד.
+//                     ⛔ אין חיתוך שורות — דוח השעות של B50 ומדד Y1 שלמים.
+//                     ⛔ הנהג מקבל אותן כמו קודם (b58Tables חסומה לו).
+//                   ⭐ BLD-10: דוח "מלאי ממוספר לפי סטטוס" — ממשק בלבד.
+//                     ⛔ ניצולת לפי טווח תאריכים ברמת יחידה דורשת שינוי
+//                     סכימה (אין ב-units תאריך שינוי סטטוס ואין unit_id
+//                     באף טבלה) — נרשמה כ-BLD-10ב וחסומה באישור אבי.
+//                   ⛔ אין שינוי סכימה. ⛔ אין להריץ setupDatabase.
 //             B80 — WASH-23ג חלק ב': ציר הסטטוס בטבלאות הכסף (charges · payments ·
 //                   paymentDeclarations · futureExpenses · creditProfiles) ובשערי הציוד
 //                   (vehicles · machines) — canary v4.81-B81
@@ -750,16 +761,62 @@ var LONG_TEXT_FIELDS = { notes: ['text'], tasks: ['details'], meetings: ['protoc
 //   package_moves— יתרת אריזות מחושבת באותה צורה (pkgBalance / pkgLedger).
 //   fault_events — דוח "עלות תחזוקה לפי חודש" (B50) רץ על טווח חופשי,
 //                  כולל שנים אחורה. חיתוך = עלויות שנעלמות בשקט.
-// attendance ו-payroll אינן נחתכות (דוח השעות של B50 + מדד Y1 + שכר).
+// attendance ו-payroll אינן נחתכות — ראה BLD-09 למטה.
+//
+// mode:'onDemand' (⭐ BLD-09/B83) — הטבלה אינה נקראת ואינה נשלחת ב-getAll,
+//                אבל היא נשלחת **במלואה** כשהממשק מבקש אותה במפורש דרך
+//                b58Tables. זו אינה חתיכה: אף שורה אינה אובדת, ולכן דוח
+//                השעות של B50 ומדד Y1 ממשיכים לעבוד על הנתונים המלאים.
+//                ⛔ החיתוך לפי ימים נפסל במפורש בחלק 11 מהסיבה הזו בדיוק.
 //
 // mode:'drop'  — הטבלה כלל אינה נקראת מהגיליון ונשלחת כמערך ריק
 //                (הממשק מניח שכל המערכים קיימים — ולכן [] ולא undefined).
 // mode:'days'  — רק N הימים האחרונים; רשומה בלי חותמת זמן נשמרת תמיד,
 //                כדי שנתון לא ייעלם בשקט בגלל שדה ריק.
 // ============================================================================
+// ============================================================================
+// ⭐⭐ BLD-09 / B83 — נוכחות ושכר יורדות מ-getAll ונטענות לפי דרישה
+// ----------------------------------------------------------------------------
+// ⚠⚠ R9, בפעם השמינית: ההנחה בחלק 11 הייתה ש-attendance ו-payroll עולות
+// נסיעה לגיליון כל אחת. ספירה מול הקוד החי הראתה שזה כבר לא נכון — b58BatchRead
+// קורא את **כל** הטווחים בשתי קריאות HTTP קבועות מאז B58, בלי קשר למספר
+// הטבלאות. מה שהן כן עולות, ואומת בקוד:
+//   ① נפח בשתי קריאות ה-batchGet, שגדל לנצח (שורה לעובד ליום)
+//   ② סריאליזציה + כתיבת מטמון בכל שינוי גרסה של אחת מהן
+//   ③ ⛔ B58_MAX_CACHE_VAL = 90000 — טבלה שה-JSON שלה עבר ~90KB **מפסיקה
+//      להיכנס למטמון** ומחושבת מחדש בכל getAll, לכל משתמש, לנצח.
+//      זו הפצצה האמיתית, והיא ודאית ולא תיאורטית.
+//   ④ משקל המטען לדפדפן.
+// ⛔ R10 נשמר כלשונו: מספר הבקשות לא גדל למי שאינו נכנס למסכי השכר והנוכחות,
+//    ומי שכן נכנס משלם **בקשה אחת** שמביאה את שתי הטבלאות יחד — לא שתיים.
+// ⛔ R8 נשמר: השליפה עוברת ב-b58Tables הקיימת. לא נבנתה שכבת שליפה שנייה.
+// ⛔ אף מסך לא שוכתב. שש נקודות הצריכה בממשק ממשיכות לקרוא DB.attendance /
+//    DB.payroll בדיוק כמו קודם; הממשק רק דואג שהן מלאות לפני הרינדור.
+// ⚠⚠ הנהג הוא החריג שנמצא בספירה ולא היה בהיקף: allowedViews נותן לו
+//    'attendance' ו-'payroll', והמטען שלו נבנה ב-getDriverFilteredPayload
+//    שמסנן מ-full.attendance — בעוד b58Tables **חסומה לנהג בכוונה** (B17).
+//    בלי החריג למטה שני המסכים שלו היו נשארים ריקים לנצח, בשקט.
+// ============================================================================
+var BLD09_ONDEMAND = ['attendance', 'payroll'];
+function bld09IsOnDemand(t) { return BLD09_ONDEMAND.indexOf(String(t)) !== -1; }
+
+// כל הטבלאות שנקראות בפועל, כולל אלה שלפי דרישה. משמש את מסלול הנהג בלבד,
+// והוא רץ **לפני** getAllPayload כדי שהכול ייכנס לאותה קריאת batchGet אחת
+// ומספר הנסיעות של הנהג לא ישתנה כלל.
+function bld09PrefetchAll(db) {
+  var names = Object.keys(TMAP).filter(function (t) {
+    var pol = SLIM_POLICY[t];
+    return !(pol && pol.drop);
+  });
+  return b58Prefetch(db, names);
+}
+
 var SLIM_POLICY = {
   // צרכן יחיד — מסך היומן, שעבר ב-B51 לעימוד שרת (b51AuditPage)
   audit_log: { drop: true },
+  // ⭐⭐ BLD-09/B83 — לפי דרישה. ⛔ אין חיתוך ואין אובדן שורות.
+  attendance: { onDemand: true },
+  payroll: { onDemand: true },
   // אפס צרכנים ב-index.html (יומן שיחות הנהג נכתב ואינו מוצג)
   call_logs: { drop: true },
   // B55 — אפס צרכנים ישירים; המסכים עובדים דרך b10ApprovalsInbox ו-portalGetData
@@ -796,10 +853,14 @@ function b51RowYmd(r, fields) {
 //      יציגו "מוצגים N הימים האחרונים" ולא ייראו כאילו הנתונים נעלמו.
 // B58: הלוגיקה של טבלה אחת, מופרדת מהלולאה — כדי ששני המסלולים (מטען מלא
 // ומטען מהמטמון פר-טבלה) יריצו **בדיוק את אותו קוד** ולא ייווצר drift.
-function b58TablePayload(t, db) {
+function b58TablePayload(t, db, full) {
   var pol = SLIM_POLICY[t];
   // drop: לא נוגעים ב-db[key] בכלל — הגיליון אינו נקרא (זה החיסכון האמיתי)
   if (pol && pol.drop) return { rows: [], slim: { mode: 'drop' } };
+  /* ⭐ BLD-09/B83: onDemand — אותו חיסכון בדיוק ב-getAll, אבל full=true
+     מחזיר את הטבלה **במלואה**, בלי חיתוך. הדגל מגיע משני מקומות בלבד:
+     case 'b58Tables' (הממשק ביקש במפורש) ו-getDriverFilteredPayload. */
+  if (pol && pol.onDemand && !full) return { rows: [], slim: { mode: 'ondemand' } };
   var rows = db[TMAP[t]];
   var slim = null;
   if (pol && pol.days) {
@@ -1038,7 +1099,8 @@ function b58PrefetchForPayload(db) {
   try {
     var names = Object.keys(TMAP).filter(function (t) {
       var pol = SLIM_POLICY[t];
-      return !(pol && pol.drop);   // טבלה שאינה נשלחת — לא נקראת כלל
+      // טבלה שאינה נשלחת — לא נקראת כלל. ⭐ BLD-09: כולל onDemand.
+      return !(pol && (pol.drop || pol.onDemand));
     });
     return b58Prefetch(db, names);
   } catch (e) { return null; }
@@ -1065,7 +1127,8 @@ function b58PayloadCached(db) {
     missing.push(t);
   });
   if (missing.length) {
-    var need = missing.filter(function (t) { var p = SLIM_POLICY[t]; return !(p && p.drop); });
+    /* ⭐ BLD-09: onDemand אינה נקראת גם כאן — b58TablePayload יחזיר [] ממילא */
+    var need = missing.filter(function (t) { var p = SLIM_POLICY[t]; return !(p && (p.drop || p.onDemand)); });
     try { b58Prefetch(db, need); } catch (e) { /* נפילה חיננית — readTable */ }
     var shortPut = {}, longPut = {};
     missing.forEach(function (t) {
@@ -2051,6 +2114,12 @@ function getAllCached(db) {
 // לא עובר דרך המטמון המשותף (getAllCached) כי הוא ייחודי-משתמש; לא קריטי ביצועית — נהג יחיד מרענן, לא כולם.
 // מחזיר תמיד את כל מפתחות הטבלאות (ריקים היכן שאין הרשאה) — הממשק מניח שכל המערכים קיימים.
 function getDriverFilteredPayload(db, employeeId) {
+  /* ⭐⭐ BLD-09/B83 — החריג של הנהג. allowedViews נותן לנהג את מסכי
+     'attendance' ו-'payroll', והוא **אינו** יכול למשוך אותן דרך b58Tables
+     (חסומה לנהג בכוונה מאז B58). לכן הן נקראות כאן במלואן ומסוננות לשורות
+     שלו בלבד — בדיוק כמו עד היום. ⛔ ה-prefetch רץ לפני getAllPayload כדי
+     ששתיהן ייכנסו לאותה קריאת batchGet: מספר הנסיעות של הנהג לא השתנה (R10). */
+  try { bld09PrefetchAll(db); } catch (eD9) { /* נפילה חיננית — readTable */ }
   var full = getAllPayload(db);
   var emp = (db.employees || []).find(function (e) { return e.id === employeeId; });
   var driverName = emp ? emp.name : '';
@@ -2068,8 +2137,10 @@ function getDriverFilteredPayload(db, employeeId) {
   out.customers = (full.customers || []).filter(function (c) { return custIds[c.id]; }).map(function (c) {
     return { id: c.id, name: c.name, address: c.address, phone: c.phone };
   });
-  out.attendance = (full.attendance || []).filter(function (a) { return a.employee_id === employeeId; });
-  out.payroll = (full.payroll || []).filter(function (r) { return r.employee_id === employeeId; });
+  /* ⭐ BLD-09: full.attendance/full.payroll ריקות במכוון (onDemand) — הנהג
+     מקבל את השורות שלו מהטבלה המלאה, דרך אותו b58TablePayload עם full=true. */
+  out.attendance = (b58TablePayload('attendance', db, true).rows || []).filter(function (a) { return a.employee_id === employeeId; });
+  out.payroll = (b58TablePayload('payroll', db, true).rows || []).filter(function (r) { return r.employee_id === employeeId; });
   out.tasks = (full.tasks || []).filter(function (t) { return t.assignee_id === employeeId; });
   var taskIds = {};
   out.tasks.forEach(function (t) { taskIds[t.id] = true; });
@@ -2087,7 +2158,11 @@ function getDriverFilteredPayload(db, employeeId) {
   out.deliveryTrips = (full.deliveryTrips || []).filter(function (t) { return String(t.driver_id) === String(employeeId); });
   // B51: הנהג יורש את אותה מדיניות קיצוץ — אף אחת מהטבלאות שלו אינה נחתכת,
   // אבל הדגל עובר כדי שהממשק יתנהג זהה בשני המצבים.
-  out._slim = full._slim || {};
+  var slimD = {}, srcSlim = full._slim || {};
+  for (var kSl in srcSlim) slimD[kSl] = srcSlim[kSl];
+  /* ⭐ BLD-09: לנהג הן כבר נשלחו במלואן — הממשק לא יבקש אותן שוב */
+  BLD09_ONDEMAND.forEach(function (t) { slimD[t] = { mode: 'full' }; });
+  out._slim = slimD;
   return out;
 }
 
@@ -2109,12 +2184,28 @@ function handle(action, p, db, user) {
       if (String(p._verified_role || '') === 'נהג') return { ok: false, error: 'שליפה חלקית אינה נתמכת לנהג' };
       var wantT = (p.tables || []).map(String).filter(function (t) { return !!TMAP[t]; });
       if (!wantT.length) return { ok: true, db: {}, _slim: {}, tables: [] };
-      var fullT = b58PayloadCached(db);
       var outT = {}, slimT = {};
-      wantT.forEach(function (t) {
-        outT[TMAP[t]] = fullT[TMAP[t]] || [];
-        if (fullT._slim && fullT._slim[t]) slimT[t] = fullT._slim[t];
-      });
+      /* ⭐⭐ BLD-09/B83: טבלה שלפי דרישה אינה עוברת במטמון המשותף של
+         b58PayloadCached — אחרת המטען המלא שלה היה נכנס למפתח שממנו getAll
+         קורא, ומדליף אותה בחזרה לכל המשתמשים. היא נקראת בנפרד, במלואה,
+         ורק כשהממשק ביקש אותה בשמה. */
+      var odT = wantT.filter(bld09IsOnDemand);
+      var stdT = wantT.filter(function (t) { return !bld09IsOnDemand(t); });
+      if (stdT.length) {
+        var fullT = b58PayloadCached(db);
+        stdT.forEach(function (t) {
+          outT[TMAP[t]] = fullT[TMAP[t]] || [];
+          if (fullT._slim && fullT._slim[t]) slimT[t] = fullT._slim[t];
+        });
+      }
+      if (odT.length) {
+        try { b58Prefetch(db, odT); } catch (eOd) { /* נפילה חיננית — readTable */ }
+        odT.forEach(function (t) {
+          var rOd = b58TablePayload(t, db, true);
+          outT[TMAP[t]] = rOd.rows || [];
+          slimT[t] = { mode: 'full' };
+        });
+      }
       return { ok: true, db: b58ScrubIfNeeded(outT, p._verified_role), _slim: slimT, tables: wantT };
     }
 
