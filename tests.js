@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.75-B75', 'ה-canary לא עודכן ל-B75');
+      t.eq(inJs, 'v4.76-B76', 'ה-canary לא עודכן ל-B76');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,393 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.75-B75 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.76-B76 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.75-B75', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.75-B75/g) || []).length, 2,
+      t.has(s, 'v4.76-B76', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.76-B76/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+/* ============================================================
+   B76 / WASH-22 — ציר הסטטוס של ההזמנה
+   ------------------------------------------------------------
+   ⚠ WASH-22 נוגע במלאי ולא בכסף — ולכן יש כאן בדיקת מלאי מלאה
+   (availableQty · reservedQty · b48CommittedQty · inLaundryQty ·
+   b48FreeOnShelf) לפני ואחרי, על סטטוס נקי ועל סטטוס מלוכלך, בשרת
+   וגם בממשק, וכן בדיקת R6 בשלושת המקורות.
+   ⚠ הכרעת אבי 17.08.2026: סטטוס לא מוכר וסטטוס ריק **משריינים מלאי**
+   (במלאי בלבד — בשאר האתרים אין ריכוך).
+   ⚠ תיקון נלווה מכוון: 'טיוטה' מלוכלכת הייתה **נספרת כחוב** לפני B76,
+   כי ההשוואה מול B54_SKIP_ORDER נכשלה בשקט. עכשיו היא מדולגת כמו
+   טיוטה נקייה — ושלושת מקורות הכסף מסכימים על כך (R6).
+   ============================================================ */
+
+const B76 = {
+  DIRTY: ['מאושרת\u00A0', ' מאושרת', 'מאושרת ', '\u200Eמאושרת'],
+  DIRTY_DRAFT: ['טיוטה\u00A0', ' טיוטה', '\u200Fטיוטה'],
+  DIRTY_QUOTE: ['הצעת מחיר\u00A0', 'הצעת  מחיר', ' הצעת מחיר'],
+
+  /* מלאי: פריט אחד, 100 יחידות במחסן, הזמנת השכרה על 10 */
+  invDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', price_per_kg: 5, credit_limit: 100000 }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', rent_price: 25, wash_price: 3, weight_kg: 0.5, min_stock: '' }];
+    db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 100, warehouse_id: '' }];
+    db.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', type: 'השכרה', status: status,
+      start_date: '2026-09-01', end_date: '2026-09-05', warehouse_id: '', delivery_fee: 0, shortage_charge: 0 }];
+    db.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 25, returned_qty: '' }];
+    return db;
+  },
+  inv(srv, db) {
+    return {
+      avail: srv.availableQty(db, 'IT1', '2026-09-02', '2026-09-03'),
+      reserved: srv.reservedQty(db, 'IT1', '2026-09-02', '2026-09-03'),
+      committed: srv.b48CommittedQty(db, 'IT1'),
+      laundry: srv.inLaundryQty(db, 'IT1'),
+      free: srv.b48FreeOnShelf(db, 'IT1')
+    };
+  },
+  money(srv, db) {
+    srv.b54Bump();
+    const bal = srv.b48BalancesAg(db)['C1'] || 0;
+    const used = srv.b2CreditUsedAg(db, 'C1');
+    const open = srv.b54CustomerOpenAg(db)['C1'] || 0;
+    srv.b54Bump();
+    return { bal: bal, used: used, open: open };
+  },
+  /* הממשק — אותו מצאי בדיוק, ישר על DB */
+  uiSet(w, status) {
+    w.DB.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', min_stock: '' }];
+    w.DB.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 100, warehouse_id: '' }];
+    w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 100000 }];
+    w.DB.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', type: 'השכרה', status: status,
+      start_date: '2026-09-01', end_date: '2026-09-05', warehouse_id: '', delivery_fee: 0, shortage_charge: 0 }];
+    w.DB.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 25, returned_qty: '' }];
+    w.DB.laundryTasks = []; w.DB.invoices = []; w.DB.payments = []; w.DB.settings = [];
+    /* ⚠ לקח B74 — המטמון יושב על אובייקט ה-DB עצמו. בלי מחיקה, המדידה
+       השנייה מודדת את התוצאה של הראשונה ו"עוברת" בלי לבדוק כלום. */
+    delete w.DB._b54Ledger; delete w.DB._b48Bal;
+    return w.b40ItemBreakdown('IT1');
+  },
+  /* חתימת גוף פונקציה מקוד המקור, בלי הערות (לקח B75: H.stripComments
+     נתקע במצב מחרוזת בקוד השרת — חותכים בתוך הגוף שחולץ בלבד) */
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return String(s || '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' '); }
+};
+
+SPECS.push({
+  file: 't22-b76-srv',
+  title: 'B76 — WASH-22 — ציר הסטטוס בשרת: מלאי · כסף · שערים',
+  needs: 'server',
+  requires: ['w22Stat', 'w22Known', 'w22Reserving', 'w21IsRental', 'w17IsWash',
+             'reservedQty', 'b48CommittedQty', 'availableQty', 'inLaundryQty', 'b48FreeOnShelf',
+             'b48BalancesAg', 'b2CreditUsedAg', 'b54CustomerOpenAg', 'b54Bump', 'b54Ledger',
+             'approveOrder', 'deliverOrder', 'receiveReturn', 'sVal', 'sPick',
+             'ORDER_STATUSES', 'RESERVING_STATUSES', 'B54_SKIP_ORDER', 'toAg', 'fromAg'],
+
+  tests: {
+
+    /* ================= המלאי ================= */
+
+    '⛔⛔ WASH-22: הזמנה מאושרת עם סטטוס מלוכלך כן משריינת מלאי': (t, { srv }) => {
+      const clean = B76.inv(srv, B76.invDb(srv, 'מאושרת'));
+      t.eq(clean.reserved, 10, 'קו הבסיס נשבר — מאושרת נקייה אינה משריינת 10');
+      B76.DIRTY.forEach(st => {
+        const got = B76.inv(srv, B76.invDb(srv, st));
+        t.eq(got.reserved, 10,
+          '⛔⛔ reservedQty החזיר ' + got.reserved + ' על סטטוס ' + JSON.stringify(st) + ' — זה WASH-22 עצמו');
+        t.eq(got.committed, 10,
+          '⛔⛔ b48CommittedQty החזיר ' + got.committed + ' על סטטוס ' + JSON.stringify(st));
+        t.eq(got.avail, clean.avail,
+          '⛔⛔ availableQty נבדל בין סטטוס נקי (' + clean.avail + ') למלוכלך (' + got.avail + ')');
+        t.eq(got.free, clean.free, '⛔ b48FreeOnShelf נבדל בין נקי למלוכלך');
+      });
+    },
+
+    '⛔ WASH-22: המלאי על סטטוס נקי לא זז — רגרסיה מלאה': (t, { srv }) => {
+      ['מאושרת', 'סופקה'].forEach(st => {
+        const g = B76.inv(srv, B76.invDb(srv, st));
+        t.eq(g.reserved, 10, '⛔ reservedQty זז על ' + st);
+        t.eq(g.committed, 10, '⛔ b48CommittedQty זז על ' + st);
+        t.eq(g.laundry, 0, '⛔ inLaundryQty זז');
+        t.eq(g.avail, 90, '⛔ availableQty זז — 100 פחות 10 משוריינות');
+        t.eq(g.free, 90, '⛔ b48FreeOnShelf זז');
+      });
+      ['הוחזרה', 'הושלמה', 'בוטלה'].forEach(st => {
+        const g = B76.inv(srv, B76.invDb(srv, st));
+        t.eq(g.reserved, 0, '⛔ סטטוס ' + st + ' התחיל לשריין — שינוי התנהגות');
+        t.eq(g.avail, 100, '⛔ הזמין הושפע מסטטוס ' + st);
+      });
+    },
+
+    '⛔ WASH-22: טיוטה והצעת מחיר אינן משריינות — גם מלוכלכות': (t, { srv }) => {
+      ['טיוטה', 'הצעת מחיר'].concat(B76.DIRTY_DRAFT, B76.DIRTY_QUOTE).forEach(st => {
+        const g = B76.inv(srv, B76.invDb(srv, st));
+        t.eq(g.reserved, 0,
+          '⛔⛔ סטטוס ' + JSON.stringify(st) + ' שריין מלאי — טיוטה אינה התחייבות');
+        t.eq(g.committed, 0, '⛔⛔ b48CommittedQty ספר טיוטה על ' + JSON.stringify(st));
+        t.eq(g.avail, 100, '⛔ הזמין הושפע מטיוטה');
+        t.eq(g.free, 100, '⛔ b48FreeOnShelf הושפע מטיוטה');
+      });
+    },
+
+    '⭐ הכרעת אבי: סטטוס לא מוכר וסטטוס ריק משריינים מלאי': (t, { srv }) => {
+      ['בהמתנה', 'ממתין לאישור', '', 'XYZ'].forEach(st => {
+        const g = B76.inv(srv, B76.invDb(srv, st));
+        t.eq(g.reserved, 10,
+          '⛔ סטטוס ' + JSON.stringify(st) + ' אינו משריין — הכרעת אבי 17.08.2026 היא שכן');
+        t.eq(g.committed, 10, '⛔ b48CommittedQty אינו סופר סטטוס ' + JSON.stringify(st));
+        t.eq(g.avail, 90, '⛔ הזמין אינו מפחית סטטוס לא מוכר');
+      });
+      t.no(srv.w22Reserving(null), 'w22Reserving על null אינו false');
+      t.no(srv.w22Reserving(undefined), 'w22Reserving על undefined אינו false');
+    },
+
+    '⛔ w22Stat: קנוני לסטטוס מוכר, מנורמל לסטטוס לא מוכר': (t, { srv }) => {
+      t.eq(srv.w22Stat({ status: 'מאושרת\u00A0' }), 'מאושרת', '⛔ רווח קשיח לא נורמל');
+      t.eq(srv.w22Stat({ status: '\u200Eסופקה ' }), 'סופקה', '⛔ תו כיווניות לא נורמל');
+      t.eq(srv.w22Stat({ status: 'הצעת  מחיר' }), 'הצעת מחיר', '⛔ רווח כפול לא נורמל');
+      t.eq(srv.w22Stat({ status: 'בהמתנה' }), 'בהמתנה',
+        '⛔⛔ סטטוס לא מוכר הוחלף בסטטוס מוכר — ריכוך אסור');
+      t.eq(srv.w22Stat({ status: '' }), '', '⛔ סטטוס ריק אינו מחזיר מחרוזת ריקה');
+      t.eq(srv.w22Stat(null), '', '⛔ w22Stat על null אינו מחזיר מחרוזת ריקה');
+      t.ok(srv.w22Known({ status: ' מאושרת' }), '⛔ מאושרת מלוכלכת אינה מוכרת');
+      t.no(srv.w22Known({ status: 'בהמתנה' }), '⛔ סטטוס לא מוכר סומן כמוכר');
+      t.no(srv.w22Known({ status: '' }), '⛔ סטטוס ריק סומן כמוכר');
+    },
+
+    /* ================= הכסף — R6 ================= */
+
+    '⛔ R6 בשלושת המקורות: מאושרת מלוכלכת — הכסף לא זז': (t, { srv }) => {
+      const base = B76.money(srv, B76.invDb(srv, 'מאושרת'));
+      t.eq(base.bal, 25000, 'קו הבסיס נשבר — 10 × 25 ₪ = 250 ₪ = 25000 אגורות');
+      t.eq(base.used, base.bal, '⛔ R6: b2CreditUsedAg נבדל מ-b48BalancesAg');
+      t.eq(base.open, base.bal, '⛔ R6: b54CustomerOpenAg נבדל מ-b48BalancesAg');
+      B76.DIRTY.forEach(st => {
+        const got = B76.money(srv, B76.invDb(srv, st));
+        t.eq(got.bal, base.bal, '⛔⛔ הכסף זז על סטטוס ' + JSON.stringify(st));
+        t.eq(got.used, got.bal, '⛔ R6 נשבר על סטטוס ' + JSON.stringify(st));
+        t.eq(got.open, got.bal, '⛔ R6 נשבר על סטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    '⭐ R6: טיוטה מלוכלכת אינה חוב — התיקון הנלווה, ושלושת המקורות מסכימים': (t, { srv }) => {
+      const clean = B76.money(srv, B76.invDb(srv, 'טיוטה'));
+      t.eq(clean.bal, 0, 'קו הבסיס נשבר — טיוטה נקייה נספרה כחוב');
+      B76.DIRTY_DRAFT.concat(B76.DIRTY_QUOTE).forEach(st => {
+        const got = B76.money(srv, B76.invDb(srv, st));
+        t.eq(got.bal, 0,
+          '⛔⛔ סטטוס ' + JSON.stringify(st) + ' עדיין נספר כחוב — B54_SKIP_ORDER לא נורמל');
+        t.eq(got.used, got.bal, '⛔ R6 נשבר על ' + JSON.stringify(st));
+        t.eq(got.open, got.bal, '⛔ R6 נשבר על ' + JSON.stringify(st));
+      });
+      /* סטטוס לא מוכר — מחויב, כמו לפני B76 (אינו ב-B54_SKIP_ORDER) */
+      const unk = B76.money(srv, B76.invDb(srv, 'בהמתנה'));
+      t.eq(unk.bal, 25000, '⛔ סטטוס לא מוכר הפסיק להיות מחויב — שינוי כסף בלי הכרעה');
+      t.eq(unk.used, unk.bal, '⛔ R6 נשבר על סטטוס לא מוכר');
+    },
+
+    '⛔ B74 לא נשבר — הזמנת כביסה מלוכלכת אינה כסף השכרה': (t, { srv }) => {
+      const db = B76.invDb(srv, 'מאושרת\u00A0');
+      db.orders[0].type = 'כביסה\u00A0';
+      const m = B76.money(srv, db);
+      t.eq(m.bal, 0, '⛔⛔ B74 נשבר — כביסה מלוכלכת חזרה להיות כסף השכרה');
+      const g = B76.inv(srv, db);
+      t.eq(g.reserved, 0, '⛔⛔ B75 נשבר — הזמנת כביסה שריינה מלאי MAPA');
+    },
+
+    /* ================= השערים התפעוליים ================= */
+
+    '⭐ WASH-22: אישור · אספקה · קליטת החזרה עובדים על סטטוס מלוכלך': (t, { srv }) => {
+      const run = st => {
+        const db = B76.invDb(srv, st);
+        return srv.approveOrder(db, 'O1');
+      };
+      t.ok(run('טיוטה').ok, 'קו הבסיס נשבר — אישור טיוטה נקייה נכשל');
+      B76.DIRTY_DRAFT.forEach(st => {
+        const r = run(st);
+        t.ok(r.ok, '⛔⛔ אישור נכשל על טיוטה ' + JSON.stringify(st) + ': ' + (r.error || ''));
+      });
+      B76.DIRTY.forEach(st => {
+        const db = B76.invDb(srv, st);
+        const r = srv.deliverOrder(db, 'O1');
+        t.ok(r.ok, '⛔⛔ אספקה נכשלה על מאושרת ' + JSON.stringify(st) + ': ' + (r.error || ''));
+      });
+      const dbR = B76.invDb(srv, 'סופקה\u00A0');
+      const rr = srv.receiveReturn(dbR, 'O1', {}, '2026-09-06', p => p + '-1', 'מנהל');
+      t.ok(rr.ok, '⛔⛔ קליטת החזרה נכשלה על סופקה מלוכלכת: ' + (rr.error || ''));
+      const bad = srv.approveOrder(B76.invDb(srv, 'בהמתנה'), 'O1');
+      t.no(bad.ok, '⛔ אישור עבר על סטטוס לא מוכר — ריכוך מחוץ למלאי אסור');
+    },
+
+    /* ================= שומרי מקור ================= */
+
+    '⛔⛔ ההשוואה הגולמית לא חוזרת לנקודות המלאי ולספר החיובים': (t, { H }) => {
+      const src = H.serverSrc();
+      ['reservedQty', 'b48CommittedQty'].forEach(fn => {
+        const b = B76.noCmt(B76.body(src, fn));
+        t.ok(b, 'הפונקציה ' + fn + ' נעלמה מקוד השרת');
+        t.hasNot(b, 'RESERVING_STATUSES.indexOf(o.status)', '⛔⛔ ההשוואה הגולמית חזרה ל-' + fn);
+        t.hasNot(b, 'String(o.status)', '⛔⛔ השוואת סטטוס גולמית חזרה ל-' + fn);
+        t.has(b, 'w22Reserving', '⛔⛔ ' + fn + ' אינו עובר דרך w22Reserving');
+        t.has(b, 'w21IsRental', '⛔⛔ B75 נשבר — ' + fn + ' אינו עובר דרך w21IsRental');
+      });
+      const led = B76.noCmt(B76.body(src, 'b54Ledger'));
+      t.has(led, 'B54_SKIP_ORDER.indexOf(w22Stat(o))', '⛔⛔ ספר החיובים חזר להשוואת סטטוס גולמית');
+      t.hasNot(B76.noCmt(B76.body(src, 'w17IsWash')), 'o.type !==', '⛔ w17IsWash שונה — B74 נשבר');
+    },
+
+    '⛔ אין שינוי סכימה — orders לא זזה': (t, { srv }) => {
+      t.has(srv.TABLES.orders.join(','), 'status', '⛔ status נעלם מ-orders');
+      t.eq(srv.ORDER_STATUSES.length, 7, '⛔⛔ נוסף או הוסר סטטוס הזמנה');
+      t.eq(srv.RESERVING_STATUSES.join('|'), 'מאושרת|סופקה', '⛔⛔ RESERVING_STATUSES שונה — רשימת כסף בעקיפין');
+      t.eq(srv.B54_SKIP_ORDER.join('|'), 'בוטלה|טיוטה|הצעת מחיר', '⛔⛔ B54_SKIP_ORDER שונה');
+    }
+  }
+});
+
+SPECS.push({
+  file: 't22-b76-ui',
+  title: 'B76 — WASH-22 — ציר הסטטוס בממשק: כרטיס הפריט · טאבי ההזמנות · הדונאט',
+  needs: 'ui',
+  requires: ['w22Stat', 'w22Known', 'w22Reserving', 'w21IsRental', 'b40ItemBreakdown',
+             'b54LedgerFE', 'b48BalancesAgFE', 'custBalance', 'renderOrdersList',
+             'ordersDonutSvg', 'b61Tests', 'sVal', 'sPick', 'el', 'go'],
+
+  tests: {
+
+    '⭐⭐ WASH-22: סטטוס מלוכלך משריין מלאי בכרטיס הפריט': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const clean = B76.uiSet(w, 'מאושרת');
+      t.eq(clean.resQ, 10, 'קו הבסיס נשבר — מאושרת נקייה אינה משוריינת');
+      t.eq(clean.availQ, 90, 'קו הבסיס נשבר — 100 פחות 10 משוריינות');
+      B76.DIRTY.forEach(st => {
+        const g = B76.uiSet(w, st);
+        t.eq(g.resQ, 10,
+          '⛔⛔ סטטוס ' + JSON.stringify(st) + ' לא שריין — הפריט נראה זמין למרות שהתחייבנו עליו');
+        t.eq(g.availQ, clean.availQ,
+          '⛔⛔ הזמין נבדל בין נקי (' + clean.availQ + ') למלוכלך (' + g.availQ + ')');
+      });
+    },
+
+    '⛔ WASH-22: טיוטה והצעת מחיר אינן משריינות בממשק — גם מלוכלכות': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['טיוטה', 'הצעת מחיר'].concat(B76.DIRTY_DRAFT, B76.DIRTY_QUOTE).forEach(st => {
+        const g = B76.uiSet(w, st);
+        t.eq(g.resQ, 0, '⛔⛔ סטטוס ' + JSON.stringify(st) + ' שריין מלאי בכרטיס הפריט');
+        t.eq(g.availQ, 100, '⛔ הזמין הושפע מטיוטה');
+      });
+    },
+
+    '⛔⛔ WASH-22: הממשק והשרת מסכימים על המלאי בכל סטטוס': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['מאושרת', 'מאושרת\u00A0', 'סופקה', ' סופקה', 'טיוטה', 'טיוטה\u00A0',
+       'הצעת מחיר', 'הוחזרה', 'הושלמה', 'בוטלה', 'בהמתנה', ''].forEach(st => {
+        const ui = B76.uiSet(w, st);
+        const sv = B76.inv(srv, B76.invDb(srv, st));
+        /* בממשק 'סופקה' יושבת ב-outQ ו'מאושרת' ב-resQ — שתיהן תופסות מלאי
+           (RESERVING_STATUSES בשרת), ולכן ההשוואה היא על הסכום. */
+        t.eq(ui.outQ + ui.resQ, sv.committed,
+          '⛔⛔ הממשק (' + (ui.outQ + ui.resQ) + ') והשרת (' + sv.committed + ') נבדלו על סטטוס ' + JSON.stringify(st));
+        t.eq(ui.availQ, sv.free,
+          '⛔⛔ "פנוי" בממשק (' + ui.availQ + ') נבדל מ-b48FreeOnShelf (' + sv.free + ') על ' + JSON.stringify(st));
+        t.eq(w.w22Stat({ status: st }), srv.w22Stat({ status: st }),
+          '⛔⛔ w22Stat נבדל בין הקבצים על ' + JSON.stringify(st));
+        t.eq(w.w22Reserving({ status: st }), srv.w22Reserving({ status: st }),
+          '⛔⛔ w22Reserving נבדל בין הקבצים על ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔ R6 בממשק: custBalance מסכים עם השרת גם על סטטוס מלוכלך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['מאושרת', 'מאושרת\u00A0', ' מאושרת', 'טיוטה', 'טיוטה\u00A0', 'בהמתנה'].forEach(st => {
+        B76.uiSet(w, st);
+        const feAg = w.b48BalancesAgFE()['C1'] || 0;
+        const svAg = B76.money(srv, B76.invDb(srv, st)).bal;
+        t.eq(feAg, svAg,
+          '⛔⛔ R6 נשבר: הממשק ' + feAg + ' מול השרת ' + svAg + ' על סטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔ טאבי ההזמנות: סטטוס סגור מלוכלך אינו יושב בטאב "פתוחות"': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      B76.uiSet(w, 'הושלמה\u00A0');
+      w.go('orders');
+      w.ORD_TAB = 'open'; w.renderOrdersList();
+      const openHtml = w.el('ordList') ? w.el('ordList').innerHTML : '';
+      t.hasNot(openHtml, '1001', '⛔⛔ הזמנה שהושלמה (סטטוס מלוכלך) הופיעה בטאב "פתוחות"');
+      w.ORD_TAB = 'closed'; w.renderOrdersList();
+      const closedHtml = w.el('ordList') ? w.el('ordList').innerHTML : '';
+      t.has(closedHtml, '1001', '⛔⛔ הזמנה שהושלמה (סטטוס מלוכלך) נעלמה גם מטאב "סגורות"');
+      w.ORD_TAB = 'open';
+    },
+
+    '⛔ דונאט ההזמנות: סטטוס מלוכלך אינו פותח פרוסה נפרדת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      B76.uiSet(w, 'מאושרת');
+      w.DB.orders.push({ id: 'O2', order_number: '1002', customer_id: 'C1', type: 'השכרה',
+        status: 'מאושרת\u00A0', start_date: '2026-09-01', end_date: '2026-09-05', warehouse_id: '' });
+      const svg = w.ordersDonutSvg();
+      t.has(svg, 'מאושרת', 'המקרא אינו מציג את הסטטוס');
+      t.eq((svg.match(/ordersStatusDetail\(/g) || []).length, 1,
+        '⛔⛔ הסטטוס המלוכלך פתח פרוסה שנייה בדונאט — אותו סטטוס נראה כשניים');
+      t.has(svg, '<b>2</b>', '⛔⛔ שתי ההזמנות לא נספרו יחד באותה פרוסה');
+    },
+
+    '⛔⛔ ההשוואה הגולמית לא חוזרת ל-b40ItemBreakdown': (t, { H }) => {
+      const src = H.uiScript();
+      const b = B76.noCmt(B76.body(src, 'b40ItemBreakdown'));
+      t.ok(b, 'b40ItemBreakdown נעלם מהממשק');
+      t.hasNot(b, 'String(o.status)', '⛔⛔ השוואת סטטוס גולמית חזרה ל-b40ItemBreakdown');
+      t.has(b, 'w22Stat', '⛔⛔ b40ItemBreakdown אינו עובר דרך w22Stat');
+      t.has(b, 'w22Known', '⛔⛔ סטטוס לא מוכר הפסיק לשריין בממשק (הכרעת אבי)');
+      t.has(b, 'w21IsRental', '⛔ B75 נשבר — b40ItemBreakdown אינו עובר דרך w21IsRental');
+      const led = B76.noCmt(B76.body(src, 'b54LedgerFE'));
+      t.has(led, 'B54_SKIP_ORDER.indexOf(w22Stat(o))', '⛔⛔ ספר החיובים בממשק חזר להשוואה גולמית');
+    },
+
+    '⛔⛔ w22Stat ושתי רשימות הסטטוס זהות תו-בתו בין השרת לממשק': (t, { H }) => {
+      const rxS = /function\s+w22Stat\s*\(o\)\s*\{[^}]*\}/;
+      const rxK = /function\s+w22Known\s*\(o\)\s*\{[^}]*\}/;
+      const rxR = /function\s+w22Reserving\s*\(o\)\s*\{[^}]*\}/;
+      const sv = H.serverSrc(), ui = H.uiScript();
+      [['w22Stat', rxS], ['w22Known', rxK], ['w22Reserving', rxR]].forEach(pair => {
+        const a = (sv.match(pair[1]) || [])[0], b = (ui.match(pair[1]) || [])[0];
+        t.ok(a, pair[0] + ' אינו קיים בקוד השרת');
+        t.ok(b, pair[0] + ' אינו קיים ב-index.html');
+        t.eq(a, b, '⛔⛔ ' + pair[0] + ' התפצל בין הקבצים — הממשק והשרת יסווגו סטטוס אחרת');
+      });
+      const rxList = n => new RegExp('var\\s+' + n + '\\s*=\\s*\\[[^\\]]*\\]');
+      ['ORDER_STATUSES', 'RESERVING_STATUSES'].forEach(n => {
+        const a = (sv.match(rxList(n)) || [])[0], b = (ui.match(rxList(n)) || [])[0];
+        t.ok(a, n + ' אינו קיים בקוד השרת');
+        t.ok(b, n + ' אינו קיים ב-index.html');
+        t.eq(a.replace(/\s+/g, ' '), b.replace(/\s+/g, ' '),
+          '⛔⛔ ' + n + ' התפצל בין הקבצים');
+      });
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-22 אינו יכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
+    },
+
+    '⛔ canary v4.76-B76 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.76-B76/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
