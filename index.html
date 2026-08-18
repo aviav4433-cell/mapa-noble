@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.80-B80 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.81-B81 · 18.08.2026</div>
   </div>
 </div>
 
@@ -2082,7 +2082,7 @@ function nobleDashCard(today){
   var all = DB.laundryIntakes||[];
   if(!all.length) return '';
   var act = b49cActiveIntakes(all); // B49c/L3: כביסה פנימית שהושלמה יורדת מהלוח
-  var ready = act.filter(i=>['מוכן','במשלוח'].includes(i.status)).length;
+  var ready = act.filter(i=>['מוכן','במשלוח'].includes(w24Stat(i, NOBLE_STAGES, INTAKE_DFLT))).length;   /* ⭐ B81/WASH-23ג */
   var inSet = internalIntakeSet(), incl = inclInternal(), kg = 0;
   (DB.laundryEvents||[]).forEach(function(e){ if(sVal(e.event_type)==='שקילה' && String(e.ts).slice(0,10)===today && (incl||!inSet[e.intake_id])) kg+=Number(e.net_kg)||0; });
   var openCharge = act.reduce((s,i)=>s+(Number(i.total_charge)||0),0);
@@ -2535,7 +2535,7 @@ function b49cCompletedTs(i){
 /* קליטות פעילות: פנימית שהגיעה ל"מוכן" הושלמה ואינה "ממתינה למשלוח" */
 function b49cActiveIntakes(list){
   return ((list!==undefined?list:(DB&&DB.laundryIntakes))||[]).filter(function(i){
-    return sVal(i.status)!=='נמסר' && !(sVal(i.internal)==='כן' && String(i.ready_ts||''));
+    return w24Stat(i, NOBLE_STAGES, INTAKE_DFLT)!=='נמסר' && !(sVal(i.internal)==='כן' && String(i.ready_ts||''));   /* ⭐ B81/WASH-23ג */
   });
 }
 /* ===== B49d — כביסה מלקוח: הזמנת 'כביסה' → קליטת NOBLE =====
@@ -2573,7 +2573,7 @@ function b49dOpenIntakesFor(custId){
   if(!custId) return [];
   return ((DB&&DB.laundryIntakes)||[]).filter(function(i){
     return String(i.customer_id||'')===String(custId) && sVal(i.internal)!=='כן' &&
-      B49D_CLOSED_INTAKE.indexOf(sVal(i.status))===-1;
+      B49D_CLOSED_INTAKE.indexOf(w24Stat(i, NOBLE_STAGES, INTAKE_DFLT))===-1;   /* ⭐ B81/WASH-23ג */
   });
 }
 function b49dIntakeCartCount(iid){
@@ -3126,6 +3126,58 @@ var CREDIT_STATUSES  = ['ממתין לאימות', 'ממתין לאישור', '�
 var VEHICLE_STATUSES = ['פעיל', 'בטיפול', 'מושבת'];
 var MACHINE_STATUSES = ['פעילה', 'בתיקון', 'מושבתת'];
 function w25Usable(rec, list, okStat){ return sVal(rec && rec.status) === '' || w24Stat(rec, list) === okStat; }
+
+/* ===== ⭐⭐ B81 / WASH-23ג חלק ג' — ציר הסטטוס בתשע הטבלאות שנותרו =====
+   האצווה האחרונה במחלקת WASH-23. B76 סגר orders · B77 invoices ·
+   B78 payroll/tasks/purchases/deliveryTrips · B79 deliveries · B80 טבלאות
+   הכסף ושערי הציוד. כאן נסגרות תשע הטבלאות שנותרו:
+   units · carts · laundry_intakes · asset_faults · task_comments · cases ·
+   notifications · technician_visits · customer_messages.
+
+   ⭐ הכרעת אבי 18.08.2026 (1א) — ברירת המחדל לסטטוס לא מוכר:
+   · units — לא מוכר **אינו** גרוט, כדי שלכלוך לא תצא יחידה מהמלאי.
+     ⛔⛔ אבל **בשער המחיקה לא מוכר נחשב תפוס וחסום.** זה הממצא
+     החמור של האצווה: יחידה עם 'אצל לקוח ' מלוכלך לא נחסמה
+     ונמחקה — מלאי שנמצא פיזית אצל לקוח נעלם מהמערכת בשקט.
+     ⛔ **סטטוס ריק נשאר כשהיה** (ניתן למחיקה) — כמו הכרעת 2א של B80.
+   · asset_faults — לא מוכר/ריק = 'פתוחה'. תקלה אינה נעלמת בשקט.
+   · cases — לא מוכר/ריק = 'משויך'. לא מציגים כפנוי מארז שאולי תפוס.
+   · carts — לא מוכר/ריק = 'בשימוש'. לא משבצים עגלה שאולי תפוסה.
+   · laundry_intakes — לא מוכר/ריק = 'התקבל', כלומר **פתוח**. הקליטה
+     נשארת על לוח הכביסה ואינה נעלמת מרצפת הייצור.
+   · notifications · task_comments · technician_visits · customer_messages —
+     ⛔ **בלי dflt במכוון, נרמול בלבד.** בהתראות מיפוי לסטטוס מוכר היה
+     או שולח פעמיים או מסמן כנשלח משהו שלא נשלח; בהערת משימה ''
+     הוא ערך **חוקי** ברשימה ולא לכלוך; בביקור טכנאי ובהודעת
+     לקוח מדובר בתצוגה בלבד.
+
+   ⛔ w24Stat נשארת המנרמלת היחידה (R8), ו-w25Usable נשארת לשער שבו ריק
+   מותר. **אין כאן שם עוזר חדש** — רק רשימות שעוברות דרכן.
+   ⛔ NOBLE_STAGES ו-B49D_CLOSED_INTAKE קיימות משכבר בשני הקבצים והן
+   רשימת הסטטוסים של הקליטה — אין להגדיר אותן שנית (R8).
+   ⛔⛔ carts.status הוא 'פנויה'/'בשימוש' בלבד. **שדה התקלות של עגלה
+   הוא carts.condition** — R5/B56. אין לערבב ביניהם.
+   ⛔ אין להחיל את הרשימות האלה על p.status שמגיע מהמשתמש — שם מדובר
+   בוולידציית קלט ולא בנרמול ערך שנקרא מהגיליון.
+   ⛔ כל השמות והרשימות בבלוק הזה חייבים להישאר זהים תו-בתו בין
+   index.html לבין קוד שרת.txt — יש בדיקה שמשווה אותם.
+   ⛔ נרמול להשוואה בלבד — הערך הנשמר בגיליון אינו משתנה, והתצוגה
+   למשתמש ממשיכה להראות את הערך האמיתי כפי שהוא. */
+var UNIT_BUSY         = ['בשימוש', 'בכביסה', 'אצל לקוח'];
+var UNIT_DEL_DFLT     = 'אצל לקוח';
+var FAULT_STATUSES    = ['פתוחה', 'סגורה'];
+var FAULT_DFLT        = 'פתוחה';
+var CASE_STATUSES     = ['פנוי', 'משויך'];
+var CASE_DFLT         = 'משויך';
+var CART_STATUSES     = ['פנויה', 'בשימוש'];
+var CART_DFLT         = 'בשימוש';
+var INTAKE_DFLT       = 'התקבל';
+var NOTIF_STATUSES    = ['ממתין', 'נשלח', 'נכשל'];
+var TCOMMENT_STATUSES = ['', 'לביצוע', 'טופל'];
+var VISIT_STATUSES    = ['מתוכנן', 'בוצע', 'בוטל'];
+var MSG_STATUSES      = ['חדשה', 'בטיפול', 'נענתה', 'נסגרה'];
+var MSG_OPEN          = ['חדשה', 'בטיפול'];
+var UNIT_STATUSES = ['פנוי', 'אצל לקוח', 'בכביסה', 'גרוט'];
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
 function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
@@ -3354,7 +3406,7 @@ function w18HasTasks(iid){
    שלב מכונה (אותה הכרעה של B59), ולכן הוא מוצג ב"בגיהוץ וקיפול".
    ⛔ שלב שאינו מוכר אינו מעלים את הקליטה — זה בדיוק הלקח WASH-14. */
 function w18BoardCol(ik){
-  var st = sPick(ik.status, NOBLE_STAGES) || sVal(ik.status);
+  var st = w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT);   /* ⭐ B81/WASH-23ג */
   if(st==='במשלוח' || st==='נמסר') return '';
   if(st==='באריזה') return 'בגיהוץ וקיפול';
   if(st==='מוכן')
@@ -3445,7 +3497,7 @@ function w18AdvanceForm(iid){
   if(!w18CanManual()) return toast('רק מנהל או משרד רשאים לקדם שלב ידנית', true);
   var carts = w18Carts(iid);
   if(!carts.length) return toast('אין עגלה פעילה בקליטה הזו', true);
-  var cur = sPick(ik.status, NOBLE_STAGES) || sVal(ik.status);
+  var cur = w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT);   /* ⭐ B81/WASH-23ג */
   openModal('<h2>קידום ידני — '+esc(ik.id)+'</h2>'+
     '<div class="muted" style="margin-bottom:10px">'+
       esc(sVal(ik.internal)==='כן'?'פנימי MAPA':cust(ik.customer_id))+' · שלב נוכחי: '+esc(cur)+'</div>'+
@@ -3574,7 +3626,7 @@ function b59TargetLabel(cur, s){
   return s+' — חזרה אחורה';
 }
 function b59Machines(){
-  return (DB.machines||[]).filter(function(m){ return !sVal(m.status) || sVal(m.status)==='פעילה'; });
+  return (DB.machines||[]).filter(function(m){ return w25Usable(m, MACHINE_STATUSES, 'פעילה'); });   /* ⭐ B81/WASH-23ג */
 }
 function b59MachOpts(target, sel){
   var fit=[], oth=[];
@@ -3651,7 +3703,7 @@ function b59StageChg(){
     return;
   }
   /* B49b: עגלות וירטואליות (קליטה ידנית NOBLE) אינן נכס פיזי — לא בוחרים בהן */
-  var freeCarts = b49bRealCarts().filter(c=>sVal(c.status)==='פנויה' || c.id===t.cart_id);
+  var freeCarts = b49bRealCarts().filter(c=>w24Stat(c, CART_STATUSES, CART_DFLT)==='פנויה' || c.id===t.cart_id);   /* ⭐ B81/WASH-23ג */
   var machines  = b59Machines();
   var defMach   = b59DefaultMach(to, t.machine_id||'');
   body.innerHTML =
@@ -3725,8 +3777,8 @@ async function doAdvance(tid){
 function laundrySplitForm(tid){
   var t = DB.laundryTasks.find(x=>x.id===tid); if(!t) return;
   if(Number(t.qty)<2) return toast('אי אפשר לפצל כמות של פריט אחד', true);
-  var freeCarts = b49bRealCarts().filter(c=>sVal(c.status)==='פנויה');
-  var machines  = (DB.machines||[]).filter(m=>!sVal(m.status) || sVal(m.status)==='פעילה');
+  var freeCarts = b49bRealCarts().filter(c=>w24Stat(c, CART_STATUSES, CART_DFLT)==='פנויה');   /* ⭐ B81/WASH-23ג */
+  var machines  = (DB.machines||[]).filter(m=>w25Usable(m, MACHINE_STATUSES, 'פעילה'));   /* ⭐ B81/WASH-23ג */
   openModal('<h2>פיצול לעגלה נוספת</h2>'+
     '<div class="muted" style="margin-bottom:10px">'+esc(item(t.item_id))+' × '+esc(t.qty)+' · שלב '+esc(t.stage)+'</div>'+
     '<div class="card" style="background:#EFF6F5;border-color:var(--teal);padding:8px 10px;font-size:12.5px;margin-bottom:10px">'+
@@ -5079,7 +5131,7 @@ function b54LedgerFE(){
     if(inv && inv.order_id && byOrder[inv.order_id]){ byOrder[inv.order_id].rows.push(row); return; }
     var oid=String(ik.order_id||'').trim();
     if(oid && byOrder[oid]){ byOrder[oid].rows.push(row); return; }
-    if(sVal(ik.status)==='נמסר'){ row.customer_id=ik.customer_id; row.pending=1; loose.push(row); }   /* ⛔ WASH-04 · כסף */
+    if(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)==='נמסר'){ row.customer_id=ik.customer_id; row.pending=1; loose.push(row); }   /* ⛔ WASH-04 · כסף */   /* ⭐ B81/WASH-23ג */
   });
 
   (DB.charges||[]).forEach(function(ch){
@@ -6333,7 +6385,7 @@ async function saveAlloc(vid){
 function finLaundryHtml(){
   /* C8: קליטה שנפתחה מהזמנה מחויבת דרך חשבונית ההזמנה — לא דרך המרוכזת */
   var open = (DB.laundryIntakes||[]).filter(function(i){
-    if(sVal(i.internal)==='כן' || sVal(i.status)!=='נמסר') return false;   /* ⛔ WASH-04 · כסף */
+    if(sVal(i.internal)==='כן' || w24Stat(i, NOBLE_STAGES, INTAKE_DFLT)!=='נמסר') return false;   /* ⛔ WASH-04 · כסף */   /* ⭐ B81/WASH-23ג */
     if(String(i.invoice_id||'').trim()) return false;
     if(!(Number(i.total_charge)>0)) return false;
     var oid = String(i.order_id||'').trim();
@@ -6768,7 +6820,7 @@ function rItems(){
         '<button class="btn ghost sm" onclick="openItemHistory(\''+i.id+'\')">היסטוריה</button>'+
         '<button class="btn ghost sm" onclick="itemForm(\''+i.id+'\')">עריכה</button>'+
         '<button class="btn ghost sm" onclick="availForm(\''+i.id+'\')">זמינות</button>'+
-        '<button class="btn ghost sm" title="מספר סידורי וברקוד לכל פריט בנפרד — אינו משנה את כמות המלאי" onclick="unitsModal(\''+i.id+'\')">מספור יחידות ('+liveUnits(i.id).filter(u=>u.status!=='גרוט').length+')</button>'+
+        '<button class="btn ghost sm" title="מספר סידורי וברקוד לכל פריט בנפרד — אינו משנה את כמות המלאי" onclick="unitsModal(\''+i.id+'\')">מספור יחידות ('+liveUnits(i.id).filter(u=>w24Stat(u, UNIT_STATUSES)!=='גרוט').length+')</button>'+   /* ⭐ B81/WASH-23ג */
         notesBtn('item',i.id)+tagBtn('item',i.id)+
         (ROLE==='מנהל'?'<span class="rowact"><button class="del" title="מחיקת פריט (קוד מנהל)" onclick="delRecord(\'items\',\''+i.id+'\',\'את הפריט\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></span>':'')+'</div>'+linksSection('item',i.id)+'</div>';
     }).join(''):'<div class="card empty">אין פריטים עדיין</div>');
@@ -7369,11 +7421,11 @@ async function doScan(){
     el('scanRes').innerHTML = '<div class="card"><b>'+esc(r.entity.name)+'</b><div class="muted">'+esc(r.entity.size||'')+' '+esc(r.entity.color||'')+'</div>'+
       '<div class="grid2" style="margin-top:10px">'+kpi(r.stock,'מלאי כולל')+kpi(r.inLaundry,'בכביסה')+'</div></div>';
   } else if(r.kind==='unit'){
-    el('scanRes').innerHTML = '<div class="card"><b>יחידה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנוי'?'var(--ok)':r.entity.status==='גרוט'?'var(--danger)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
+    el('scanRes').innerHTML = '<div class="card"><b>יחידה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(w24Stat(r.entity, UNIT_STATUSES)==='פנוי'?'var(--ok)':w24Stat(r.entity, UNIT_STATUSES)==='גרוט'?'var(--danger)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+   /* ⭐ B81/WASH-23ג */
       '<div class="muted" style="margin:6px 0">'+esc(r.item?r.item.name:'')+'</div>'+
       /* T2ב (B64): דפוס b62OrderActions — פעולה ראשית אחת גלויה, השאר ב-⋯.
          ⛔ אף פעולה לא נעלמה ואף הרשאה לא השתנתה. */
-      (r.entity.status!=='גרוט'? (function(){
+      (w24Stat(r.entity, UNIT_STATUSES)!=='גרוט'? (function(){   /* ⭐ B81/WASH-23ג */
         var others = ['פנוי','אצל לקוח','בכביסה'].filter(function(st){ return st!==r.entity.status; });
         var pri = '<button class="btn sm" onclick="doUnitStatus(\''+r.entity.id+'\',\''+others[0]+'\')">'+others[0]+'</button>';
         var rest = others.slice(1).map(function(st){
@@ -7382,7 +7434,7 @@ async function doScan(){
         return '<div class="actrow">'+pri+' '+moreMenu(rest)+'</div>';
       })() : '')+'</div>';
   } else if(r.kind==='cart'){
-    el('scanRes').innerHTML = '<div class="card"><b>עגלה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+
+    el('scanRes').innerHTML = '<div class="card"><b>עגלה '+esc(r.entity.id)+'</b> <span class="chip" style="background:'+(w24Stat(r.entity, CART_STATUSES, CART_DFLT)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.entity.status)+'</span>'+   /* ⭐ B81/WASH-23ג */
       (r.task?'<div class="muted" style="margin-top:6px">משימה עליה: '+esc(item(r.task.item_id))+' × '+r.task.qty+' · שלב: '+esc(r.task.stage)+'</div>':'')+
       /* T2ב (B64): פעולה ראשית אחת + ⋯ (דפוס b62OrderActions) */
       '<div class="actrow" style="margin-top:8px">'+
@@ -7415,10 +7467,10 @@ async function doScan(){
       (b35CanWh()? '<button class="btn sm" style="margin-top:8px" onclick="b35Station(\'\',\''+r.entity.id+'\')">מדף את החבילה הזו</button>' : '')+
       '</div>';
   } else if(r.kind==='case'){
-    el('scanRes').innerHTML = '<div class="card"><b>מארז '+esc(r.entity.barcode)+'</b> <span class="chip" style="background:'+(r.entity.status==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(r.entity.status||'פנוי')+'</span>'+
+    el('scanRes').innerHTML = '<div class="card"><b>מארז '+esc(r.entity.barcode)+'</b> <span class="chip" style="background:'+(w24Stat(r.entity, CASE_STATUSES, CASE_DFLT)==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(r.entity.status||'פנוי')+'</span>'+   /* ⭐ B81/WASH-23ג */
       (r.order?'<div class="muted" style="margin:6px 0">משויך להזמנה #'+esc(r.order.order_number||r.order.id)+'</div>':'')+
       ((r.contents||[]).length?'<div class="muted" style="margin-top:6px">תכולה: '+r.contents.map(x=>x.count+' × ['+esc(x.per_pkg)+' '+esc(x.item_name)+']').join(' · ')+'</div>':'')+
-      (r.entity.status==='משויך'?'<button class="btn ghost sm" style="margin-top:8px" onclick="b34DoCaseRelease(\''+r.entity.id+'\');setTimeout(doScan,600)">שחרר מארז</button>':'')+'</div>';
+      (w24Stat(r.entity, CASE_STATUSES, CASE_DFLT)==='משויך'?'<button class="btn ghost sm" style="margin-top:8px" onclick="b34DoCaseRelease(\''+r.entity.id+'\');setTimeout(doScan,600)">שחרר מארז</button>':'')+'</div>';   /* ⭐ B81/WASH-23ג */
   } else if(r.kind==='shelf'){
     /* B35: סריקת מדף מציגה מה מונח עליו ומאפשרת מידוף וספירה מיד */
     var shC = r.contents||[];
@@ -7775,7 +7827,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.80-B80';
+var B61_CANARY = 'v4.81-B81';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -8535,8 +8587,8 @@ function b51SlimNote(table, what){
 // B4: תקציר תור ההתראות + כפתור הרצה ידנית (למנהל) — לבדיקות, בלי להמתין לטריגר היומי (08:00)
 function b4NotificationsWidget(){
   var list = (DB.notifications||[]).slice().sort((a,b)=> (a.sent_at||a.scheduled_for)<(b.sent_at||b.scheduled_for)?1:-1);
-  var pending = list.filter(n=>n.status==='ממתין').length;
-  var failed = list.filter(n=>n.status==='נכשל').length;
+  var pending = list.filter(n=>w24Stat(n, NOTIF_STATUSES)==='ממתין').length;   /* ⭐ B81/WASH-23ג */
+  var failed = list.filter(n=>w24Stat(n, NOTIF_STATUSES)==='נכשל').length;   /* ⭐ B81/WASH-23ג */
   var recent = list.slice(0,8);
   return '<div class="card" style="margin-bottom:14px"><div class="row" style="align-items:center;margin-bottom:6px">'+
     '<h3 class="grow">התראות (אימייל) — B4</h3>'+
@@ -8544,7 +8596,7 @@ function b4NotificationsWidget(){
     '<button class="btn sm" onclick="doB4RunNow()">הרץ סריקה עכשיו</button></div>'+
     (recent.length? recent.map(function(n){
       var vars={}; try{ vars=JSON.parse(n.payload||'{}'); }catch(e){}
-      var color = n.status==='נשלח'?'var(--ok)':(n.status==='נכשל'?'var(--danger)':'var(--amber)');
+      var color = w24Stat(n, NOTIF_STATUSES)==='נשלח'?'var(--ok)':(w24Stat(n, NOTIF_STATUSES)==='נכשל'?'var(--danger)':'var(--amber)');   /* ⭐ B81/WASH-23ג */
       return '<div class="attn-row"><span class="tag" style="background:'+color+'">'+esc(n.status)+'</span>'+
         '<div class="grow">'+esc(n.type)+' · '+esc(n.recipient)+(vars.customer_name?' ('+esc(vars.customer_name)+')':'')+'</div>'+
         '<span class="muted">'+esc(n.sent_at||n.scheduled_for||'')+'</span></div>';
@@ -9004,7 +9056,7 @@ function b50FleetRows(p){
   (DB.assetFaults||[]).forEach(function(f){
     if(String(f.asset_type)!=='רכב') return;
     var w = per[String(f.asset_id)]; if(!w) return;
-    if(String(f.status)==='פתוחה') w.fOpen++; else w.fClosed++;
+    if(w24Stat(f, FAULT_STATUSES, FAULT_DFLT)==='פתוחה') w.fOpen++; else w.fClosed++;   /* ⭐ B81/WASH-23ג */
   });
   (DB.faultEvents||[]).forEach(function(e){
     if(String(e.asset_type)!=='רכב') return;
@@ -9746,7 +9798,7 @@ function rBarcodes(){
 function barcodeEntries(){
   var kind = el('bc_kind').value, itemF = el('bc_item').value, q = (el('bc_search').value||'').toUpperCase();
   var list = [];
-  if(kind==='units') list = DB.units.filter(u=>u.status!=='גרוט').map(u=>({code:String(u.barcode), label:item(u.item_id), item_id:u.item_id}));
+  if(kind==='units') list = DB.units.filter(u=>w24Stat(u, UNIT_STATUSES)!=='גרוט').map(u=>({code:String(u.barcode), label:item(u.item_id), item_id:u.item_id}));   /* ⭐ B81/WASH-23ג */
   if(kind==='items') list = DB.items.filter(i=>i.barcode).map(i=>({code:String(i.barcode), label:i.name, item_id:i.id}));
   // B39: הברקוד נגזר מהמזהה — עגלות ותיקות בלי ערך בעמודה עדיין מודפסות
   if(kind==='carts') list = b49bRealCarts().map(c=>({code:String(c.barcode||c.id), label:'עגלה '+c.id, item_id:''}));
@@ -9825,7 +9877,7 @@ function unitsModal(iid){
           '<td>'+(isDel?'':'<input type="checkbox" class="uchk" value="'+esc(u.id)+'">')+'</td>'+
           '<td><b>'+esc(u.id)+'</b>'+(isDel?' <span class="muted" style="font-size:11px">(נמחק '+esc(u.deleted_at||'')+')</span>':'')+'</td>'+
           '<td>'+esc(u.status)+'</td>'+
-          '<td>'+(!isDel && u.status!=='גרוט'?'<button class="btn ghost sm" onclick="doScrapUnit(\''+u.id+'\',\''+iid+'\')">גרוט</button>':'')+'</td></tr>';
+          '<td>'+(!isDel && w24Stat(u, UNIT_STATUSES)!=='גרוט'?'<button class="btn ghost sm" onclick="doScrapUnit(\''+u.id+'\',\''+iid+'\')">גרוט</button>':'')+'</td></tr>';   /* ⭐ B81/WASH-23ג */
       }).join('')+'</table></div>'
       :'<div class="card empty">אין יחידות ממוספרות לפריט זה</div>')+
     '<div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap">'+
@@ -11083,7 +11135,7 @@ function rTasks(){
         return '<div class="ktask" style="cursor:pointer;border-right:4px solid '+(PRIO_COLOR[t.priority]||'var(--navy2)')+'" onclick="openTask(\''+t.id+'\')">'+
           '<div class="t">'+esc(t.title)+'</div>'+
           '<div class="muted">'+(a.name?esc(a.name):'ללא אחראי')+(t.due_date?' · יעד '+esc(t.due_date):'')+(overdue?' · <b style="color:var(--danger)">באיחור!</b>':'')+
-          (function(){var n=DB.taskComments.filter(c=>c.task_id===t.id&&c.status==='לביצוע').length; return n?' · <b style="color:var(--amber)">⚑ '+n+' לביצוע</b>':'';})()+'</div></div>';
+          (function(){var n=DB.taskComments.filter(c=>c.task_id===t.id&&w24Stat(c, TCOMMENT_STATUSES)==='לביצוע').length; return n?' · <b style="color:var(--amber)">⚑ '+n+' לביצוע</b>':'';})()+'</div></div>';   /* ⭐ B81/WASH-23ג */
       }).join('')+'</div>';
   }).join('');
   el('main').innerHTML = '<div class="section-title"><h2>לוח משימות</h2><button class="btn" onclick="taskForm()">+ משימה</button></div>'+
@@ -11107,14 +11159,14 @@ async function saveTask(){
 /* NC4 (משימה 1): הערה רגילה — עם כפתור העברה ל"לביצוע"; הערה שטופלה — עם תיעוד הטיפול */
 function commentHtml(c, tid){
   var h = '<div style="border-bottom:1px solid var(--line);padding:6px 0"><span class="doc-meta">'+esc(fmtTs(c.ts))+' · <b>'+esc(c.user)+'</b>';
-  if(c.status==='טופל') h += ' · <span class="chip" style="background:var(--ok);font-size:11px">טופל ע&quot;י '+esc(c.handled_by||'')+' · '+esc(fmtTs(c.handled_ts||''))+'</span>';
+  if(w24Stat(c, TCOMMENT_STATUSES)==='טופל') h += ' · <span class="chip" style="background:var(--ok);font-size:11px">טופל ע&quot;י '+esc(c.handled_by||'')+' · '+esc(fmtTs(c.handled_ts||''))+'</span>';   /* ⭐ B81/WASH-23ג */
   h += '</span><div style="font-size:15px;font-weight:500;white-space:pre-wrap">'+esc(c.text)+'</div>';
   if(!(c.status)) h += '<button class="btn ghost sm" style="margin-top:3px;font-size:11px" title="הצפה כפריט לביצוע בתוך המשימה" onclick="commentSetStatus(\''+c.id+'\',\''+tid+'\',\'לביצוע\')">→ לביצוע</button>';
   return h+'</div>';
 }
 /* NC4 (משימה 1): רובריקת "משימות לביצוע" בראש המשימה — הערות שהוצפו וממתינות לטיפול */
 function todoSectionHtml(tid, comments){
-  var todos = comments.filter(c=>c.status==='לביצוע');
+  var todos = comments.filter(c=>w24Stat(c, TCOMMENT_STATUSES)==='לביצוע');   /* ⭐ B81/WASH-23ג */
   if(!todos.length) return '';
   return '<div class="card" style="background:#FFF7E6;border:1px solid var(--amber);margin-bottom:10px"><h3 style="margin-bottom:6px">משימות לביצוע ('+todos.length+')</h3>'+
     todos.map(c=>'<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">'+
@@ -11141,7 +11193,7 @@ async function openTask(tid){
     todoSectionHtml(tid, comments)+
     '<h3>הערות ומעקב</h3>'+
     '<div style="max-height:220px;overflow-y:auto;margin:8px 0">'+
-    (comments.filter(c=>c.status!=='לביצוע').length? comments.filter(c=>c.status!=='לביצוע').map(c=>commentHtml(c,tid)).join(''):'<div class="muted">אין הערות</div>')+'</div>'+
+    (comments.filter(c=>w24Stat(c, TCOMMENT_STATUSES)!=='לביצוע').length? comments.filter(c=>w24Stat(c, TCOMMENT_STATUSES)!=='לביצוע').map(c=>commentHtml(c,tid)).join(''):'<div class="muted">אין הערות</div>')+'</div>'+   /* ⭐ B81/WASH-23ג */
     linksSection('task',tid)+
     '<div class="row" style="margin-bottom:8px">'+notesBtn('task',tid)+' '+tagBtn('task',tid)+'</div>'+
     '<div class="row"><input id="f_tcomment" class="grow" placeholder="הוסף הערה..." onkeydown="if(event.key===\'Enter\')addTaskComment(\''+tid+'\')">'+
@@ -12149,7 +12201,7 @@ function portalMessagesHtml(d){
     return '<div style="border:1px solid var(--line);border-radius:9px;padding:8px;margin-bottom:6px;font-size:13px">'+
       '<div class="row"><div class="grow"><b>'+esc(m.subject||'')+'</b>'+
         (m.ref_id?' <span class="muted" style="font-size:11px">· '+esc(m.ref_id)+'</span>':'')+'</div>'+
-        '<span class="chip" style="background:'+(m.status==='נענתה'?'var(--ok)':(m.status==='נסגרה'?'#94A3B8':'var(--amber)'))+';color:#fff">'+esc(m.status||'')+'</span></div>'+
+        '<span class="chip" style="background:'+(w24Stat(m, MSG_STATUSES)==='נענתה'?'var(--ok)':(w24Stat(m, MSG_STATUSES)==='נסגרה'?'#94A3B8':'var(--amber)'))+';color:#fff">'+esc(m.status||'')+'</span></div>'+   /* ⭐ B81/WASH-23ג */
       '<div style="margin-top:4px;white-space:pre-wrap">'+esc(m.body||'')+'</div>'+
       '<div class="muted" style="font-size:11px;margin-top:3px">'+(mine?'נשלח על ידך':'מהמשרד')+' · '+esc(m.date||'')+'</div>'+
       (m.answer? '<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px;white-space:pre-wrap"><b>תשובת המשרד:</b>\n'+esc(m.answer)+
@@ -12266,7 +12318,7 @@ async function portalDepositRefresh(){
 /* NC2: כרטיס כביסה בפורטל — שלב נוכחי, זמן משוער, משקל וחיוב */
 function portalLaundryHtml(lk){
   /* B64a: שלב מהגיליון מנורמל — בלעדיו idx=-1 וכל המחוון נראה כבוי ללקוח. */
-  var lkSt = sPick(lk.status, NOBLE_STAGES) || sVal(lk.status);
+  var lkSt = w24Stat(lk, NOBLE_STAGES, INTAKE_DFLT);   /* ⭐ B81/WASH-23ג */
   var idx=NOBLE_STAGES.indexOf(lkSt);
   var dots=NOBLE_STAGES.map(function(s,i){
     var on=i<=idx, cur=i===idx&&lkSt!=='נמסר';
@@ -12856,7 +12908,7 @@ function rAssets(){
   var cartCard = function(c){
     var cond = String(c.condition||'תקינה');
     var bad = cond!=='תקינה';
-    var col = bad?'var(--danger)':(sVal(c.status)==='פנויה'?'var(--ok)':'var(--amber)');
+    var col = bad?'var(--danger)':(w24Stat(c, CART_STATUSES, CART_DFLT)==='פנויה'?'var(--ok)':'var(--amber)');   /* ⭐ B81/WASH-23ג */
     var fltC = b42FaultOf('עגלה', c.id);   // B42
     if(fltC) col = 'var(--danger)';
     return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(c.id)+'" onclick="openCart(\''+esc(c.id)+'\')">'+
@@ -12865,15 +12917,15 @@ function rAssets(){
       '<div class="eq-t">'+esc(c.id)+'</div>'+
       '<div class="eq-s">'+esc(c.location||'ללא מיקום')+'</div>'+
       (c.tare_kg?'<div class="eq-s">תפוסה '+esc(c.tare_kg)+' ק"ג</div>':'')+
-      '<div class="eq-b"><span class="eq-chip" style="background:'+(sVal(c.status)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(c.status||'')+'</span>'+
+      '<div class="eq-b"><span class="eq-chip" style="background:'+(w24Stat(c, CART_STATUSES, CART_DFLT)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(c.status||'')+'</span>'+   /* ⭐ B81/WASH-23ג */
       (bad?'<span class="eq-chip" style="background:var(--danger)">'+esc(cond)+'</span>':'')+'</div></div>';
   };
   var machCard = function(m){
     var kind = b39MachineKind(m);
     var soon = ymdLocal(new Date(Date.now()+30*864e5));
     var due = m.next_service && m.next_service<=soon;
-    var stCol = sVal(m.status)==='פעילה'?'var(--ok)':(sVal(m.status)==='בתיקון'?'var(--amber)':'var(--danger)');
-    var col = sVal(m.status)==='פעילה'? (due?'var(--amber)':'var(--ok)') : stCol;
+    var stCol = w24Stat(m, MACHINE_STATUSES)==='פעילה'?'var(--ok)':(w24Stat(m, MACHINE_STATUSES)==='בתיקון'?'var(--amber)':'var(--danger)');   /* ⭐ B81/WASH-23ג */
+    var col = w24Stat(m, MACHINE_STATUSES)==='פעילה'? (due?'var(--amber)':'var(--ok)') : stCol;   /* ⭐ B81/WASH-23ג */
     var fltM = b42FaultOf('מכונה', m.id);   // B42
     if(fltM) col = 'var(--danger)';
     return '<div class="eqtile" style="--eqc:'+col+'" title="'+esc(m.id)+(m.model?' · '+esc(m.model):'')+'" onclick="openMach(\''+esc(m.id)+'\')">'+
@@ -12922,7 +12974,7 @@ function openCart(cid){
       '<div style="color:'+(cond!=='תקינה'?'var(--danger)':'var(--navy2,#1F4E78)')+'">'+b39Icon('cart',44)+'</div>'+
       '<div class="grow"><h2 style="margin:0">עגלה '+esc(c.id)+'</h2>'+
       '<div class="sub">'+esc(c.location||'ללא מיקום')+'</div></div>'+
-      '<span class="chip" style="background:'+(sVal(c.status)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(c.status||'')+'</span></div>'+
+      '<span class="chip" style="background:'+(w24Stat(c, CART_STATUSES, CART_DFLT)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(c.status||'')+'</span></div>'+   /* ⭐ B81/WASH-23ג */
     '<table style="margin-top:12px">'+
       '<tr><th>מצב תקינות</th><td>'+(cond==='תקינה'?'<span style="color:var(--ok);font-weight:600">תקינה</span>':'<span style="color:var(--danger);font-weight:700">⚠ '+esc(cond)+'</span>')+'</td></tr>'+
       '<tr><th>קיבולת</th><td>'+esc(c.capacity||'—')+'</td></tr>'+
@@ -12969,10 +13021,10 @@ function openMach(mid){
   var due = m.next_service && m.next_service<=soon;
   var code = String(m.barcode||m.id);
   openModal('<div class="row" style="align-items:center;gap:10px">'+
-      '<div style="color:'+(sVal(m.status)==='פעילה'?'var(--navy2,#1F4E78)':'var(--danger)')+'">'+b39Icon(kind,44)+'</div>'+
+      '<div style="color:'+(w24Stat(m, MACHINE_STATUSES)==='פעילה'?'var(--navy2,#1F4E78)':'var(--danger)')+'">'+b39Icon(kind,44)+'</div>'+   /* ⭐ B81/WASH-23ג */
       '<div class="grow"><h2 style="margin:0">'+esc(m.type||'מכונה')+'</h2>'+
       '<div class="sub">'+esc(m.id)+(m.manufacturer||m.model?' · '+esc(m.manufacturer||'')+' '+esc(m.model||''):'')+'</div></div>'+
-      '<span class="chip" style="background:'+(sVal(m.status)==='פעילה'?'var(--ok)':sVal(m.status)==='בתיקון'?'var(--amber)':'var(--danger)')+'">'+esc(m.status||'')+'</span></div>'+
+      '<span class="chip" style="background:'+(w24Stat(m, MACHINE_STATUSES)==='פעילה'?'var(--ok)':w24Stat(m, MACHINE_STATUSES)==='בתיקון'?'var(--amber)':'var(--danger)')+'">'+esc(m.status||'')+'</span></div>'+   /* ⭐ B81/WASH-23ג */
     (due?'<div class="card" style="background:#FFF7E6;border-color:#E8A33D;padding:8px 10px;font-size:12.5px;margin-top:10px">⚠ מועד הטיפול הבא ('+esc(m.next_service)+') בתוך פחות מ-30 יום</div>':'')+
     b42FaultBanner('מכונה', m.id)+
     '<table style="margin-top:12px">'+
@@ -13113,7 +13165,7 @@ function b42Faults(scope){
   var all = (DB.assetFaults||[]).slice().sort(function(a,b){ return String(b.reported_at||'').localeCompare(String(a.reported_at||'')); });
   return scope ? all.filter(function(f){ return b42InScope(f.asset_type, scope); }) : all;
 }
-function b42OpenFaults(scope){ return b42Faults(scope).filter(function(f){ return f.status==='פתוחה'; }); }
+function b42OpenFaults(scope){ return b42Faults(scope).filter(function(f){ return w24Stat(f, FAULT_STATUSES, FAULT_DFLT)==='פתוחה'; }); }   /* ⭐ B81/WASH-23ג */
 function b42FaultOf(type,id){ return b42OpenFaults().find(function(f){ return f.asset_type===type && String(f.asset_id)===String(id); }); }
 function b42Events(filter){
   return (DB.faultEvents||[]).filter(filter||function(){return true;})
@@ -13304,7 +13356,7 @@ function b42FaultCard(fid){
   var f = (DB.assetFaults||[]).find(function(x){ return x.id===fid; }); if(!f) return;
   var evs = b42Events(function(e){ return e.fault_id===fid; });
   var cost = b42SumCost(evs);
-  var openF = f.status==='פתוחה';
+  var openF = w24Stat(f, FAULT_STATUSES, FAULT_DFLT)==='פתוחה';   /* ⭐ B81/WASH-23ג */
   openModal('<div class="row" style="align-items:center;gap:10px"><div class="grow">'+
       '<h2 style="margin:0">תקלה — '+esc(b42Label(f.asset_type,f.asset_id))+'</h2>'+
       '<div class="sub">'+esc(f.id)+' · דווחה '+esc(f.reported_at||'')+' ע\u0022י '+esc(f.reported_by||'')+'</div></div>'+
@@ -13497,8 +13549,8 @@ function b42History(type,id){
       return '<div class="card" style="padding:8px 10px;cursor:pointer" onclick="b42FaultCard(\''+esc(f.id)+'\')"><div class="row">'+
         '<div class="grow"><b>'+esc(String(f.description||'').substring(0,80))+'</b>'+
         '<div class="muted" style="font-size:12px">'+esc(f.reported_at||'')+' · '+esc(f.reported_by||'')+
-        (f.status==='סגורה'?' · '+esc(f.close_outcome||''):' · שלב הבא: '+esc(f.next_step||''))+'</div></div>'+
-        '<span class="chip" style="background:'+(f.status==='פתוחה'?'var(--danger)':'var(--ok)')+'">'+esc(f.status)+'</span></div></div>';
+        (w24Stat(f, FAULT_STATUSES, FAULT_DFLT)==='סגורה'?' · '+esc(f.close_outcome||''):' · שלב הבא: '+esc(f.next_step||''))+'</div></div>'+   /* ⭐ B81/WASH-23ג */
+        '<span class="chip" style="background:'+(w24Stat(f, FAULT_STATUSES, FAULT_DFLT)==='פתוחה'?'var(--danger)':'var(--ok)')+'">'+esc(f.status)+'</span></div></div>';   /* ⭐ B81/WASH-23ג */
     }).join(''):'')+
     '<div class="section-title" style="margin-top:12px"><h3>כל הרישומים</h3></div>'+
     b42EventsHtml(evs)+
@@ -13514,7 +13566,7 @@ function b42VisitsHtml(){
       '<button class="btn sm" onclick="b42VisitForm()">+ ביקור</button></div>':'')+'</div>'+
     (vs.length? vs.map(function(v){
       var acts = (DB.faultEvents||[]).filter(function(e){ return e.visit_id===v.id; });
-      var col = v.status==='בוצע'?'var(--ok)':(v.status==='מתוכנן'?'var(--amber)':'var(--muted)');
+      var col = w24Stat(v, VISIT_STATUSES)==='בוצע'?'var(--ok)':(w24Stat(v, VISIT_STATUSES)==='מתוכנן'?'var(--amber)':'var(--muted)');   /* ⭐ B81/WASH-23ג */
       return '<div class="card" style="cursor:pointer" onclick="b42VisitCard(\''+esc(v.id)+'\')"><div class="row">'+
         '<div class="grow"><b>'+esc(b42ProvName(v.provider_id)||'—')+'</b> <span class="muted">· '+esc(v.date||'')+'</span>'+
         '<div class="muted" style="font-size:12.5px">'+acts.length+' פעולות'+
@@ -13531,7 +13583,7 @@ function b42VisitForm(vid){
     '<div class="frow"><label>תאריך הביקור <b style="color:var(--danger)">*</b></label>'+
       '<input id="bv_date" type="date" value="'+esc(v.date||ymdLocal())+'"></div>'+
     '<div class="frow"><label>סטטוס</label><select id="bv_stat">'+
-      ['בוצע','מתוכנן','בוטל'].map(function(s){ return '<option'+(v.status===s?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></div></div>'+
+      ['בוצע','מתוכנן','בוטל'].map(function(s){ return '<option'+(w24Stat(v, VISIT_STATUSES)===s?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></div></div>'+   /* ⭐ B81/WASH-23ג */
     b42ProvPicker('bv_prov', v.provider_id||'', 'איש מקצוע / חברת שירות')+
     '<div class="frow"><label>סיכום הביקור</label><textarea id="bv_sum" rows="2">'+esc(v.summary||'')+'</textarea></div>'+
     '<div class="muted" style="font-size:12px;margin-bottom:8px">אחרי השמירה אפשר לרשום תחת הביקור כמה פעולות — על מכונות, על עגלות או על תשתיות.</div>'+
@@ -13553,7 +13605,7 @@ function b42VisitCard(vid){
   openModal('<div class="row" style="align-items:center;gap:10px"><div class="grow">'+
       '<h2 style="margin:0">'+esc(b42ProvName(v.provider_id)||'ביקור')+'</h2>'+
       '<div class="sub">'+esc(v.date||'')+' · '+esc(v.id)+'</div></div>'+
-      '<span class="chip" style="background:'+(v.status==='בוצע'?'var(--ok)':'var(--amber)')+'">'+esc(v.status||'')+'</span></div>'+
+      '<span class="chip" style="background:'+(w24Stat(v, VISIT_STATUSES)==='בוצע'?'var(--ok)':'var(--amber)')+'">'+esc(v.status||'')+'</span></div>'+   /* ⭐ B81/WASH-23ג */
     (v.summary?'<div class="sub" style="white-space:pre-wrap;margin-top:8px">'+esc(v.summary)+'</div>':'')+
     '<div class="sub" style="margin-top:8px">'+acts.length+' פעולות · סה\u0022כ '+b42Agor(b42SumCost(acts))+'</div>'+
     (b42Can()?'<div class="actrow" style="margin-top:10px">'+
@@ -13567,7 +13619,7 @@ function b42VisitCard(vid){
 function b42FaultsHtml(scope){
   scope = scope || 'laundry';
   var open = b42OpenFaults(scope);
-  var closed = b42Faults(scope).filter(function(f){ return f.status!=='פתוחה'; }).slice(0,15);
+  var closed = b42Faults(scope).filter(function(f){ return w24Stat(f, FAULT_STATUSES, FAULT_DFLT)!=='פתוחה'; }).slice(0,15);   /* ⭐ B81/WASH-23ג */
   var emptyTxt = scope==='fleet' ? 'אין תקלות רכב פתוחות — כל הצי תקין'
                                  : 'אין תקלות פתוחות — הכל תקין';
   return '<div class="section-title"><h3>'+(scope==='fleet'?'תקלות רכב פתוחות':'תקלות פתוחות')+'</h3>'+
@@ -13719,7 +13771,7 @@ function floorBoardRender(){
   if(!r.intakes.length) h+='<div class="card empty">אין קליטות פעילות כרגע</div>';
   r.intakes.forEach(function(ik){
     /* B64a: אותו נרמול כמו בפורטל — רצפת הייצור לא תציג פס ריק בגלל רווח. */
-    var ikSt = sPick(ik.status, NOBLE_STAGES) || sVal(ik.status);
+    var ikSt = w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT);   /* ⭐ B81/WASH-23ג */
     var clr = ikSt==='מוכן'||ikSt==='במשלוח'?'var(--teal)':'var(--amber)';
     var idx = NOBLE_STAGES.indexOf(ikSt);
     var strip = NOBLE_STAGES.map(function(s,i){
@@ -13830,17 +13882,17 @@ function floorRenderInfo(){
       '<div style="color:var(--navy2,#1F4E78)">'+b39Icon('cart',40)+'</div>'+
       '<div class="grow"><b style="font-size:17px">עגלה '+esc(r.cart.id)+'</b>'+
       '<div class="muted">אינה משויכת לקליטה פעילה</div></div>'+
-      '<span class="chip" style="background:'+(sVal(r.cart.status)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.cart.status)+'</span></div>'+
+      '<span class="chip" style="background:'+(w24Stat(r.cart, CART_STATUSES, CART_DFLT)==='פנויה'?'var(--ok)':'var(--amber)')+'">'+esc(r.cart.status)+'</span></div>'+   /* ⭐ B81/WASH-23ג */
       '<div class="muted" style="margin:8px 0">כדי להתחיל לעבוד עם העגלה צריך קודם לפתוח קליטה — לבחור לקוח ולסרוק אליה את העגלה.</div>'+
       '<button class="btn grow" '+big+' style="width:100%" onclick="floorIntakeWith(\''+esc(r.cart.id)+'\')">פתח קליטה חדשה עם העגלה הזו</button>'+
-      (sVal(r.cart.status)!=='פנויה'?'<button class="btn ghost" style="width:100%;margin-top:8px" onclick="floorRelease(false)">שחרר את העגלה (תקועה \'בשימוש\')</button>':'')+
+      (w24Stat(r.cart, CART_STATUSES, CART_DFLT)!=='פנויה'?'<button class="btn ghost" style="width:100%;margin-top:8px" onclick="floorRelease(false)">שחרר את העגלה (תקועה \'בשימוש\')</button>':'')+   /* ⭐ B81/WASH-23ג */
       '</div>';
     return;
   }
   var ik = r.intake;
   var ikSt = sVal(ik.status);
   var chipClr = ikSt==='נמסר'?'var(--ok)':ikSt==='מוכן'||ikSt==='במשלוח'?'var(--teal)':'var(--amber)';
-  var work = ['התקבל','בכביסה','בייבוש','בגיהוץ וקיפול','באריזה'].includes(ik.status);
+  var work = ['התקבל','בכביסה','בייבוש','בגיהוץ וקיפול','באריזה'].includes(w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT));   /* ⭐ B81/WASH-23ג */
   var opens = r.opens || (r.open_stage? [{stage:r.open_stage, machine_id:r.open_machine, portion_kg:0}] : []);
   var machines = r.machines || [];
   var openKg = 0; opens.forEach(function(o){ openKg += Number(o.portion_kg)||0; });
@@ -14053,7 +14105,7 @@ function b49bManualIntakes(){
   ((DB&&DB.intakeCarts)||[]).forEach(function(b){
     if(!v[b.cart_id] || seen[b.intake_id]) return;
     var ik=((DB&&DB.laundryIntakes)||[]).find(function(i){ return i.id===b.intake_id; });
-    if(!ik || sVal(ik.status)==='נמסר') return;
+    if(!ik || w24Stat(ik, NOBLE_STAGES, INTAKE_DFLT)==='נמסר') return;   /* ⭐ B81/WASH-23ג */
     seen[b.intake_id]=1;
     out.push({intake:ik, cart_id:b.cart_id});
   });
@@ -14164,7 +14216,7 @@ function w19FreeCarts(){
   FLOOR_INTAKE_CARTS.forEach(function(bc){ chosen[sVal(bc)] = 1; });
   return ((DB&&DB.carts)||[]).filter(function(c){
     if(b49bIsVirtual(c)) return false;
-    if(sVal(c.status)!=='פנויה') return false;
+    if(w24Stat(c, CART_STATUSES, CART_DFLT)!=='פנויה') return false;   /* ⭐ B81/WASH-23ג */
     if(chosen[sVal(c.id)] || chosen[sVal(c.barcode)]) return false;
     return true;
   }).sort(function(a,b){ return String(a.id).localeCompare(String(b.id)); });
@@ -14195,7 +14247,7 @@ async function floorAddCart(){
   if(!r) return;
   if(!r.ok) return toast(r.error, true);
   if(r.intake) return toast('העגלה '+r.cart.id+' כבר משויכת לקליטה פעילה', true);
-  if(sVal(r.cart.status)!=='פנויה') return toast('העגלה '+r.cart.id+' אינה פנויה', true);
+  if(w24Stat(r.cart, CART_STATUSES, CART_DFLT)!=='פנויה') return toast('העגלה '+r.cart.id+' אינה פנויה', true);   /* ⭐ B81/WASH-23ג */
   FLOOR_INTAKE_CARTS.push(bc);
   el('fl_icart').value='';
   floorRenderCartList();
@@ -14293,9 +14345,9 @@ function floorPackTab(){
     (cases.length? '<table style="margin-top:8px"><tr><th>ברקוד</th><th>סטטוס</th><th>הזמנה</th><th></th></tr>'+cases.map(function(c){
       var o = c.order_id? (DB.orders||[]).find(x=>x.id===c.order_id) : null;
       return '<tr><td><b>'+esc(c.barcode)+'</b></td>'+
-        '<td><span class="chip" style="background:'+(c.status==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(c.status||'פנוי')+'</span></td>'+
+        '<td><span class="chip" style="background:'+(w24Stat(c, CASE_STATUSES, CASE_DFLT)==='פנוי'?'var(--ok)':'var(--navy)')+';color:#fff">'+esc(c.status||'פנוי')+'</span></td>'+   /* ⭐ B81/WASH-23ג */
         '<td>'+(o?'#'+esc(o.order_number||o.id):'<span class="muted">—</span>')+'</td>'+
-        '<td>'+(c.status==='משויך'?'<button class="btn ghost sm" onclick="b34DoCaseRelease(\''+c.id+'\')">שחרר</button>':'')+'</td></tr>';
+        '<td>'+(w24Stat(c, CASE_STATUSES, CASE_DFLT)==='משויך'?'<button class="btn ghost sm" onclick="b34DoCaseRelease(\''+c.id+'\')">שחרר</button>':'')+'</td></tr>';   /* ⭐ B81/WASH-23ג */
     }).join('')+'</table>' : '<div class="empty">אין מארזים עדיין — צור מארז ראשון והדבק עליו את הברקוד</div>')+
     '</div>'+
     '<div class="card">'+
@@ -14387,7 +14439,7 @@ function b34PickForm(orderId){
   var types = (DB.packageTypes||[]).filter(t=>t.active!=='לא');
   B34_PICKS = [];
   openModal('<h2>ליקוט למארז</h2>'+
-    '<div class="frow"><label>מארז</label><select id="pi_case">'+cases.map(c=>'<option value="'+c.id+'">'+esc(c.barcode)+(c.status==='משויך'?' (משויך)':'')+'</option>').join('')+'</select></div>'+
+    '<div class="frow"><label>מארז</label><select id="pi_case">'+cases.map(c=>'<option value="'+c.id+'">'+esc(c.barcode)+(w24Stat(c, CASE_STATUSES, CASE_DFLT)==='משויך'?' (משויך)':'')+'</option>').join('')+'</select></div>'+   /* ⭐ B81/WASH-23ג */
     '<div class="frow"><label>הזמנה</label><select id="pi_order"><option value="">— בחר —</option>'+orders.map(function(o){
       var c=(DB.customers||[]).find(x=>x.id===o.customer_id)||{};
       return '<option value="'+o.id+'"'+(orderId===o.id?' selected':'')+'>#'+esc(o.order_number||o.id)+' · '+esc(c.name||'')+'</option>';
@@ -15123,7 +15175,7 @@ function b44OrderCases(oid){
   return (DB.cases||[]).filter(function(c){ return c.active!=='לא' && String(c.order_id||'')===String(oid); });
 }
 function b44CaseChip(c){
-  var bg = c.delivery_id? 'var(--ok)' : (c.status==='משויך'? 'var(--navy2)' : 'var(--muted)');
+  var bg = c.delivery_id? 'var(--ok)' : (w24Stat(c, CASE_STATUSES, CASE_DFLT)==='משויך'? 'var(--navy2)' : 'var(--muted)');   /* ⭐ B81/WASH-23ג */
   return '<span class="chip" style="background:'+bg+';color:#fff;margin:2px">'+esc(c.barcode)+
     ' · '+esc(c.status||'')+(c.delivery_id?' · נסרק להעמסה':'')+'</span>';
 }
