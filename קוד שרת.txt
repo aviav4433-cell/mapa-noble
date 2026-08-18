@@ -131,6 +131,17 @@
 //                   • WASH-13: nobleDriverScan נושאת את order_id של הקליטה.
 //                   • WASH-16: w16OrderGate — חסימה במקור בשלושה אתרים (DEC-03).
 //                   • WASH-21: w21IsRental — תאום ל-w17IsWash, 20 אתרי סוג גולמי שאינם כסף.
+//             B76 — WASH-22: ציר הסטטוס של ההזמנה — canary v4.76-B76
+//                   • w22Stat/w22Known/w22Reserving — נקודת אמת אחת לסטטוס,
+//                     זהה תו-בתו בממשק (יש בדיקה). 35 אתרים בשרת + 34 בממשק.
+//                   • הבאג: הזמנה מאושרת שסטטוסה בגיליון נושא רווח קשיח לא
+//                     שריינה מלאי (reservedQty · b48CommittedQty · b40ItemBreakdown)
+//                     והפריט נראה זמין — סיכון תפעולי.
+//                   ⭐ הכרעת אבי: סטטוס לא מוכר וסטטוס ריק **משריינים מלאי**;
+//                     במלאי בלבד — בכל שאר האתרים אין ריכוך.
+//                   ⭐ תיקון נלווה: טיוטה/הצעת מחיר מלוכלכות נספרו כחוב
+//                     (B54_SKIP_ORDER הושוותה גולמית) — עכשיו מדולגות. R6 אומת.
+//                   ⛔ אין שינוי סכימה. ⛔ toAg · w17IsWash · w21IsRental לא נגעו.
 //                   ⛔ אין שינוי סכימה. ⛔ toAg וארבע נקודות האגורות של B71 לא נגעו.
 //                   ⛔ הבאג: nobleWeighRollup ספרה את **השקילה האחרונה של כל
 //                     עגלה** (lastByCart) ומחקה בשקט כל שקילה שקדמה לה. עגלה
@@ -2200,7 +2211,7 @@ function handle(action, p, db, user) {
         row.created = nowTs(); row.user = user || '';
       }
       if (p.table === 'orders') {
-        row.status = row.status === 'הצעת מחיר' ? 'הצעת מחיר' : 'טיוטה';
+        row.status = w22Stat(row) === 'הצעת מחיר' ? 'הצעת מחיר' : 'טיוטה';
         row.created_at = nowTs(); // NC4: חותמת זמן מלאה
         if (!row.warehouse_id) {
           var wc = db.customers.find(function (x) { return x.id === row.customer_id; });
@@ -2343,7 +2354,7 @@ function handle(action, p, db, user) {
         if (String(d.kind) !== 'איסוף') return;
         if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
         var o41 = (db.orders || []).find(function (x) { return x.id === d.order_id; });
-        if (!o41 || ['הוחזרה', 'הושלמה'].indexOf(String(o41.status)) === -1) return;
+        if (!o41 || ['הוחזרה', 'הושלמה'].indexOf(w22Stat(o41)) === -1) return;
         d.status = 'בוצע';
         d.eta_text = '';
         if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001);
@@ -2385,12 +2396,12 @@ function handle(action, p, db, user) {
     case 'b38FixPickups': {
       var createdB38 = 0, fixedB38 = 0;
       (db.orders || []).forEach(function (o) {
-        if (['מאושרת', 'סופקה'].indexOf(String(o.status)) === -1) return;
+        if (['מאושרת', 'סופקה'].indexOf(w22Stat(o)) === -1) return;
         var planB38 = b38PlannedDeliveries(o);
         if (!planB38.length) return;
         // הזמנה שכבר סופקה — הרגל הראשונה (בתאריך ההתחלה) התרחשה בפועל,
         // ואין ליצור לה רשומה חדשה כ"מתוכנן". משלימים רק את מה שעוד לפנינו.
-        var skipFirstB38 = String(o.status) === 'סופקה';
+        var skipFirstB38 = w22Stat(o) === 'סופקה';
         planB38.forEach(function (pl) {
           if (skipFirstB38 && String(pl.date) === String(o.start_date)) return;
           // B49e: אותו כלל כמו ב-b38EnsureOrderDeliveries — נסיעה מבוטלת אינה "קיימת"
@@ -2427,7 +2438,7 @@ function handle(action, p, db, user) {
       if (idx === -1) return { ok: false, error: 'רשומה לא נמצאה' };
       if (p.table === 'orders') {
         var o = arr2[idx];
-        if (['טיוטה', 'הצעת מחיר', 'בוטלה'].indexOf(o.status) === -1) return { ok: false, error: 'מוחקים רק טיוטה, הצעת מחיר או מבוטלת' };
+        if (['טיוטה', 'הצעת מחיר', 'בוטלה'].indexOf(w22Stat(o)) === -1) return { ok: false, error: 'מוחקים רק טיוטה, הצעת מחיר או מבוטלת' };
         db.orderLines = db.orderLines.filter(function (l) { return l.order_id !== p.id; });
         writeTable('order_lines', db.orderLines);
       }
@@ -2519,7 +2530,7 @@ function handle(action, p, db, user) {
     case 'convertQuote': {
       var oq = db.orders.find(function (x) { return x.id === p.order_id; });
       if (!oq) return { ok: false, error: 'הזמנה לא נמצאה' };
-      if (oq.status !== 'הצעת מחיר') return { ok: false, error: 'רק הצעת מחיר ניתן להמיר' };
+      if (w22Stat(oq) !== 'הצעת מחיר') return { ok: false, error: 'רק הצעת מחיר ניתן להמיר' };
       oq.status = 'טיוטה'; writeTable('orders', db.orders);
       return { ok: true };
     }
@@ -2600,7 +2611,7 @@ function handle(action, p, db, user) {
     case 'cancelOrder': {
       var oc = db.orders.find(function (x) { return x.id === p.order_id; });
       if (!oc) return { ok: false, error: 'הזמנה לא נמצאה' };
-      if (['סופקה', 'הוחזרה', 'הושלמה'].indexOf(oc.status) > -1) return { ok: false, error: 'אי אפשר לבטל הזמנה שכבר סופקה' };
+      if (['סופקה', 'הוחזרה', 'הושלמה'].indexOf(w22Stat(oc)) > -1) return { ok: false, error: 'אי אפשר לבטל הזמנה שכבר סופקה' };
       if (db.invoices.some(function (v) { return v.order_id === oc.id && v.status !== 'בוטלה'; }))
         return { ok: false, error: 'קיימת חשבונית פתוחה — בטל אותה קודם' };
       oc.status = 'בוטלה'; writeTable('orders', db.orders);
@@ -2734,7 +2745,7 @@ function handle(action, p, db, user) {
     case 'createInvoice': {
       var oi = db.orders.find(function (x) { return x.id === p.order_id; });
       if (!oi) return { ok: false, error: 'הזמנה לא נמצאה' };
-      if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oi.status) > -1) return { ok: false, error: 'חשבונית מפיקים רק להזמנה מאושרת ומעלה' };
+      if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(w22Stat(oi)) > -1) return { ok: false, error: 'חשבונית מפיקים רק להזמנה מאושרת ומעלה' };
       if (db.invoices.some(function (v) { return v.order_id === oi.id && v.status !== 'בוטלה'; }))
         return { ok: false, error: 'כבר קיימת חשבונית פעילה להזמנה זו' };
       var sub = orderTotal(db, oi.id);
@@ -2759,7 +2770,7 @@ function handle(action, p, db, user) {
       } else if (p.customer_id) {
         listEI = db.orders.filter(function (x) {
           return x.customer_id === p.customer_id
-            && ['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(x.status) === -1
+            && ['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(w22Stat(x)) === -1
             && orderBalance(db, x.id) > 0.01;
         });
       } else return { ok: false, error: 'חסר מזהה לקוח או הזמנה' };
@@ -2768,7 +2779,7 @@ function handle(action, p, db, user) {
       var madeEI = [], errEI = '';
       for (var iEI = 0; iEI < listEI.length; iEI++) {
         var oX = listEI[iEI];
-        if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oX.status) > -1) continue;
+        if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(w22Stat(oX)) > -1) continue;
         if (db.invoices.some(function (v) { return v.order_id === oX.id && v.status !== 'בוטלה'; })) continue;
         if (orderBalance(db, oX.id) <= 0.01) continue;
         var rEI = b1CreateInvoice(db, {
@@ -3531,7 +3542,7 @@ function handle(action, p, db, user) {
         if (rec43.status === 'בוטלה') return { ok: false, error: 'החשבונית בוטלה' };
         nm43 = 'חשבונית ' + (rec43.number || rec43.id);
       } else {
-        if (['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(rec43.status) > -1) return { ok: false, error: 'להזמנה בסטטוס זה אין מועד תשלום' };
+        if (['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(w22Stat(rec43)) > -1) return { ok: false, error: 'להזמנה בסטטוס זה אין מועד תשלום' };
         nm43 = 'הזמנה ' + (rec43.order_number || rec43.id);
       }
       var old43 = isDateStr(rec43.due_date) ? String(rec43.due_date) : '';
@@ -3600,7 +3611,7 @@ function handle(action, p, db, user) {
         if (p.from && o.start_date < p.from) return false;
         if (p.to && o.start_date > p.to) return false;
         if (p.customer_id && o.customer_id !== p.customer_id) return false;
-        if (p.status && o.status !== p.status) return false;
+        if (p.status && w22Stat(o) !== sVal(p.status)) return false;
         if (p.type && o.type !== p.type) return false;
         return true;
       }).map(function (o) {
@@ -3727,7 +3738,7 @@ function handle(action, p, db, user) {
       if (dlv) ord3 = db.orders.find(function (o) { return o.id === dlv.order_id; });
       if (!ord3) ord3 = db.orders.find(function (o) { return o.id === code2; });
       if (!ord3) return { ok: false, error: 'לא נמצאה הזמנה לתעודה/מזהה: ' + code2 };
-      if (ord3.status !== 'סופקה') return { ok: false, error: 'ההזמנה בסטטוס "' + ord3.status + '" — רק הזמנה שסופקה נקלטת בהחזרה' };
+      if (w22Stat(ord3) !== 'סופקה') return { ok: false, error: 'ההזמנה בסטטוס "' + ord3.status + '" — רק הזמנה שסופקה נקלטת בהחזרה' };
       var defDev = Number((db.settings.find(function (s) { return s.key === 'default_deviation_pct'; }) || {}).value || 2);
       var custD = db.customers.find(function (c) { return c.id === ord3.customer_id; }) || {};
       var lines4 = db.orderLines.filter(function (l) { return l.order_id === ord3.id; }).map(function (l) {
@@ -3745,7 +3756,7 @@ function handle(action, p, db, user) {
     case 'returnByWeight': {
       var ow = db.orders.find(function (x) { return x.id === p.order_id; });
       if (!ow) return { ok: false, error: 'הזמנה לא נמצאה' };
-      if (ow.status !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
+      if (w22Stat(ow) !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
       var defDev2 = Number((db.settings.find(function (s) { return s.key === 'default_deviation_pct'; }) || {}).value || 2);
       var custD2 = db.customers.find(function (c) { return c.id === ow.customer_id; }) || {};
       var returns2 = {}, needCount = [], weights = {};
@@ -3820,7 +3831,7 @@ function handle(action, p, db, user) {
     case 'b49eSetShipMode': {
       var oSM = db.orders.find(function (x) { return x.id === p.order_id; });
       if (!oSM) return { ok: false, error: 'הזמנה לא נמצאה' };
-      if (String(oSM.status) === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת — אין מה לשנות' };
+      if (w22Stat(oSM) === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת — אין מה לשנות' };
       var legSM = String(p.leg || '');
       if (B49E_LEGS.indexOf(legSM) === -1) return { ok: false, error: 'רגל לא חוקית' };
       var modeSM = String(p.mode || '');
@@ -3831,7 +3842,7 @@ function handle(action, p, db, user) {
       writeTable('orders', db.orders);
       // הזמנה שטרם אושרה — אין לה נסיעות בכלל; הן ייווצרו באישור לפי המצב החדש.
       var changedSM = 0;
-      if (['מאושרת', 'סופקה'].indexOf(String(oSM.status)) > -1) {
+      if (['מאושרת', 'סופקה'].indexOf(w22Stat(oSM)) > -1) {
         changedSM = b49eApplyLegMode(db, oSM, legSM, user);
         if (changedSM) writeTable('deliveries', db.deliveries);
       }
@@ -5200,6 +5211,35 @@ function w17IsWash(o){ return !!o && sVal(o.type)==='כביסה'; }
    ============================================================ */
 function w21IsRental(o){ return !!o && sVal(o.type)!=='כביסה'; }
 
+/* ============================================================
+   ⭐⭐ B76 / WASH-22 — ציר הסטטוס · התאום של w21IsRental
+   ------------------------------------------------------------
+   B74/B75 סגרו את ציר ה**סוג**. ציר ה**סטטוס** נשאר גולמי בכ-37 אתרים
+   בשרת ובכ-31 בממשק — והכבדים שבהם הם המלאי: reservedQty ·
+   b48CommittedQty (שרת) · b40ItemBreakdown (ממשק).
+   התוצאה בשטח: הזמנה מאושרת שהסטטוס שלה בגיליון נושא רווח קשיח או תו
+   כיווניות **אינה משריינת מלאי, והפריט נראה זמין** — סיכון תפעולי
+   (הסחורה מובטחת ללקוח ונמכרת שוב), לא כספי.
+
+   w22Stat היא נקודת האמת היחידה ל"מה הסטטוס של ההזמנה":
+   sPick מחזיר את הערך הקנוני מתוך ORDER_STATUSES; אם אין התאמה מוחזר
+   הערך המנורמל עצמו — כדי שסטטוס לא מוכר לא יתחזה לסטטוס מוכר.
+   ⛔ חייבת להישאר זהה תו-בתו ל-index.html — יש בדיקה שמשווה גופים.
+   ⛔ נרמול להשוואה בלבד. הערך בגיליון אינו משתנה, והתצוגה לאבי
+     (הודעות שגיאה) ממשיכה להראות את הערך הגולמי שבגיליון.
+
+   w22Reserving — הכרעת אבי 17.08.2026: **סטטוס לא מוכר וסטטוס ריק
+   משריינים מלאי**, בדיוק כמו שסוג לא מוכר נשאר השכרה ב-B75. הסחורה
+   עלולה להיות מובטחת ואסור שתיראה זמינה; זה גם עקבי עם הכסף, שכן
+   הזמנה כזו אינה ב-B54_SKIP_ORDER וכבר מחויבת בספר החיובים.
+   ⛔ ההכרעה חלה על **המלאי בלבד** (reservedQty · b48CommittedQty ·
+     b40ItemBreakdown). בכל שאר האתרים סטטוס לא מוכר נשאר לא מוכר —
+     אין ריכוך ואין הרחבת הרשאות (קליטת כביסה, ליקוט, מחיקה).
+   ============================================================ */
+function w22Stat(o){ var s = sVal(o && o.status); return sPick(s, ORDER_STATUSES) || s; }
+function w22Known(o){ return sPick(o && o.status, ORDER_STATUSES) !== ''; }
+function w22Reserving(o){ return !!o && (RESERVING_STATUSES.indexOf(w22Stat(o)) > -1 || !w22Known(o)); }
+
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
    ⚠ הבאג שנמצא: ערך שנקרא מגיליון עלול לחזור עם רווח נגרר, רווח מוביל,
    רווח כפול, רווח קשיח (\u00A0) או תו כיווניות RTL בלתי נראה
@@ -5283,7 +5323,7 @@ function reservedQty(db, itemId, start, end, excludeOrderId, wh) {
     if (!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — היה o.type !== 'השכרה' גולמי: השכרה מלוכלכת לא שריינה מלאי */
     if (wh !== undefined && String(o.warehouse_id || '') !== String(wh || '')) return;
     if (excludeOrderId && o.id === excludeOrderId) return;
-    if (RESERVING_STATUSES.indexOf(o.status) === -1) return;
+    if (!w22Reserving(o)) return;   /* ⭐⭐ B76/WASH-22 — היה RESERVING_STATUSES.indexOf(o.status) גולמי */
     // B19a (L1): ההשוואה מול תאריך סיום מוארך בימי הכביסה — הפריט חוזר לזמינות רק אחרי הכביסה.
     if (datesOverlap(o.start_date, rentalBlockEnd(db, o.end_date), start, end)) qty += Number(l.qty);
   });
@@ -5322,7 +5362,7 @@ function b48CommittedQty(db, itemId, wh) {
     var o = db.orders.find(function (x) { return x.id === l.order_id; });
     if (!w21IsRental(o)) return;   /* ⭐⭐ B75/WASH-21 — היה o.type !== 'השכרה' גולמי */
     if (wh !== undefined && String(o.warehouse_id || '') !== String(wh || '')) return;
-    if (RESERVING_STATUSES.indexOf(o.status) === -1) return;
+    if (!w22Reserving(o)) return;   /* ⭐⭐ B76/WASH-22 — היה RESERVING_STATUSES.indexOf(o.status) גולמי */
     qty += Number(l.qty);
   });
   return qty;
@@ -5347,7 +5387,7 @@ function b19ShortageSuffix(db, orderId, startD, endD) {
 function approveOrder(db, orderId) {
   var o = db.orders.find(function (x) { return x.id === orderId; });
   if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
-  if (o.status !== 'טיוטה') return { ok: false, error: 'רק טיוטה ניתן לאשר. סטטוס נוכחי: ' + o.status };
+  if (w22Stat(o) !== 'טיוטה') return { ok: false, error: 'רק טיוטה ניתן לאשר. סטטוס נוכחי: ' + o.status };
   // B2 (D2/S2): הזמנת פורטל/חנות שטרם עברה תשלום או מסגרת אשראי — חסומה לאישור.
   // המוצא למשרד/מנהל: גביית תשלום במסך התשלום, או סימון "תשלום בהמשך" (b2MarkPayLater).
   if (['ממתין לתשלום', 'ממתין לתשלום הפרש', 'ממתין לאישור חריגה'].indexOf(String(o.payment_status || '')) > -1)
@@ -5396,8 +5436,8 @@ function deliverOrder(db, orderId) {
   if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
   // B17-תיקון: אידמפוטנטיות — אם ההזמנה כבר במצב מתקדם (לחיצה כפולה / סגירה קודמת),
   // לא מחזירים שגיאה אלא ממשיכים בהצלחה כדי שסגירת המשלוחים למטה תתבצע בכל זאת.
-  if (o.status !== 'מאושרת') {
-    if (['סופקה', 'הוחזרה', 'הושלמה'].indexOf(o.status) > -1) return { ok: true, order: o };
+  if (w22Stat(o) !== 'מאושרת') {
+    if (['סופקה', 'הוחזרה', 'הושלמה'].indexOf(w22Stat(o)) > -1) return { ok: true, order: o };
     return { ok: false, error: 'רק הזמנה מאושרת ניתן לסמן כסופקה' };
   }
   o.status = 'סופקה';
@@ -5406,7 +5446,7 @@ function deliverOrder(db, orderId) {
 function receiveReturn(db, orderId, returns, todayStr, genIdFn, user) {
   var o = db.orders.find(function (x) { return x.id === orderId; });
   if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
-  if (o.status !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
+  if (w22Stat(o) !== 'סופקה') return { ok: false, error: 'רק הזמנה שסופקה ניתן להחזיר' };
   var shortages = [];
   var newTasks = []; // B49c: המשימות שנוצרו בהחזרה הזו — יקושרו לקליטת NOBLE אחת
   db.orderLines.filter(function (l) { return l.order_id === orderId; }).forEach(function (l) {
@@ -5721,7 +5761,7 @@ function advanceLaundry(db, taskId, todayStr, opts, genIdFn, user) {
     var o = db.orders.find(function (x) { return x.id === t.order_id; });
     if (o) {
       var open = db.laundryTasks.filter(function (x) { return x.order_id === o.id && x.stage !== 'מוכן'; });
-      if (open.length === 0 && o.status === 'הוחזרה') o.status = 'הושלמה';
+      if (open.length === 0 && w22Stat(o) === 'הוחזרה') o.status = 'הושלמה';
     }
   }
   b40LogTask(db, t, isFinish ? 'סיום' : 'קידום שלב', {
@@ -6197,7 +6237,7 @@ function b54Bump() { B54_LEDGER_CACHE = null; }
 function b54Ledger(db) {
   if (B54_LEDGER_CACHE) return B54_LEDGER_CACHE;
   var rows = [];
-  var orders = (db.orders || []).filter(function (o) { return B54_SKIP_ORDER.indexOf(o.status) === -1; });
+  var orders = (db.orders || []).filter(function (o) { return B54_SKIP_ORDER.indexOf(w22Stat(o)) === -1; });
   var invActive = (db.invoices || []).filter(function (v) { return v.status !== 'בוטלה'; });
   var invById = {}; invActive.forEach(function (v) { invById[v.id] = v; });
 
@@ -6442,7 +6482,7 @@ function b54LedgerAudit(db, p) {
 
   // (א) הזמנות כביסה עם שורות מתומחרות — החוב השווא שנעלם עם B54
   (db.orders || []).filter(function (o) {
-    return w17IsWash(o) && B54_SKIP_ORDER.indexOf(o.status) === -1;   /* B74/WASH-20 */
+    return w17IsWash(o) && B54_SKIP_ORDER.indexOf(w22Stat(o)) === -1;   /* B74/WASH-20 */
   }).forEach(function (o) {
     var s = (db.orderLines || []).filter(function (l) { return l.order_id === o.id; })
       .reduce(function (a, l) { return a + Number(l.qty) * Number(l.unit_price); }, 0);
@@ -6501,7 +6541,7 @@ function b54LedgerAudit(db, p) {
   //     הסכום שהפסיק להיספר כחוב — אפס כשקיימת חשבונית פעילה, כי אז
   //     סכום המסמך גובר (C4א) ורק פירוט השורות בספר מתחלף.
   (db.orders || []).forEach(function (o) {
-    if (B54_SKIP_ORDER.indexOf(o.status) > -1) return;
+    if (B54_SKIP_ORDER.indexOf(w22Stat(o)) > -1) return;
     var raw = String(o.type == null ? '' : o.type);
     var canon = sPick(o.type, ORDER_TYPES);
     if (canon !== '' && raw === canon) return;          // נקי — הרוב המוחלט
@@ -6797,7 +6837,7 @@ function b55EnsureDocsForDebt(db, customerId, invoiceType, user) {
   var made = [];
   var type = invoiceType || 'חשבונית מס';
   (db.orders || []).filter(function (o) {
-    return o.customer_id === customerId && B54_SKIP_ORDER.indexOf(o.status) === -1
+    return o.customer_id === customerId && B54_SKIP_ORDER.indexOf(w22Stat(o)) === -1
       && b2OrderBalanceAg(db, o.id) > 1
       && !(db.invoices || []).some(function (v) { return v.order_id === o.id && v.status !== 'בוטלה'; });
   }).forEach(function (o) {
@@ -8380,7 +8420,7 @@ function b1CreateInvoice(db, p, user) {
     // חשבונית על הזמנה — שורות המסמך נבנות מ**כל** שורות הספר של ההזמנה (C8)
     var oi = db.orders.find(function(x) { return x.id === p.order_id; });
     if (!oi) return { ok: false, error: 'הזמנה לא נמצאה' };
-    if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(oi.status) > -1)
+    if (['הצעת מחיר', 'טיוטה', 'בוטלה'].indexOf(w22Stat(oi)) > -1)
       return { ok: false, error: 'חשבונית מפיקים רק להזמנה מאושרת ומעלה' };
     if (db.invoices.some(function(v) { return v.order_id === oi.id && v.status !== 'בוטלה'; }))
       return { ok: false, error: 'כבר קיימת חשבונית פעילה להזמנה זו' };
@@ -8580,7 +8620,7 @@ function b2PaymentContext(db, p) {
   var credit = b2CreditStatusObj(db, cid);
   var orderBalAg = o ? Math.max(0, b2OrderBalanceAg(db, o.id)) : 0;
   // חוב קודם = החוב הכולל בניכוי יתרת ההזמנה הנוכחית (אם היא כבר נספרת בחוב)
-  var counted = o && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(o.status) === -1;
+  var counted = o && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(w22Stat(o)) === -1;
   var priorAg = credit.used_ag - (counted ? b2OrderBalanceAg(db, o.id) : 0);
   if (priorAg < 0) priorAg = 0;
   return {
@@ -8610,7 +8650,7 @@ function b2MarkPayLater(db, p) {
     return { ok: false, error: 'סימון "תשלום בהמשך" מותר למנהל/משרד בלבד' };
   var o = db.orders.find(function (x) { return x.id === p.order_id; });
   if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
-  if (o.status === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת' };
+  if (w22Stat(o) === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת' };
   if (o.payment_status === 'שולם') return { ok: false, error: 'ההזמנה כבר שולמה במלואה' };
   if (o.payment_status === 'תשלום בהמשך') return { ok: true, order: o, credit: b2CreditStatusObj(db, o.customer_id) };
   o.payment_status = 'תשלום בהמשך';
@@ -8687,7 +8727,7 @@ function b2ProcessPayment(db, p, user) {
     o = db.orders.find(function (x) { return x.id === p.order_id; });
     if (!o) return { ok: false, error: 'הזמנה לא נמצאה' };
     if (o.customer_id !== cust.id) return { ok: false, error: 'ההזמנה אינה של לקוח זה' };
-    if (o.status === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת' };
+    if (w22Stat(o) === 'בוטלה') return { ok: false, error: 'הזמנה מבוטלת' };
     var oBal = b2OrderBalanceAg(db, o.id);
     if (orderAg > oBal) return { ok: false, error: 'הסכום גבוה מיתרת ההזמנה (₪' + agIls(Math.max(0, oBal)) + ')' };
   }
@@ -8696,7 +8736,7 @@ function b2ProcessPayment(db, p, user) {
   var debts = [];
   if (debtAg > 0) {
     db.orders.filter(function (x) {
-      return x.customer_id === cust.id && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(x.status) === -1 && (!o || x.id !== o.id);
+      return x.customer_id === cust.id && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(w22Stat(x)) === -1 && (!o || x.id !== o.id);
     }).forEach(function (x) {
       var b = b2OrderBalanceAg(db, x.id);
       if (b > 0) debts.push({ kind: 'order', id: x.id, label: 'הזמנה ' + (x.order_number || x.id), bal: b, sort: String(x.created_at || x.start_date || '') });
@@ -8809,7 +8849,7 @@ function portalB2Checkout(db, p) {
   if (!pc) return { ok: false, error: 'קוד לקוח שגוי' };
   var o = db.orders.find(function (x) { return x.id === p.order_id; });
   if (!o || o.customer_id !== pc.id) return { ok: false, error: 'הזמנה לא נמצאה' };
-  if (o.status !== 'הצעת מחיר') return { ok: false, error: 'ההזמנה כבר בטיפול המשרד' };
+  if (w22Stat(o) !== 'הצעת מחיר') return { ok: false, error: 'ההזמנה כבר בטיפול המשרד' };
 
   var totalAg = Math.max(0, b2OrderBalanceAg(db, o.id));
   var credit = b2CreditStatusObj(db, pc.id);
@@ -9178,7 +9218,7 @@ function b4ScanReturnReminders(db) {
   var daysBefore = Number(b2Setting(db, 'notify_return_days_before')) || 1;
   var target = Utilities.formatDate(new Date(new Date().getTime() + daysBefore * 86400000), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   db.orders.filter(function (o) {
-    return w21IsRental(o) && o.end_date === target && ['מאושרת', 'סופקה'].indexOf(o.status) > -1;   /* ⭐ B75/WASH-21 */
+    return w21IsRental(o) && o.end_date === target && ['מאושרת', 'סופקה'].indexOf(w22Stat(o)) > -1;   /* ⭐ B75/WASH-21 */
   }).forEach(function (o) {
     var c = db.customers.find(function (x) { return x.id === o.customer_id; });
     if (!c || !c.email || b4OptedOut(c)) return;
@@ -9583,7 +9623,7 @@ function b9ExceptionsDashboard(db) {
 
   // 2) החזרות שעברו את המועד ועדיין לא הוחזרו/הושלמו
   var overdueReturns = db.orders.filter(function (o) {
-    return w21IsRental(o) && o.end_date && ['מאושרת', 'סופקה'].indexOf(o.status) > -1 && daysOverdue(o.end_date) > 0;   /* ⭐ B75/WASH-21 */
+    return w21IsRental(o) && o.end_date && ['מאושרת', 'סופקה'].indexOf(w22Stat(o)) > -1 && daysOverdue(o.end_date) > 0;   /* ⭐ B75/WASH-21 */
   }).map(function (o) {
     var c = db.customers.find(function (x) { return x.id === o.customer_id; });
     return { order_id: o.id, order_number: o.order_number || o.id, customer: c ? c.name : '', end_date: o.end_date, days: daysOverdue(o.end_date) };
@@ -9654,7 +9694,7 @@ function b10ApprovalsInbox(db) {
 
   // 2) בקשות חריגת אשראי ממתינות (D7-ב) — הזמנות שנתקעו ב-payment_status הזה דרך portalB2Checkout
   var creditExceptions = db.orders.filter(function (o) {
-    return o.status !== 'בוטלה' && o.payment_status === 'ממתין לאישור חריגה';
+    return w22Stat(o) !== 'בוטלה' && o.payment_status === 'ממתין לאישור חריגה';
   }).map(function (o) {
     var c = db.customers.find(function (x) { return x.id === o.customer_id; });
     var credit = b2CreditStatusObj(db, o.customer_id);
