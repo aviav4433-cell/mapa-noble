@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.80-B80', 'ה-canary לא עודכן ל-B80');
+      t.eq(inJs, 'v4.81-B81', 'ה-canary לא עודכן ל-B81');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.80-B80 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.80-B80', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.80-B80/g) || []).length, 2,
+      t.has(s, 'v4.81-B81', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7682,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.80-B80 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.80-B80/g) || []).length, 2,
+      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8017,9 +8017,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.80-B80 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.80-B80/g) || []).length, 2,
+      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8259,7 +8259,7 @@ SPECS.push({
         db.assetFaultEvents = [];
         const before = db.tasks[0].status;
         srv.handle('b42CloseFault',
-          { fault_id: 'F1', outcome: 'תוקן', note: 'הוחלף חלק' }, db, 'מנהל');
+          { fault_id: 'F1', outcome: 'תוקנה', note: 'הוחלף חלק' }, db, 'מנהל');
         t.eq(db.tasks[0].status, before,
           '⛔ משימה שכבר הושלמה (' + JSON.stringify(st) + ') נדרסה שוב');
       });
@@ -8511,9 +8511,9 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ב הוא לוגיקת שרת/ממשק, לא יכולת דפדפן');
     },
 
-    '⛔ canary v4.80-B80 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.80-B80/g) || []).length, 2,
+      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -9493,6 +9493,593 @@ SPECS.push({
     }
   }
 });
+
+
+/* ============================================================================
+   חלק t27 — B81 · WASH-23ג חלק ג' · ציר הסטטוס בתשע הטבלאות שנותרו
+   units · carts · laundry_intakes · asset_faults · task_comments · cases ·
+   notifications · technician_visits · customer_messages
+   ⛔⛔ הממצא החמור: שער מחיקת היחידות. יחידה עם 'אצל לקוח ' מלוכלך לא נחסמה
+   ונמחקה — מלאי שנמצא פיזית אצל לקוח נעלם מהמערכת בשקט.
+   ⛔ מלכודת 2 (קדימות אופרטורים): לכל תנאי שהופך יש בדיקה על **שני** הצדדים.
+   ⛔ מלכודת 3: כל בדיקת שער טוענת על **נוסח הדחייה המדויק**, לא על ok:false.
+   ============================================================================ */
+
+const B81 = {
+  dirty(v) { return [v + '\u00A0', ' ' + v, v + ' ', '\u200E' + v]; },
+  /* ערכים שאינם באף רשימה — עליהם חלות הכרעות 1א */
+  UNKNOWN: ['לא ידוע', 'scrapped', 'סגור', 'זמין'],
+
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return s ? s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '') : s; },
+
+  /* יחידה אחת בסטטוס נתון + מנהל */
+  unitDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+    db.items = [{ id: 'IT1', name: 'פריט', active: 'כן' }];
+    db.units = [{ id: 'U1', item_id: 'IT1', barcode: 'BC1', status: status, deleted: '' }];
+    return db;
+  },
+
+  faultDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+    db.machines = [{ id: 'M1', type: 'מכונה', status: 'פעילה' }];
+    db.assetFaults = [{
+      id: 'F1', asset_type: 'מכונה', asset_id: 'M1', description: 'תקלה',
+      done_so_far: '', next_step: 'לבדוק', status: status, reported_by: 'מנהל',
+      reported_at: '2026-08-01 08:00', task_id: '', prev_state: 'פעילה',
+      close_outcome: '', close_note: '', closed_by: '', closed_at: ''
+    }];
+    db.faultEvents = [];
+    db.serviceProviders = [];
+    db.technicianVisits = [];
+    return db;
+  }
+};
+
+SPECS.push({
+  file: 't27-b81-srv',
+  title: 'B81 — WASH-23ג חלק ג\' — ציר הסטטוס בתשע הטבלאות שנותרו (שרת)',
+  needs: 'server',
+  requires: ['w24Stat', 'w25Usable', 'sVal', 'sPick',
+             'UNIT_STATUSES', 'UNIT_BUSY', 'UNIT_DEL_DFLT',
+             'FAULT_STATUSES', 'FAULT_DFLT', 'CASE_STATUSES', 'CASE_DFLT',
+             'CART_STATUSES', 'CART_DFLT', 'INTAKE_DFLT', 'NOTIF_STATUSES',
+             'TCOMMENT_STATUSES', 'VISIT_STATUSES', 'MSG_STATUSES', 'MSG_OPEN',
+             'W23G_SHIPPED', 'NOBLE_STAGES', 'B49D_CLOSED_INTAKE',
+             'b48BalancesAg', 'b2CreditUsedAg', 'b54Bump', 'handle'],
+
+  tests: {
+
+    /* ==================== הרשימות והעוזרים ==================== */
+
+    '⛔ w24Stat מנרמל כל ערך מוכר בכל תשע הרשימות': (t, { srv }) => {
+      [['UNIT_STATUSES', srv.UNIT_STATUSES, undefined],
+       ['FAULT_STATUSES', srv.FAULT_STATUSES, srv.FAULT_DFLT],
+       ['CASE_STATUSES', srv.CASE_STATUSES, srv.CASE_DFLT],
+       ['CART_STATUSES', srv.CART_STATUSES, srv.CART_DFLT],
+       ['NOBLE_STAGES', srv.NOBLE_STAGES, srv.INTAKE_DFLT],
+       ['NOTIF_STATUSES', srv.NOTIF_STATUSES, undefined],
+       ['VISIT_STATUSES', srv.VISIT_STATUSES, undefined],
+       ['MSG_STATUSES', srv.MSG_STATUSES, undefined]].forEach(([name, list, dflt]) => {
+        t.ok(list && list.length, '⛔ ' + name + ' חסרה או ריקה');
+        list.forEach(st => {
+          B81.dirty(st).concat([st]).forEach(v => {
+            t.eq(srv.w24Stat({ status: v }, list, dflt), st,
+              '⛔ ' + name + ': w24Stat לא ניקה ' + JSON.stringify(v));
+          });
+        });
+      });
+      /* TCOMMENT_STATUSES מכילה '' כערך חוקי — נבדקת בנפרד */
+      t.eq(srv.TCOMMENT_STATUSES[0], '',
+        '⛔⛔ הערך הריק ירד מ-TCOMMENT_STATUSES — הוא ערך חוקי, לא לכלוך');
+    },
+
+    '⛔⛔ הכרעת אבי 1א: ברירת המחדל לסטטוס לא מוכר, לכל טבלה': (t, { srv }) => {
+      t.eq(srv.FAULT_DFLT, 'פתוחה', '⛔⛔ תקלה לא מוכרת חדלה להיחשב פתוחה');
+      t.eq(srv.CASE_DFLT, 'משויך', '⛔⛔ מארז לא מוכר נחשב פנוי');
+      t.eq(srv.CART_DFLT, 'בשימוש', '⛔⛔ עגלה לא מוכרת נחשבת פנויה');
+      t.eq(srv.INTAKE_DFLT, 'התקבל', '⛔⛔ קליטה לא מוכרת חדלה להיות פתוחה');
+
+      B81.UNKNOWN.concat(['']).forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.FAULT_STATUSES, srv.FAULT_DFLT), 'פתוחה',
+          '⛔⛔ תקלה בסטטוס ' + JSON.stringify(st) + ' נעלמה בשקט');
+        t.ne(srv.w24Stat({ status: st }, srv.CASE_STATUSES, srv.CASE_DFLT), 'פנוי',
+          '⛔⛔ מארז בסטטוס ' + JSON.stringify(st) + ' הוצג כפנוי');
+        t.ne(srv.w24Stat({ status: st }, srv.CART_STATUSES, srv.CART_DFLT), 'פנויה',
+          '⛔⛔ עגלה בסטטוס ' + JSON.stringify(st) + ' הוצגה כפנויה');
+        t.eq(srv.B49D_CLOSED_INTAKE.indexOf(
+             srv.w24Stat({ status: st }, srv.NOBLE_STAGES, srv.INTAKE_DFLT)), -1,
+          '⛔⛔ קליטה בסטטוס ' + JSON.stringify(st) + ' נחשבה סגורה וירדה מהלוח');
+      });
+
+      /* ⛔ ארבע טבלאות בלי dflt במכוון */
+      B81.UNKNOWN.forEach(st => {
+        t.ne(srv.w24Stat({ status: st }, srv.NOTIF_STATUSES), 'ממתין',
+          '⛔ התראה בסטטוס ' + JSON.stringify(st) + ' תישלח שוב');
+        t.ne(srv.w24Stat({ status: st }, srv.NOTIF_STATUSES), 'נשלח',
+          '⛔ התראה שלא נשלחה סומנה כנשלחה — dflt נכנס בטעות');
+        t.ne(srv.w24Stat({ status: st }, srv.VISIT_STATUSES), 'בוצע',
+          '⛔ ביקור טכנאי לא מוכר סומן כבוצע');
+        t.eq(srv.MSG_OPEN.indexOf(srv.w24Stat({ status: st }, srv.MSG_STATUSES)), -1,
+          '⛔ הודעת לקוח בסטטוס לא מוכר נכנסה לתיבת הפתוחות');
+      });
+      t.eq(srv.w24Stat({ status: '' }, srv.NOTIF_STATUSES), '',
+        '⛔ להתראות אין dflt במכוון — ריק חייב להישאר ריק');
+      t.eq(srv.w24Stat({ status: '' }, srv.TCOMMENT_STATUSES), '',
+        '⛔ להערת משימה אין dflt — הריק הוא ערך חוקי');
+    },
+
+    '⛔ הצד השני: כל ערך מוכר עובר את ברירת המחדל בלי להשתנות (מלכודת 2)': (t, { srv }) => {
+      srv.FAULT_STATUSES.forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.FAULT_STATUSES, srv.FAULT_DFLT), st,
+          '⛔ ה-dflt דרס תקלה בסטטוס מוכר ' + JSON.stringify(st));
+      });
+      srv.CART_STATUSES.forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.CART_STATUSES, srv.CART_DFLT), st,
+          '⛔ ה-dflt דרס עגלה בסטטוס מוכר ' + JSON.stringify(st));
+      });
+      srv.CASE_STATUSES.forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.CASE_STATUSES, srv.CASE_DFLT), st,
+          '⛔ ה-dflt דרס מארז בסטטוס מוכר ' + JSON.stringify(st));
+      });
+      srv.NOBLE_STAGES.forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.NOBLE_STAGES, srv.INTAKE_DFLT), st,
+          '⛔ ה-dflt דרס קליטה בשלב מוכר ' + JSON.stringify(st));
+      });
+    },
+
+    /* ============ ⛔⛔ units — הממצא החמור של האצווה ============ */
+
+    '⛔⛔ יחידה אצל לקוח בסטטוס מלוכלך אינה נמחקת': (t, { srv }) => {
+      ['אצל לקוח', 'בכביסה', 'בשימוש'].forEach(base => {
+        B81.dirty(base).concat([base]).forEach(st => {
+          const db = B81.unitDb(srv, st);
+          const r = srv.handle('deleteUnits',
+            { unit_ids: ['U1'], _verified_role: 'מנהל' }, db, 'מנהל');
+          t.eq(r.ok, false,
+            '⛔⛔ יחידה בסטטוס ' + JSON.stringify(st) + ' נמחקה — מלאי אצל לקוח נעלם');
+          t.eq(r.error, 'כל היחידות שנבחרו בשימוש ולא ניתן למחוק אותן',
+            '⛔ נוסח הדחייה השתנה (מלכודת 3)');
+          t.eq(db.units[0].deleted, '', '⛔⛔ היחידה סומנה כמחוקה למרות הדחייה');
+        });
+      });
+    },
+
+    '⛔⛔ סטטוס לא מוכר חוסם מחיקה · ריק ופנוי עדיין נמחקים (מלכודת 2)': (t, { srv }) => {
+      B81.UNKNOWN.forEach(st => {
+        const db = B81.unitDb(srv, st);
+        const r = srv.handle('deleteUnits',
+          { unit_ids: ['U1'], _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, false,
+          '⛔⛔ יחידה בסטטוס לא מוכר ' + JSON.stringify(st) + ' נמחקה — הכרעת 1א נשברה');
+      });
+      ['', 'פנוי', 'גרוט'].forEach(st => {
+        const db = B81.unitDb(srv, st);
+        const r = srv.handle('deleteUnits',
+          { unit_ids: ['U1'], _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, true,
+          '⛔⛔ יחידה בסטטוס ' + JSON.stringify(st) + ' חדלה להיות ניתנת למחיקה — הצד השני נשבר');
+        t.eq(r.deleted, 1, '⛔ המחיקה דווחה אך לא בוצעה על ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔ יחידה גרוטה מלוכלכת נשארת סופית · יחידה תקינה לא הפכה לגרוטה': (t, { srv }) => {
+      B81.dirty('גרוט').concat(['גרוט']).forEach(st => {
+        const db = B81.unitDb(srv, st);
+        const r = srv.handle('setUnitStatus',
+          { unit_id: 'U1', status: 'פנוי', _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, false, '⛔ יחידה גרוטה בסטטוס ' + JSON.stringify(st) + ' שוחזרה');
+        t.eq(r.error, 'יחידה גרוטה — סופית', '⛔ נוסח הדחייה השתנה (מלכודת 3)');
+      });
+      B81.dirty('פנוי').concat(['פנוי', '', 'אצל לקוח'], B81.UNKNOWN).forEach(st => {
+        const db = B81.unitDb(srv, st);
+        const r = srv.handle('setUnitStatus',
+          { unit_id: 'U1', status: 'בכביסה', _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, true,
+          '⛔⛔ יחידה שאינה גרוטה (' + JSON.stringify(st) + ') נחסמה כאילו הייתה גרוטה');
+      });
+    },
+
+    '⛔ p.status של המשתמש לא עבר נרמול (מלכודת 4)': (t, { srv }) => {
+      const db = B81.unitDb(srv, 'פנוי');
+      const r = srv.handle('setUnitStatus',
+        { unit_id: 'U1', status: 'פנוי ', _verified_role: 'מנהל' }, db, 'מנהל');
+      t.eq(r.ok, false, '⛔ ולידציית הקלט רוככה — p.status אינו ערך מהגיליון');
+      t.eq(r.error, 'סטטוס לא חוקי', '⛔ נוסח הדחייה של ולידציית הקלט השתנה');
+    },
+
+    /* ============ asset_faults ============ */
+
+    '⛔ תקלה פתוחה מלוכלכת נסגרת · תקלה סגורה נדחית (שני הצדדים)': (t, { srv }) => {
+      B81.dirty('פתוחה').concat(['פתוחה'], B81.UNKNOWN, ['']).forEach(st => {
+        const db = B81.faultDb(srv, st);
+        const r = srv.handle('b42CloseFault',
+          { fault_id: 'F1', outcome: 'תוקנה', close_note: 'הוחלף חלק',
+            _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, true,
+          '⛔⛔ תקלה פתוחה בסטטוס ' + JSON.stringify(st) + ' נחשבה סגורה — התקלה נעלמה');
+      });
+      B81.dirty('סגורה').concat(['סגורה']).forEach(st => {
+        const db = B81.faultDb(srv, st);
+        const r = srv.handle('b42CloseFault',
+          { fault_id: 'F1', outcome: 'תוקנה', close_note: 'שוב',
+            _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, false, '⛔ תקלה סגורה בסטטוס ' + JSON.stringify(st) + ' נסגרה פעמיים');
+        t.eq(r.error, 'התקלה כבר סגורה', '⛔ נוסח הדחייה השתנה (מלכודת 3)');
+      });
+    },
+
+    '⛔ הוספת שלב לתקלה סגורה מלוכלכת נדחית בנוסח המדויק': (t, { srv }) => {
+      B81.dirty('סגורה').concat(['סגורה']).forEach(st => {
+        const db = B81.faultDb(srv, st);
+        const r = srv.handle('b42AddEvent',
+          { fault_id: 'F1', kind: 'פעולה', description: 'ניסיון',
+            _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, false, '⛔ נוסף שלב לתקלה סגורה (' + JSON.stringify(st) + ')');
+        t.eq(r.error, 'התקלה כבר סגורה — אי אפשר להוסיף לה שלבים',
+          '⛔ נוסח הדחייה השתנה (מלכודת 3)');
+      });
+    },
+
+    /* ============ notifications ============ */
+
+    '⛔ התראה ממתינה מלוכלכת נשמרת בגיזום · לא מוכרת אינה נשמרת': (t, { srv, H }) => {
+      const src = H.serverSrc();
+      t.has(src, 'keep: function (r) { var st = w24Stat(r, NOTIF_STATUSES);',
+        '⛔ מסנן הגיזום של ההתראות אינו עובר דרך w24Stat');
+      B81.dirty('ממתין').concat(['ממתין'], B81.dirty('נכשל'), ['נכשל']).forEach(st => {
+        const v = srv.w24Stat({ status: st }, srv.NOTIF_STATUSES);
+        t.ok(v === 'ממתין' || v === 'נכשל',
+          '⛔ התראה בסטטוס ' + JSON.stringify(st) + ' תיגזם מהגיליון בטעות');
+      });
+      B81.dirty('נשלח').concat(['נשלח']).forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.NOTIF_STATUSES), 'נשלח',
+          '⛔ התראה שנשלחה בסטטוס ' + JSON.stringify(st) + ' נשמרת לנצח');
+      });
+    },
+
+    /* ============ customer_messages ============ */
+
+    '⛔ תיבת המשרד: הודעה פתוחה מלוכלכת נספרת · סגורה אינה נספרת': (t, { srv }) => {
+      /* ⛔ נמדד דרך b10ApprovalsInbox החי — לא דרך w24Stat לבדו.
+         בדיקה שנשענת על העוזר בלבד אינה מודדת את התיקון. */
+      const inbox = st => {
+        const db = H.emptyDb(srv);
+        db.settings = [];
+        db.employees = [{ id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+        db.customers = [{ id: 'C1', name: 'לקוח א', active: 'כן' }];
+        db.creditProfiles = []; db.orders = []; db.deliveries = [];
+        db.paymentDeclarations = [];
+        db.customerMessages = [{
+          id: 'MS1', customer_id: 'C1', direction: 'מלקוח', subject: 'שאלה',
+          body: 'למה חויבתי?', ref_type: '', ref_id: '', status: st,
+          created_at: '2026-08-10 09:00', created_by: 'פורטל: לקוח א',
+          answer: '', answered_by: '', answered_at: ''
+        }];
+        const r = srv.handle('b10ApprovalsInbox', { _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, true, '⛔ b10ApprovalsInbox נכשל — שם הפעולה או המבנה השתנו');
+        return r.counts.customer_messages;
+      };
+      ['חדשה', 'בטיפול'].forEach(base => {
+        B81.dirty(base).concat([base]).forEach(st => {
+          t.eq(inbox(st), 1,
+            '⛔⛔ פניית לקוח פתוחה בסטטוס ' + JSON.stringify(st) + ' נעלמה מתיבת המשרד');
+        });
+      });
+      ['נענתה', 'נסגרה'].concat(B81.UNKNOWN).forEach(base => {
+        t.eq(inbox(base), 0,
+          '⛔ פנייה סגורה/לא מוכרת (' + JSON.stringify(base) + ') חזרה לתיבה — הצד השני');
+      });
+    },
+
+    /* ============ laundry_intakes ============ */
+
+    '⛔⛔ שער הקליטה: סגורה מלוכלכת חסומה להוספת עגלות · פתוחה עוברת': (t, { srv }) => {
+      /* ⛔ נמדד דרך שער b49dAddCarts החי. השער נבדק לפני w16OrderGate,
+         ולכן DB מינימלי מספיק כדי להגיע אליו. */
+      const gate = st => {
+        const db = H.emptyDb(srv);
+        db.settings = [];
+        db.employees = [{ id: 'W1', name: 'עובד', active: 'כן', role: 'מכבסה', pin: '1111' }];
+        db.customers = [{ id: 'C1', name: 'לקוח א', active: 'כן' }];
+        db.laundryIntakes = [{
+          id: 'INTK1', customer_id: 'C1', internal: '', status: st,
+          net_weight_kg: '', price_per_kg: 5, total_charge: '',
+          intake_ts: '2026-08-01 08:00', delivered_ts: '', delivery_id: '',
+          notes: '', created_by: 'עובד', invoice_id: '', order_id: '', ready_ts: ''
+        }];
+        db.carts = [{ id: 'CRT1', location: 'מכבסה', status: 'פנויה', barcode: 'B1',
+                      condition: 'תקינה', virtual: '' }];
+        db.intakeCarts = [];
+        return srv.handle('b49dAddCarts',
+          { intake_id: 'INTK1', cart_ids: ['CRT1'], worker_pin: '1111' }, db, 'עובד');
+      };
+      srv.B49D_CLOSED_INTAKE.forEach(base => {
+        B81.dirty(base).concat([base]).forEach(st => {
+          const r = gate(st);
+          t.eq(r.ok, false,
+            '⛔⛔ נוספו עגלות לקליטה סגורה בסטטוס ' + JSON.stringify(st) + ' — כביסה שכבר יצאה');
+          t.eq(r.error, 'הקליטה כבר ' + st + ' — לא ניתן להוסיף אליה עגלות',
+            '⛔ נוסח הדחייה של השער השתנה (מלכודת 3)');
+        });
+      });
+      /* הצד השני: קליטה פתוחה — ולא מוכרת — חייבת לעבור את השער הזה */
+      ['התקבל', 'בכביסה', 'באריזה', 'התקבל ', '\u00A0בכביסה', ''].concat(B81.UNKNOWN)
+        .forEach(st => {
+          const r = gate(st);
+          t.ne(r.error, 'הקליטה כבר ' + st + ' — לא ניתן להוסיף אליה עגלות',
+            '⛔⛔ קליטה פתוחה בסטטוס ' + JSON.stringify(st) + ' נחסמה כאילו נסגרה');
+        });
+    },
+
+    '⛔ W23G_SHIPPED מוגדרת פעם אחת ומכילה בדיוק שני סטטוסים': (t, { srv, H }) => {
+      t.eq(srv.W23G_SHIPPED.join('|'), 'במשלוח|נמסר',
+        '⛔ W23G_SHIPPED שונתה — קליטה שיצאה מהמכבסה חדלה להיות מזוהה');
+      const sv = B81.noCmt(H.serverSrc());
+      t.eq((sv.match(/var\s+W23G_SHIPPED\s*=/g) || []).length, 1,
+        '⛔ יש יותר מהגדרה אחת של W23G_SHIPPED — הכפילות חזרה');
+      t.eq((sv.match(/\['במשלוח',\s*'נמסר'\]/g) || []).length, 1,
+        '⛔ הליטרל [\'במשלוח\',\'נמסר\'] חזר לקוד במקום W23G_SHIPPED');
+    },
+
+    /* ============ carts · R5 ============ */
+
+    '⛔⛔ R5: carts.condition לא הפך ל-carts.status': (t, { srv, H }) => {
+      const sv = B81.noCmt(H.serverSrc());
+      t.has(sv, 'condition', '⛔⛔ שדה התקלות של העגלה (condition) נעלם מקוד השרת');
+      t.eq(srv.CART_STATUSES.join('|'), 'פנויה|בשימוש',
+        '⛔⛔ CART_STATUSES קלטה ערכי condition — R5/B56 נשבר');
+      ['תקינה', 'בתיקון', 'גרוטה'].forEach(cond => {
+        t.eq(srv.CART_STATUSES.indexOf(cond), -1,
+          '⛔⛔ ערך condition ' + JSON.stringify(cond) + ' נכנס ל-CART_STATUSES');
+      });
+    },
+
+    /* ============ סורק קוד מקור ============ */
+
+    '⛔⛔ אין יותר השוואת סטטוס גולמית בתשע הטבלאות (שרת)': (t, { H }) => {
+      const sv = B81.noCmt(H.serverSrc());
+      const bad = []
+        /* ⛔ מלכודת 4: p.status ו-tc.status הם **קלט מהמשתמש** ולא ערך מהגיליון.
+           הם עוברים ולידציה מול UNIT_STATUSES / VALID_CS ואסור לנרמל אותם. */
+        .concat(sv.match(/\b(?!p\.|tc\.)\w+(?:\[\w+\])?\.status\s*(?:===|!==)\s*'(?:גרוט|פתוחה|סגורה|פנוי|משויך|פנויה|בשימוש|ממתין|נשלח|נכשל|לביצוע|חדשה|בטיפול|נענתה|נסגרה|נמסר|מוכן|במשלוח)'/g) || [])
+        .concat(sv.match(/String\(\s*(?!p\.)\w+\.status(?:\s*\|\|[^)]*)?\)\s*(?:===|!==)\s*'(?:גרוט|פתוחה|סגורה|פנוי|משויך|פנויה|נמסר)'/g) || [])
+        .concat(sv.match(/\.indexOf\(\s*String\(\s*(?!p\.)\w+\.status\s*\)\s*\)/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס גולמיות בשרת: ' + bad.join(' · '));
+    },
+
+    '⛔ אין יותר sVal(x.status) חשוף על עגלה או קליטה (שרת)': (t, { H }) => {
+      const sv = B81.noCmt(H.serverSrc());
+      const bad = (sv.match(/sVal\(\s*(?:ik|intake|i|c|cart)\.status\s*\)/g) || []);
+      t.eq(bad.length, 0,
+        '⛔ נותרו ' + bad.length + ' אתרי sVal חשופים על עגלה/קליטה: ' + bad.join(' · '));
+    },
+
+    '⛔ w24Stat נשארה המנרמלת היחידה — לא נבנה שם עוזר שני (R8)': (t, { H }) => {
+      const sv = B81.noCmt(H.serverSrc());
+      ['w26', 'w27', 'w23gStat', 'b81Stat', 'unitStat', 'cartStat', 'faultStat']
+        .forEach(name => {
+          t.hasNot(sv, 'function ' + name + '(',
+            '⛔ נבנה מנרמל שני בשם ' + name + ' — R8 נשבר');
+        });
+      const w24 = B81.noCmt(B81.body(H.serverSrc(), 'w24Stat'));
+      t.ok(w24, '⛔ w24Stat נעלמה מקוד השרת');
+      t.has(w24, 'sPick(', '⛔ w24Stat חדלה לעבור דרך sPick');
+    },
+
+    '⛔ כל קריאה עם רשימה שיש לה dflt מעבירה גם את ברירת המחדל': (t, { H }) => {
+      [['השרת', H.serverSrc()], ['הממשק', H.uiScript()]].forEach(([who, src]) => {
+        /* ⛔ ל-cases אין ולו אתר השוואה אחד בקוד השרת — כל ששת האתרים
+           בממשק. הסורק מודד אותה שם בלבד, אחרת הוא נכשל שקרית. */
+        [['FAULT_STATUSES', 'FAULT_DFLT'],
+         ['CART_STATUSES', 'CART_DFLT']]
+        .concat(who === 'הממשק' ? [['CASE_STATUSES', 'CASE_DFLT']] : [])
+        .forEach(([list, dflt]) => {
+          const calls = (src.match(new RegExp('w24Stat\\([^)]*' + list + '[^)]*\\)', 'g')) || []);
+          t.ok(calls.length > 0, '⛔ ' + who + ': אין אף קריאה עם ' + list + ' — הסורק אינו מודד');
+          const bad = calls.filter(c => c.indexOf(dflt) === -1);
+          t.eq(bad.length, 0,
+            '⛔⛔ ' + who + ': ' + bad.length + ' קריאות בלי ' + dflt + ': ' + bad.join(' · '));
+        });
+        const ikCalls = (src.match(/w24Stat\([^)]*NOBLE_STAGES[^)]*\)/g) || []);
+        t.ok(ikCalls.length > 0, '⛔ ' + who + ': אין אף קריאה עם NOBLE_STAGES');
+        const badIk = ikCalls.filter(c => c.indexOf('INTAKE_DFLT') === -1);
+        t.eq(badIk.length, 0,
+          '⛔⛔ ' + who + ': ' + badIk.length + ' קריאות קליטה בלי INTAKE_DFLT: ' + badIk.join(' · '));
+      });
+    },
+
+    /* ============ ⛔⛔ אי-רגרסיה: B71–B80 · R6 ============ */
+
+    '⛔⛔ R6 לא נשבר — שלושת מקורות הכסף מחזירים אותו מספר': (t, { srv }) => {
+      const mk = chSt => {
+        const db = H.emptyDb(srv);
+        db.settings = [];
+        db.employees = [{ id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+        db.customers = [{ id: 'C1', name: 'לקוח א', active: 'כן' }];
+        db.orders = []; db.orderLines = []; db.invoices = [];
+        db.charges = [{ id: 'CH1', customer_id: 'C1', source: 'כללי',
+          date: '2026-08-01', amount: 1000, description: 'חיוב', order_id: '',
+          intake_id: '', invoice_id: '', status: chSt }];
+        db.payments = [];
+        return db;
+      };
+      ['פתוח', 'פתוח\u00A0', 'בוטל', 'בוטל ', ''].forEach(st => {
+        const db = mk(st);
+        srv.b54Bump();
+        const a = srv.b48BalancesAg(db)['C1'] || 0;
+        srv.b54Bump();
+        const b = srv.b2CreditUsedAg(db, 'C1');
+        t.eq(a, b, '⛔⛔ R6 נשבר על חיוב בסטטוס ' + JSON.stringify(st) + ' — B80 נהרס');
+      });
+    },
+
+    '⛔ B76–B80 לא נשברו — נקודות האמת הקודמות במקומן': (t, { srv }) => {
+      ['w17IsWash', 'w21IsRental', 'w22Stat', 'w22Reserving', 'w23InvActive',
+       'w24Stat', 'w25Usable', 'toAg', 'fromAg', 'b54Bump'].forEach(f => {
+        t.eq(typeof srv[f], 'function', '⛔ ' + f + ' נעלמה מקוד השרת');
+      });
+      ['ORDER_STATUSES', 'INVOICE_STATUSES', 'DELIVERY_STATUSES',
+       'DELIVERY_DFLT', 'CHARGE_STATUSES', 'CHARGE_DFLT', 'PAYMENT_STATUSES',
+       'FEXP_STATUSES', 'VEHICLE_STATUSES', 'MACHINE_STATUSES'].forEach(v => {
+        t.ok(srv[v] !== undefined, '⛔ ' + v + ' נעלמה מקוד השרת');
+      });
+    }
+  }
+});
+
+SPECS.push({
+  file: 't27-b81-ui',
+  title: 'B81 — WASH-23ג חלק ג\' (ממשק): זהות תו-בתו · תשע הטבלאות · דליפת B80',
+  needs: 'ui',
+  requires: ['w24Stat', 'w25Usable', 'UNIT_STATUSES', 'FAULT_STATUSES',
+             'FAULT_DFLT', 'CASE_STATUSES', 'CASE_DFLT', 'CART_STATUSES',
+             'CART_DFLT', 'INTAKE_DFLT', 'NOTIF_STATUSES', 'TCOMMENT_STATUSES',
+             'VISIT_STATUSES', 'MSG_STATUSES', 'MSG_OPEN', 'NOBLE_STAGES',
+             'B49D_CLOSED_INTAKE', 'MACHINE_STATUSES', 'b59Machines',
+             'b42OpenFaults', 'b42Faults', 'b42ScopeTypes'],
+
+  tests: {
+
+    '⛔⛔ כל רשימות B81 זהות תו-בתו בין הקבצים': (t, { H }) => {
+      const sv = H.serverSrc(), ui = H.uiScript();
+      ['UNIT_STATUSES', 'UNIT_BUSY', 'UNIT_DEL_DFLT', 'FAULT_STATUSES',
+       'FAULT_DFLT', 'CASE_STATUSES', 'CASE_DFLT', 'CART_STATUSES',
+       'CART_DFLT', 'INTAKE_DFLT', 'NOTIF_STATUSES', 'TCOMMENT_STATUSES',
+       'VISIT_STATUSES', 'MSG_STATUSES', 'MSG_OPEN'].forEach(v => {
+        const re = new RegExp('var\\s+' + v + '\\s*=[^;]*;');
+        const a = (sv.match(re) || [])[0], b = (ui.match(re) || [])[0];
+        t.ok(a, '⛔⛔ ' + v + ' חסר בקוד השרת');
+        t.ok(b, '⛔⛔ ' + v + ' חסר ב-index.html');
+        t.eq(String(a).replace(/\s+/g, ' '), String(b).replace(/\s+/g, ' '),
+          '⛔⛔ ' + v + ' התפצל בין הקבצים — השרת והממשק יחליטו אחרת');
+      });
+    },
+
+    '⛔⛔ הממשק מסכים עם השרת על כל סטטוס בתשע הרשימות': (t, { w, srv }) => {
+      [['UNIT_STATUSES', null], ['FAULT_STATUSES', 'FAULT_DFLT'],
+       ['CASE_STATUSES', 'CASE_DFLT'], ['CART_STATUSES', 'CART_DFLT'],
+       ['NOBLE_STAGES', 'INTAKE_DFLT'], ['NOTIF_STATUSES', null],
+       ['TCOMMENT_STATUSES', null], ['VISIT_STATUSES', null],
+       ['MSG_STATUSES', null]].forEach(([list, dflt]) => {
+        srv[list].reduce((acc, st) => acc.concat(B81.dirty(st), [st]), [])
+          .concat(B81.UNKNOWN, ['']).forEach(st => {
+            t.eq(w.w24Stat({ status: st }, w[list], dflt ? w[dflt] : undefined),
+                 srv.w24Stat({ status: st }, srv[list], dflt ? srv[dflt] : undefined),
+              '⛔⛔ הממשק והשרת נחלקו על ' + list + ' · ' + JSON.stringify(st));
+          });
+      });
+    },
+
+    '⛔⛔ דליפת B80: בורר המכונות עובר דרך w25Usable ולא דפוס ידני (R8)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const ui = B81.noCmt(H.uiScript());
+      t.eq((ui.match(/!sVal\(m\.status\)\s*\|\|\s*sVal\(m\.status\)==='פעילה'/g) || []).length, 0,
+        '⛔⛔ הדפוס הידני של w25Usable חזר לבורר המכונות — R8');
+      const pick = st => {
+        w.DB.machines = [{ id: 'M1', type: 'מכונה', status: st, capacity: 10 }];
+        return w.b59Machines().length;
+      };
+      B81.dirty('פעילה').concat(['פעילה', '']).forEach(st => {
+        t.eq(pick(st), 1, '⛔⛔ מכונה תקינה בסטטוס ' + JSON.stringify(st) + ' נעלמה מהבורר');
+      });
+      ['מושבתת', 'בתיקון'].concat(B81.UNKNOWN).forEach(st => {
+        t.eq(pick(st), 0, '⛔ מכונה שאינה פעילה (' + JSON.stringify(st) + ') הוצעה לטעינה');
+      });
+    },
+
+    '⛔ תקלה פתוחה מלוכלכת נספרת · סגורה אינה נספרת (R5 נשמר)': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const cnt = st => {
+        w.DB.machines = [{ id: 'M1', type: 'מכונה', status: 'פעילה' }];
+        w.DB.carts = []; w.DB.vehicles = [];
+        w.DB.assetFaults = [{ id: 'F1', asset_type: 'מכונה', asset_id: 'M1',
+          description: 'תקלה', status: st, reported_at: '2026-08-01 08:00' }];
+        return w.b42OpenFaults('asset').length;
+      };
+      B81.dirty('פתוחה').concat(['פתוחה'], B81.UNKNOWN, ['']).forEach(st => {
+        t.eq(cnt(st), 1,
+          '⛔⛔ תקלה פתוחה בסטטוס ' + JSON.stringify(st) + ' נעלמה ממסך התקלות');
+      });
+      B81.dirty('סגורה').concat(['סגורה']).forEach(st => {
+        t.eq(cnt(st), 0, '⛔ תקלה סגורה (' + JSON.stringify(st) + ') חזרה לרשימת הפתוחות');
+      });
+    },
+
+    '⛔⛔ R5 לא נשבר — תקלת רכב אינה נכנסת למסך המכבסה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      w.DB.machines = [{ id: 'M1', type: 'מכונה', status: 'פעילה' }];
+      w.DB.vehicles = [{ id: 'V1', plate: '11-111-11', status: 'פעיל', active: 'כן' }];
+      w.DB.carts = [];
+      w.DB.assetFaults = [
+        { id: 'F1', asset_type: 'מכונה', asset_id: 'M1', description: 'א', status: 'פתוחה ' },
+        { id: 'F2', asset_type: 'רכב', asset_id: 'V1', description: 'ב', status: 'פתוחה ' }
+      ];
+      t.eq(w.b42OpenFaults('asset').length, 1,
+        '⛔⛔ תקלת רכב נכנסה למסך המכבסה — R5/B56 נשבר');
+      t.eq(w.b42OpenFaults('fleet').length, 1,
+        '⛔⛔ תקלת מכבסה נכנסה למסך הצי — R5/B56 נשבר');
+    },
+
+    '⛔ קליטה סגורה מלוכלכת אינה מוצגת כפתוחה בממשק': (t, { w, srv }) => {
+      srv.B49D_CLOSED_INTAKE.forEach(base => {
+        B81.dirty(base).concat([base]).forEach(st => {
+          t.ok(w.B49D_CLOSED_INTAKE.indexOf(
+               w.w24Stat({ status: st }, w.NOBLE_STAGES, w.INTAKE_DFLT)) > -1,
+            '⛔ הממשק פתח מחדש קליטה סגורה בסטטוס ' + JSON.stringify(st));
+        });
+      });
+    },
+
+    '⛔⛔ אין יותר השוואת סטטוס גולמית בתשע הטבלאות (ממשק)': (t, { H }) => {
+      const ui = B81.noCmt(H.uiScript());
+      const bad = []
+        .concat(ui.match(/\b(?:u|f|c|n|m|v|ik|i|lk)\.status\s*(?:===|!==)\s*'(?:גרוט|פתוחה|סגורה|פנוי|משויך|פנויה|בשימוש|ממתין|נשלח|נכשל|לביצוע|טופל|נענתה|נסגרה|נמסר)'/g) || [])
+        .concat(ui.match(/r\.entity\.status\s*(?:===|!==)\s*'(?:גרוט|פנוי|פנויה|משויך)'/g) || [])
+        .concat(ui.match(/String\(\s*f\.status\s*\)\s*(?:===|!==)\s*'פתוחה'/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס גולמיות בממשק: ' + bad.join(' · '));
+    },
+
+    '⛔ אין יותר sPick(x.status, NOBLE_STAGES) ידני — הדפוס עבר ל-w24Stat (R8)': (t, { H }) => {
+      const ui = B81.noCmt(H.uiScript());
+      const bad = (ui.match(/sPick\(\s*\w+\.status\s*,\s*NOBLE_STAGES\s*\)/g) || []);
+      t.eq(bad.length, 0,
+        '⛔ נותרו ' + bad.length + ' אתרי sPick ידניים על שלב הקליטה: ' + bad.join(' · '));
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-23ג חלק ג\' אינו יכולת דפדפן': (t, { H }) => {
+      const ui = H.uiScript();
+      t.has(ui, 'function b61Tests', '⛔ כרטיס הבדיקה העצמית נעלם');
+      const b61 = B81.noCmt(B81.body(ui, 'b61Tests'));
+      t.ok(b61, 'b61Tests נעלם מהממשק');
+      t.hasNot(b61, 'FAULT_STATUSES',
+        '⛔ נוספה טענת דפדפן ל-b61Tests — הפריט הוא לוגיקת שרת/ממשק');
+    },
+
+    '⛔ canary v4.81-B81 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.81-B81/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
 
 (function main() {
   const t0 = Date.now();
