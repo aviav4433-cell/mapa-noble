@@ -1,6 +1,12 @@
 # MAPA-NOBLE — תור המשימות המאוחד
 
-נכתב: 29.07.2026 · עודכן **18.08.2026 — B77 נמסר (`WASH-23א`, ציר החשבוניות) · `WASH-23ב` נספר ולא תוקן** · canary בייצור: **v4.77-B77** (ממשק ושרת) · האצווה הבאה שתיבנה: **B78 = `WASH-23ב`**
+נכתב: 29.07.2026 · עודכן **18.08.2026 — B79 נמסר (`WASH-23ג` חלק א', ציר המשלוחים) · חלק ב' נספר ולא תוקן** · canary בייצור: **v4.79-B79** (ממשק ושרת) · האצווה הבאה שתיבנה: **B80 = `WASH-23ג` חלק ב'**
+
+> ⚠⚠ **תיקון תיעוד — 18.08.2026.** הקובץ הזה **לא עודכן ב-B78**: חלק 11 החזיק
+> עדיין את ה-OPENER של B78, והכותרת אמרה שהאצווה הבאה היא B78. `PROGRESS.md`
+> כן עודכן. B78 (`WASH-23ב` — payroll · tasks · purchases · deliveryTrips)
+> **נמסר ונפרס**, 601 בדיקות. הפער תוקן כאן. ⛔ לקח: קובץ מתגלגל שלא הוחזר
+> לריפו מייצר OPENER שגוי לצ'אט הבא — לוודא בפתיחת כל סשן שחלק 11 תואם ל-canary.
 
 > ⭐ **`WASH-22` (17.08.2026):** B75 סגר את ציר ה**סוג**. אותה מחלקת כשל
 > חיה בציר ה**סטטוס** — `RESERVING_STATUSES.indexOf(o.status)` ·
@@ -1311,22 +1317,15 @@ TASK_QUEUE.md מלא (כל פריטי האצווה מסומנים ✅) + HANDOFF
 
 ---
 
-# חלק 11 — OPENER מוכן לצ'אט הבא · B79 = `WASH-23ג`
+# חלק 11 — OPENER מוכן לצ'אט הבא · B80 = `WASH-23ג` חלק ב'
 
-⚠ **עודכן 18.08.2026** — B78 נמסר (`WASH-23ב`, ארבע הטבלאות). אין שינוי סכימה.
-⭐ **משפחת ציר הסטטוס סגורה בשש טבלאות:** B76 `orders` · B77 `invoices` ·
-B78 `payroll`+`tasks`+`purchases`+`delivery_trips`.
-⚠ **`WASH-23ג` נספר ב-B78 ולא תוקן** — אותה מחלקת כשל בטבלאות שנותרו.
-⛔ **`deliveries` היא הכבדה מכולן ונוגעת במסלול הנהג ובחתימה.**
-
-⚠⚠ **הכרעת סדר שאבי צריך לאשר לפני שמתחילים:** התור המקורי רשם
-`B79 = BLD-13` (תכנון עומס מכבסה). ⛔ `BLD-13` דורש עמודת אומדן משקל
-ב-`orders`, כלומר **שינוי סכימה**, שלפי `M2` רץ לבד ודורש **אישור מפורש
-של אבי שטרם ניתן**. לכן `WASH-23ג` הוקדם. אם אבי מעדיף `BLD-13` — לעצור,
-לבקש את אישור הסכימה, ולתכנן מחדש.
+⚠ **עודכן 18.08.2026** — B79 נמסר (`WASH-23ג` חלק א', `deliveries`). אין שינוי סכימה.
+⚠ **חלק ב' נספר ולא תוקן**: אותה מחלקת כשל בכל שאר הטבלאות.
+⛔ **שתיים מהן נוגעות בכסף** — `paymentDeclarations` (כסף שנכנס) ו-`futureExpenses`
+(תזרים) — ולכן `R6` הוא חובה מלאה באצווה הזו, לא פורמליות.
 
 ```
-בונים B79 = WASH-23ג.
+בונים B80 = WASH-23ג חלק ב'.
 קרא את WORKING_PROTOCOL.md בידע הפרויקט ופעל לפיו במלואו.
 
 ════════ מה כבר בוצע — סדר כרונולוגי ════════
@@ -1338,236 +1337,184 @@ B72  — WASH-17 + WASH-19 + WASH-14. הבורר הוסר מהזמנת כביס�
 B73  — WASH-18. קליטת NOBLE כשכבת תצוגה בלוח · w18Advance.
 B74  — WASH-20. ⭐ ארבע נקודות כסף, כולן דרך w17IsWash.
 B75  — WASH-15 + WASH-05 + WASH-08 + WASH-13 + WASH-16 + WASH-21.
-       w15TaskKg · w15MachKey · w05Gate · w08DetachMachine · w16OrderGate ·
        ⭐⭐ w21IsRental — ציר הסוג נסגר. 529 בדיקות.
-B76  — WASH-22. ⭐⭐ ציר הסטטוס של orders נסגר: w22Stat · w22Known ·
-       w22Reserving. ⚠ R9: נרשם 20, הקוד נתן 69. 550 בדיקות.
-B77  — WASH-23א. ⭐⭐ ציר הסטטוס של החשבונית: w23InvStat · w23InvActive ·
+B76  — WASH-22. ⭐⭐ ציר הסטטוס של orders: w22Stat · w22Known · w22Reserving.
+       ⚠ R9: נרשם 20 אתרים, הקוד נתן 69. 550 בדיקות.
+B77  — WASH-23א. ⭐⭐ ציר הסטטוס של invoices: w23InvStat · w23InvActive ·
        INVOICE_STATUSES. ⚠ R9: נרשם ~25, הקוד נתן 41.
-       ⭐ הכרעת אבי 1א: סטטוס חשבונית לא מוכר וריק = פעילה/מחייבת.
-       ⭐ תפס דליפת WASH-22 בממשק: B44_PICK_STATUSES. 570 בדיקות.
-B78  — WASH-23ב. ⭐⭐ ציר הסטטוס בארבע הטבלאות שנותרו:
-       ⭐ עוזר **גנרי אחד** — w24Stat(rec, LIST, dflt) מעל
-       PAYROLL_STATUSES · TASK_STATUSES · PURCHASE_STATUSES · TRIP_STATUSES.
-       ⚠ R9: נרשם ~35, הקוד נתן **~55** (25 שרת · 30 ממשק).
-       ⭐ הכרעת אבי 1ב: גנרי ולא ארבעה שמות — ארבע טבלאות קטנות
-       שאף אחת אינה בספר החיובים אינן מצדיקות ארבעה שמות.
-       ⭐ הכרעת אבי 2א: **סטטוס שכר לא מוכר או ריק = 'טיוטה'** — חסום
-       לתשלום, חסום לתלוש, אינו נספר כחוב. ⛔ ההפך מ-B77 **בכוונה**:
-       שם הצד הזהיר היה "מחייבת", כאן הוא "חסום".
-       ⭐ אומת מדידה מול הקוד הישן (R11): שכר בסטטוס ''/'אושרה'/'טיוטא'/
-       'שולם' — הישן **אישר תשלום**, החדש חוסם. רכש ב-'טיוטה ' — הישן
-       תקוע בלי "+שורה" ובלי "קבל למלאי", החדש עובד.
-       ⭐ בקרה נגדית: 16 מ-31 הבדיקות החדשות נכשלו מול הקוד הקודם.
-       ⭐ תפס ארבע דליפות WASH-22 בשרת — החמורה: create על order_lines
-       השווה po.status גולמי, ולכן **הזמנה בטיוטה מלוכלכת לא קיבלה
-       שורות פריטים כלל**. 601 בדיקות. אין שינוי סכימה.
+       ⭐ הכרעת אבי 1א: סטטוס חשבונית לא מוכר/ריק = **פעילה**. 570 בדיקות.
+B78  — WASH-23ב. ⭐⭐ payroll · tasks · purchases · deliveryTrips.
+       ⭐ הכרעת אבי 1ב: **עוזר גנרי אחד** — w24Stat(rec, LIST, dflt) —
+       ולא שם חדש לכל טבלה. זהו המנגנון שכל הרשימות עוברות דרכו מאז.
+       ⭐ הכרעת אבי 2א: סטטוס שכר לא מוכר/ריק = 'טיוטה' (חסום). 601 בדיקות.
+B79  — WASH-23ג חלק א'. ⭐⭐ ציר הסטטוס של **deliveries**.
+       DELIVERY_STATUSES (רשימה חמישית דרך w24Stat) + DELIVERY_DFLT.
+       ⚠ R9 בפעם הרביעית: נרשם 32 אתרים, הקוד נתן **~60** (19 שרת · 41 ממשק)
+       — כי הסטטוס הושווה ב**חמש** צורות ולא בשלוש.
+       ⭐⭐ הכרעת אבי 2ב: סטטוס משלוח לא מוכר או ריק = 'מתוכנן' (**פתוח**).
+       ⛔ זה **שינוי התנהגות מכוון** — עד B79 לא-מוכר נחשב סגור.
+       ⭐ 'התקבלה' נכלל ברשימה כסטטוס מוכר וסגור, אחרת משלוחים ותיקים
+       היו נפתחים מחדש. ⭐ שלוש רשימות כפולות אוחדו. 628 בדיקות.
 
 ════════ מה ממתין ════════
-🔴 האצווה הזו — פריט אחד: WASH-23ג. ⛔ deliveries הוא הכבד.
-🔴 B80 = BLD-13 (תכנון עומס מכבסה). ⛔ **חסום עד אישור סכימה מפורש
-   של אבי** — orders צריכה עמודת אומדן משקל (M2: אצווה לבד).
-🔴 BLD-05 — ירד שבע-עשרה פעמים ברצף. ⛔ אינו בהיקף.
-   ⚠ רק אם אבי מדביק מיוזמתו בלוק בדיקה עצמית מלא — ספח אותו.
-✅ אין הכרעה פתוחה שחוסמת את האצווה, פרט להכרעת ההיקף שבסעיף הבא.
+🔴 האצווה הזו — WASH-23ג חלק ב': כל שאר הטבלאות.
+🔴 BLD-13 (תכנון עומס מכבסה). ⛔ אצווה לבד: orders צריכה עמודת אומדן
+   משקל = שינוי סכימה (M2), וחסום עד אישור סכימה מפורש של אבי.
+🔴 BLD-05 — ירד שמונה-עשרה פעמים ברצף. ⛔ אינו בהיקף.
+✅ אין הכרעה פתוחה שחוסמת את האצווה — פרט לשתיים שלמטה.
 🔴 ממתין לאימות אבי בייצור:
-   🔴🔴 **תשלום שכר אחרי B78** — שכר ← רשומה ← "פרטים / תשלום".
-   אם רשומה שהייתה ניתנת לתשלום **נחסמה עכשיו** עם "יש לאשר את השכר
-   לפני תשלום" — זו רשומה שהסטטוס שלה בגיליון פגום. ⛔ זה כסף.
-   🔴 **רכש טיוטה אחרי B78** — רכש וספקים: אם רכש שהיה תקוע בלי
-   כפתורים חזר להציג "+ שורה" ו"קבל למלאי", זו בדיוק התקלה שתוקנה.
-   🔴 **מספור נסיעות אחרי B78** — משלוחים ← נסיעות מתוכננות.
-   🔴 **לוח המשימות אחרי B78** — משימות שהושלמו לא באיחור.
-   🔴🔴 **יתרות הלקוחות אחרי B77** — כספים ← יתרות · כרטיס לקוח · הפורטל.
-   🔴 ליקוט הזמנה שלא נפתחה עד היום (B77) · 🔴🔴 מלאי הפריטים (B76) ·
-   🔴🔴 משקלי פריטים וניצולת (B75) · קידום שתי משימות לאותה מכונה (B75) ·
-   דיווח תקלה על מכונה עם משימת כביסה (B75) · קליטה על הזמנה שהופקה לה
-   חשבונית (B75) · 🔴🔴 בדיקת נתוני חיובים (B74) · קליטה על לוח הכביסה
-   (B73) · הזמנת כביסה בלי בורר (B72) · שקילה על נתוני אמת (B71) ·
-   שקילה כפולה ותיקון מנהל (B70) · רצפת הייצור (B69) · מיזוג "אברהם"
-   (B68) · תשלום אמיתי לעובד (B67) · טאבלט שני (BLD-03).
+   🔴🔴 **מסלול הנהג אחרי B79** — נהג ← מסלול היום. אם הופיעה עצירה
+   שלא הופיעה עד היום, זה בדיוק המשלוח שנעלם בשקט. ⛔ לבדוק ראשון.
+   🔴🔴 **סימון הזמנה כסופקה אחרי B79** — אם נחסמת בהודעה על חתימה
+   חסרה, זו ההתנהגות החדשה שהוכרעה (2ב) ולא תקלה.
+   🔴 תשלום שכר · רכש טיוטה · מספור נסיעות · לוח משימות (B78)
+   🔴🔴 יתרות הלקוחות (B77) · ליקוט הזמנה שלא נפתחה (B77)
+   🔴🔴 מלאי הפריטים (B76) · משקלי פריטים וניצולת (B75)
+   🔴 קידום שתי משימות לאותה מכונה (B75) · דיווח תקלה על מכונה (B75) ·
+   קליטה על הזמנה שהופקה לה חשבונית (B75) · נתוני חיובים (B74) ·
+   קליטה על לוח הכביסה (B73) · הזמנת כביסה בלי בורר (B72) ·
+   שקילה על נתוני אמת (B71) · שקילה כפולה ותיקון מנהל (B70) ·
+   רצפת הייצור (B69) · מיזוג "אברהם" (B68) · תשלום אמיתי (B67) ·
+   טאבלט שני (BLD-03).
 
 ⛔ קרא את חלק 1 של TASK_QUEUE.md — R1–R12. בפרט R1, R3, R4, R6, R8 ו-R9.
-⛔⛔ R12 — שאלות בהודעה **אחת** מרוכזת עם המלצה מסומנת; המסירה בסוף =
+⛔⛔ R12 — שאלות בהודעה **אחת** מרוכזת עם המלצה מסומנת ⭐; המסירה בסוף =
 חמישה חלקים קצרים בלבד. הפירוט חי ב-PROGRESS.md.
 
 ════════ מנגנונים שאסור לשבור ════════
-· B64a/B69 — sVal/sPick זהים תו-בתו בממשק ובשרת. ⛔ אסור על כסף,
-  על משקל ועל מזהים.
-· B66  — B56_CLOSED_INTAKE='נמסר' + b56IntakeOpen() · ORDER_TYPES=B65_TYPES.
-· B67  — ⛔⛔ b67PayOneRow הוא מסלול הכתיבה היחיד לתשלום שכר ·
-  B67_WRITE_DEFER חייב לחזור ל-null.
-· B68  — b68PayrollFor היא נקודת האמת היחידה לצירוף עובד+חודש.
-· B70  — ⛔⛔ nobleWeighRollup **מצטברת**. lastByCart[...] אסור.
-  ⛔ laundry_events append-only. ⛔ b70CartNeedsWeigh חוסמת "מוכן".
-· B71  — ⛔⛔ כסף הכביסה באגורות שלמות: w10Cent · w10MulAg · w10PctAg ·
-  fromAg. ⛔ toAg לא נגע ולא ייגע (R4/R6).
-· B72  — ⛔⛔ אין שום דרך להוסיף שורת פריט להזמנת כביסה.
-· B73  — ⛔⛔ **אין ליצור laundry_tasks לקליטת NOBLE.**
-· B74  — ⛔⛔ **w17IsWash היא נקודת האמת ל"האם ההזמנה כביסה", זהה תו-בתו.**
-· B75  — ⛔⛔ **w21IsRental** — סוג לא מוכר וריק = **השכרה**.
-  ⛔⛔ w15MachKey · w15TaskKg מחזירה '' ולא 0 · w05Gate · w16OrderGate ·
-  w15WeightAudit היא READ_ONLY.
-· B76  — ⛔⛔ **w22Stat היא נקודת האמת היחידה לסטטוס הזמנה, זהה תו-בתו.**
-  ⛔⛔ סטטוס הזמנה לא מוכר וריק **משריינים מלאי** — ⛔ **במלאי בלבד**.
-  ⛔ שומרי מקור: reservedQty · b48CommittedQty · b40ItemBreakdown ·
-  b54Ledger/b54LedgerFE חייבות B54_SKIP_ORDER.indexOf(w22Stat(o)) ·
-  B44_PICK_STATUSES עובר דרך w22Stat בארבעה אתרים בממשק.
-· B77  — ⛔⛔ **w23InvActive ו-w23InvStat, זהות תו-בתו, יחד עם
-  INVOICE_STATUSES.** ⛔⛔ סטטוס חשבונית לא מוכר וריק = **פעילה**.
-  ⛔ w23InvStat מחזירה את הערך המנורמל עצמו כשאין התאמה.
-  ⛔ **חשבונית מבוטלת עדיין אינה חוסמת הפקה חדשה** (WASH-16).
-· B78  — ⛔⛔ **w24Stat(rec, LIST, dflt) היא נקודת האמת לסטטוס של
-  payroll · tasks · purchases · delivery_trips. זהה תו-בתו בשני
-  הקבצים, יחד עם ארבע הרשימות** — יש בדיקה שמשווה את הגוף ואת כולן.
-  ⛔⛔ **סטטוס שכר לא מוכר או ריק = 'טיוטה'** (הכרעת אבי 2א) — חסום
-  לתשלום, חסום לתלוש, אינו נספר כחוב, **ואינו יוצר הוצאה עתידית**.
-  אל תהפוך את זה בדרך אגב ואל תיצור לו הגדרה שנייה.
-  ⛔ לשלוש הטבלאות האחרות **אין dflt** — הן מחזירות את הערך המנורמל
-  עצמו, כמו w23InvStat. אסור למפות סטטוס לא מוכר לסטטוס מוכר.
-  ⛔ שומרי מקור: b67PayOneRow · b67EmployeeOpenRows · b67DraftRows ·
-  b67EmpDebt · b34TripsTodayHtml · rTasks חייבות w24Stat.
-  ⛔ **moveTask ו-b34TripSetStatus עוברים sPick וכותבים את הערך
-  הקנוני** — כדי שלא ייכנס לגיליון סטטוס מלוכלך חדש. אל תחזיר
-  כתיבה של p.status גולמי.
-  ⚠ **הסורק בממשק כבר לא מחריג את x** — B78 הסיר את החור.
-  ⚠ הסורק **כן** מחריג x.status==='אושר' בכוונה: אלה
-  paymentDeclarations בפורטל, והן בהיקף של B79. **כשתתקן אותן,
-  הרחב את הסורק** ואל תשאיר חור חדש.
-· הרשימה המלאה — חלק 1 ו-חלק 11 ב-TASK_QUEUE.md.
+· B64a/B69 — sVal/sPick זהים תו-בתו. ⛔ אסור על כסף, משקל ומזהים.
+· B67  — ⛔⛔ b67PayOneRow מסלול הכתיבה היחיד לשכר · B67_WRITE_DEFER→null.
+· B68  — b68PayrollFor נקודת האמת לצירוף עובד+חודש.
+· B70  — ⛔⛔ nobleWeighRollup מצטברת · laundry_events append-only.
+· B71  — ⛔⛔ כסף כביסה באגורות: w10Cent · w10MulAg · w10PctAg · fromAg.
+  ⛔ toAg לא נגע ולא ייגע (R4/R6).
+· B74  — ⛔⛔ w17IsWash נקודת האמת ל"הזמנת כביסה", זהה בשני הקבצים.
+· B75  — ⛔⛔ w21IsRental נקודת האמת ל"השכרה"; סוג לא מוכר/ריק = השכרה.
+· B76  — ⛔⛔ w22Stat נקודת האמת לסטטוס הזמנה; לא מוכר/ריק **משריין מלאי**,
+  ⛔ במלאי בלבד. ⛔ B44_PICK_STATUSES עובר דרכו בארבעה אתרים.
+· B77  — ⛔⛔ w23InvActive/w23InvStat + INVOICE_STATUSES; לא מוכר/ריק =
+  **פעילה**. ⛔ חשבונית מבוטלת עדיין אינה חוסמת הפקה חדשה (WASH-16).
+· B78  — ⛔⛔ **w24Stat(rec, LIST, dflt) הוא המנגנון היחיד לציר הסטטוס
+  בכל הטבלאות שאינן orders/invoices.** ⛔ אין לבנות שם חדש (R8) —
+  ההרחבה היא **רשימה נוספת** שעוברת דרכו. ⛔ סטטוס שכר לא מוכר/ריק =
+  'טיוטה'. ⛔ לשלוש הרשימות האחרות אין dflt והן מחזירות את הערך המנורמל.
+· B79  — ⛔⛔ **DELIVERY_STATUSES ו-DELIVERY_DFLT זהים תו-בתו בשני הקבצים**;
+  יש בדיקה שמשווה אותן. ⛔⛔ סטטוס משלוח לא מוכר או ריק = 'מתוכנן'
+  (**פתוח**) — הכרעת אבי 2ב, אל תהפוך בדרך אגב.
+  ⛔ 'התקבלה' חייב להישאר ברשימה כסטטוס **סגור** — הוצאתו פותחת מחדש
+  משלוחים ותיקים ומחזירה אותם למסלול הנהג. יש בדיקה ייעודית.
+  ⛔ **הגדרה אחת בלבד של ['מתוכנן','בדרך'] בכל קובץ** — OPEN ו-OPEN_ST
+  אוחדו ל-B5_OPEN_STATUSES; יש בדיקה שנכשלת אם תיווצר רשימה שנייה.
+  ⛔ **כל קריאה ל-w24Stat עם DELIVERY_STATUSES חייבת להעביר גם
+  DELIVERY_DFLT** — יש סורק בשני הקבצים שנכשל על קריאה בלי ברירת מחדל.
+· הרשימה המלאה — חלק 1 ו-חלק 11.
 
 ════════ הבדיקות ════════
 ⚠⚠ tests.js בשורש הריפו. npm i jsdom ואז node tests.js
-← 601 בדיקות, אמור לעבור 0 כשלים.
+← 628 בדיקות, אמור לעבור 0 כשלים.
 ⛔ נכשל משהו לפני שנגעת בקוד — עצור והתרע. זו רגרסיה קיימת.
 ⚠ הרתמה קוראת לקובץ בשם 'קוד שרת.txt' בדיוק.
 ⚠ route() טוענת גיליון אמיתי ואינה נגישה לרתמה. handle() כן נגישה.
-⚠ סדר הארגומנטים: handle(action, p, db, user). לא (action,p,user,db).
-⚠⚠ **הפעולה להוספת שורה נקראת 'create' ולא 'addRow'** —
-   handle('create', {table:'order_lines', row:{...}}, db, user).
-   זו הייתה טעות שלי ב-B78 ושלוש בדיקות נכשלו עליה.
-⚠⚠ **חתימות אמיתיות — grep על 'function <שם>(' בקוד החי, אל תניח:**
-approveOrder(db, orderId) · deliverOrder(db, orderId) ·
-receiveReturn(db, orderId, returns, todayStr, genIdFn, user) ·
-b1CreateInvoice(db, p, user) — p אובייקט עם order_id, לא מחרוזת ·
-b67PayOneRow(db, prRow, amount, method, note, paidAt, user, opts) ·
-b34TripCreate(db, p, user) · b34TripSetStatus(db, p, user) ·
-b67EmployeeDebt(db, employeeId) — נשענת על b67EmployeeOpenRows,
-**השומר צריך לרוץ על b67EmployeeOpenRows ולא עליה.**
+⚠ סדר הארגומנטים: handle(action, p, db, user).
+⚠⚠ **H.login(w, ROLE, srv, {user:'שם'})** — הארגומנט השני הוא **תפקיד**,
+לא שם. 'נהג א' כתפקיד נותן ROLE שגוי ו-USER='בודק נהג א', וכל בדיקת
+מסלול נהג מחזירה 0 בלי סיבה נראית. זו הייתה טעות שלי ב-B79.
+⚠⚠ **חתימות אמיתיות — grep על 'function <שם>(' בקוד החי, אל תניח.**
+⭐ b1CreateInvoice(db, p, user) — p אובייקט, לא מחרוזת.
 ⚠ בדיקת DOM — el('modal').innerHTML ולא document.body.
-⚠ חלק שמוגדר needs:'ui' **כן מקבל srv** — H.login(w, 'מנהל', srv).
-   בלי srv הרתמה נופלת על "TMAP לא נמצא".
-⚠ מסך הרצפה: w.go('floor') לפני floorRenderInfo.
-⚠ Utilities.formatDate ברתמה מחזיר תאריך בלבד — nowTs() אינו מחזיר שעה.
-⚠⚠ **לקח B74:** הממשק מטמן את הספר ואת היתרות על אובייקט ה-DB עצמו —
-DB._b54Ledger ו-DB._b48Bal. בלי `delete` לפני כל מדידה, בדיקה שנייה
-מודדת את התוצאה של הראשונה ו"עוברת" בלי לבדוק כלום.
-⚠⚠ **לקח B75/B76/B77:** H.stripComments אינו מסיר הערות באזור
-b49eLegKind בקוד השרת. השומרים חותכים הערות **בתוך הגוף שחולץ**
-(B76/B77/B78.noCmt + .body) ולא על הקובץ כולו.
-⚠⚠ **לקח B77 — היתרה היא ברוטו:** חשבונית subtotal=1000 נותנת
-118000 אגורות, לא 100000.
-⚠⚠ **לקח B78 — בקרה נגדית היא חובה:** אחרי שהבדיקות ירוקות, שכפל את
-הריפו המקורי, הזרק לתוכו **רק את העוזר החדש** (כדי שבדיקת הריקבון
-תעבור) והרץ את הבדיקות החדשות. מי שלא נכשלת שם — אינה מודדת כלום.
-ב-B78 נכשלו 16 מ-31, וזה מה שהוכיח שהן אמיתיות.
-⚠ NOBLE_WORK_STAGES קיים בשרת בלבד; בממשק NOBLE_MACHINE_STAGES.
-⚠ TABLES.deliveries · TABLES.futureExpenses · TABLES.assetFaults ·
-TABLES.vehicles — אל תנחש סכימה, קרא אותה.
-⚠⚠ משוך את הריפו ב-git clone ולא ב-curl. curl הגיש קבצים ישנים
-מהמטמון בשלושה סשנים.
+⚠⚠ **לקח B74:** DB._b54Ledger ו-DB._b48Bal מוטמנים על אובייקט ה-DB —
+בלי `delete` לפני כל מדידה, בדיקה שנייה מודדת את הראשונה.
+⚠⚠ **לקח B75/B76/B77:** H.stripComments אינו בטוח על קובץ השרת כולו.
+חתוך הערות **בתוך הגוף שחולץ** (B79.noCmt/B79.body).
+⚠ NOBLE_WORK_STAGES בשרת בלבד; בממשק NOBLE_MACHINE_STAGES.
+⚠⚠ משוך את הריפו ב-git clone ולא ב-curl.
 
 ════════ הפריט ════════
 
-🟡 WASH-23ג — ⭐ **ציר הסטטוס בטבלאות שלא היו בהיקף B78.**
-✅ **נספר מול הקוד החי ב-B78 (R9 — זו ספירה אמיתית, לא הערכה):**
-
-  · ⛔⛔ **deliveries.status — 32 אתרים (5 שרת · 27 ממשק). הכבד.**
-    'מתוכנן' · 'בדרך' · 'בוצע' · 'בוטל' · 'התקבלה' · 'הוסר ממסלול'.
-    נוגע במסלול הנהג, בשיבוץ, בחתימה ובתעודת המשלוח.
-    ⚠ **קיימת כבר רשימה קבועה: B5_OPEN_STATUSES = ['מתוכנן','בדרך']**,
-    זהה בשני הקבצים. ⛔ **היא מושווית בשלוש צורות שונות באותו קובץ** —
-    indexOf(String(d.status)) גולמי (3 שרת · 1 ממשק) · indexOf(sVal(...))
-    (6 שרת · 1 ממשק) · includes(d.status) גולמי. **זו בדיוק אי-האחידות
-    שהעוזר נועד לחסל.**
-  · units/carts/cases/machines — 14 אתרים (1 שרת · 13 ממשק).
-    'גרוט' · 'פנוי' · 'פנויה' · 'משויך' · 'פעילה' · 'בתיקון'.
-  · paymentDeclarations + payments — 14 אתרים (3 שרת · 11 ממשק).
-    'מאומת' · 'מאושר' · 'אושר' · 'נדחה' · 'ממתין לאישור' · 'ממתין לאימות'.
-    ⚠ **אלה בפורטל ונוגעים בכסף שנכנס** — R6 מלא.
-  · vehicles.status — 12 אתרים (5 שרת · 7 ממשק). 'פעיל' · 'בטיפול'.
-  · assetFaults.status — 8 אתרים (3 שרת · 5 ממשק). 'פתוחה' · 'סגורה'.
-    ⛔ R5 — הפרדת תקלות רכב ממכבסה לא נוגעת ולא זזה.
-  · ⛔ futureExpenses.status — 6 אתרים (2 שרת · 4 ממשק). 'שולם'/'ממתין'.
-    **נוגע בתזרים (B43) ולכן R6 מלא חובה.**
-  · notifications.status — 5 אתרים (1 שרת · 4 ממשק).
-  · taskComments.status — 'לביצוע'/'טופל'. נספר בקבוצת התשלומים; להפריד.
-
-⚠ **סה"כ ~91 אתרים.** ⛔⛔ **זה מעל תקרת אצווה אחת.**
-⛔ **M6 — להערכתי חובה לפצל.** ההמלצה: **deliveries לבדה** היא B79
-(32 אתרים + חתימה + מסלול נהג + R6), וכל השאר B80.
-⚠ **ההכרעה הזו היא שאלה ראשונה לאבי, לא החלטה שלך לבד.**
-
-⛔ **הדפוס קיים — w24Stat הוא התקדים. אל תבנה שם חמישי (R8).**
-   ההרחבה היא **רשימות נוספות** שעוברות ל-w24Stat, לא עוזר חדש.
-⚠ **הכרעה שנייה לאבי:** מה נחשב סטטוס משלוח לא מוכר או ריק —
-   'מתוכנן' (פתוח, מופיע לנהג) או 'בוצע' (סגור, נעלם מהמסלול).
-   ⭐ המלצה מוקדמת: **'מתוכנן'** — משלוח שנעלם מהמסלול בשקט הוא
-   סחורה שלא הגיעה ללקוח. זה גם הצד הזהיר וגם ההתנהגות שהייתה
-   (B5_OPEN_STATUSES אינו מכיל אותו, אבל רוב הסינון הוא שלילי).
-   ⛔ **לאמת את זה בקוד לפני שמציגים לאבי** — R11.
+🟡 WASH-23ג חלק ב' — ⭐ **ציר הסטטוס בכל שאר הטבלאות.**
+✅ **נספר מול הקוד החי ב-B79 — ~77 אתרים:**
+  · units / carts / cases  14  (⛔ 'גרוט' חוסם פעולה — לא רק תצוגה)
+  · paymentDeclarations    14  (⛔⛔ **כסף שנכנס** — 'אושר'/'נדחה'/
+    'ממתין לאישור'/'מאומת'. R6 חובה מלאה)
+  · vehicles               12  ('פעיל'/'בטיפול'/'מושבת' — ⛔ שער שיבוץ
+    רכב לנסיעה: spVeh · tv · v בשרת)
+  · assetFaults             8  ('פתוחה'/'סגורה' — ⛔ R5: הפרדת רכב/מכבסה)
+  · futureExpenses          6  ('שולם' — ⛔⛔ **תזרים B43**. R6 חובה)
+  · taskComments            5  ('לביצוע'/'טופל')
+  · notifications           5  ('ממתין'/'נשלח'/'נכשל')
+  · machines                4  ('פעילה'/'בתיקון'/'מושבתת' — ⛔ שער
+    טעינת מכונה: mc · mc2 בשרת)
+  · טיפולי רכב              4  ('בוצע'/'מתוכנן'/'בוטל')
+  · deposits                3  · messages 2 · laundry_intakes 1
+⛔ **הדפוס קיים — w24Stat + רשימה. אל תבנה שם חדש (R8).**
+⚠ **הכרעה ראשונה לאבי — ברירת מחדל לכל טבלה. ⛔ אין להעתיק את 2ב
+אוטומטית**; לכל טבלה הצד הזהיר שלה שונה. ⭐ המלצה מוקדמת, לאמת בקוד
+לפני שמציגים (R11):
+  · paymentDeclarations — לא מוכר = 'ממתין לאישור' (לא אושר, לא זוכה)
+  · futureExpenses — לא מוכר = **לא שולם** (נשאר בתזרים)
+  · vehicles / machines — לא מוכר = **לא פעיל** (חוסם שיבוץ)
+  · assetFaults — לא מוכר = 'פתוחה' (תקלה לא נעלמת בשקט)
+  · units — לא מוכר = **לא גרוט** (לא מוחקים יחידה בגלל לכלוך)
+⚠ **הכרעה שנייה:** האם ~77 אתרים בעשר טבלאות הם אצווה אחת או שתיים.
+⭐ המלצה מוקדמת: **אחת** — בניגוד ל-deliveries, אף אחת מהן אינה נוגעת
+במסלול הנהג, וכל טבלה כאן קטנה. ⚠ אם באמצע מתברר אחרת — M6.
+⚠ **לספור מול הקוד החי (R9).** ההערכה כאן היא ספירה שבוצעה ב-B79,
+אבל היא **ספירת השוואות בלבד** ואינה כוללת אתרי כתיבה.
 
 --- מלכודות ---
-⛔ 1. ⛔⛔ **B5_OPEN_STATUSES קיים ומושווה בשלוש צורות.** אל תוסיף
-   רשימה מקבילה — העבר את שלוש הצורות לצורה אחת דרך w24Stat.
-⛔ 2. ⛔⛔ **החתימה הדיגיטלית ותעודת המשלוח** תלויות בסטטוס 'בוצע'.
-   ⛔ R4 — אל תיגע במנגנון החתימה. שנה את **ההשוואה** בלבד.
-⛔ 3. **b49eShipMode / b49eLegKind / b49fCloseLegs** — איסוף עצמי מול
-   משלוח. ⛔ אל תאחד ואל תפשט; רק נרמל.
-⛔ 4. **R6 חובה בשלושת המקורות** — paymentDeclarations הן כסף שנכנס
-   ו-futureExpenses הן תזרים. הוכח שהיתרות לא זזו: לפני ואחרי,
-   נקי ומלוכלך.
-⛔ 5. ⛔ **toAg לא נגע** (R4) ולא ארבע נקודות האגורות של B71.
-⛔ 6. אין שינוי סכימה בלי אישור מפורש של אבי (R1).
-⛔ 7. 29 מסכים. הוספת מסך דורשת הכרעה מפורשת של אבי.
-⛔ 8. **M6 — הפריט גדול פי כמעט שניים מאצווה. פצל מראש**, אל תגלה
-   את זה באמצע.
+⛔ 1. ⛔⛔ **paymentDeclarations ו-futureExpenses הם כסף.** בדיקת R6
+   בשלושת המקורות היא חובה, לפני ואחרי, נקי ומלוכלך.
+⛔ 2. **R5 — הפרדת תקלות רכב מתקלות מכבסה היא כלל מחייב.** b42ScopeTypes/
+   b42InScope. אל תאחד רשימת תקלות בשום מסך.
+⛔ 3. אין לגעת ב-toAg (R4) ולא בארבע נקודות האגורות של B71.
+⛔ 4. ⛔⛔ **קדימות אופרטורים** — אם אתה ממיר `!X.includes(a.status)`,
+   `!X.indexOf(...)>-1` **שגוי**. הנכון: `X.indexOf(...)===-1`.
+   זה נתפס ב-B79 רק בגלל בדיקה על ההיפוך; כתוב אחת כזו לכל היפוך.
+⛔ 5. אין שינוי סכימה בלי אישור מפורש של אבי (R1).
+⛔ 6. 29 מסכים. הוספת מסך דורשת הכרעה מפורשת של אבי.
+⛔ 7. M6 — אם באמצע מתברר שהפריט גדול פי כמה: **עצור, מסור את מה
+   שהושלם, ורשום את השאר לאצווה הבאה.**
 
 --- אסור לשבור ---
-w24Stat · PAYROLL_STATUSES · TASK_STATUSES · PURCHASE_STATUSES ·
-TRIP_STATUSES · w23InvStat · w23InvActive · INVOICE_STATUSES · w22Stat ·
-w22Known · w22Reserving · ORDER_STATUSES · RESERVING_STATUSES ·
-B44_PICK_STATUSES · B5_OPEN_STATUSES · w17IsWash · w21IsRental ·
-w15MachKey · w15TaskKg · w15WeightAudit · w05Gate · w05Occupant ·
-w08DetachMachine · w16OrderGate · w16ActiveInvoiceOf · b54Ledger ·
-b54RawOrderTotalAg · b54LedgerFE · b54RawOrderTotalAgFE · b54LedgerAudit ·
-b54Bump · b48BalancesAg · b48BalancesAgFE · custBalance · b2CreditUsedAg ·
-toAg · fromAg · nRound2 · w10Cent · w10MulAg · w10PctAg · availableQty ·
-reservedQty · b48CommittedQty · b48FreeOnShelf · inLaundryQty ·
-receiveReturn · approveOrder · deliverOrder · b1CreateInvoice ·
-b31EnsureInvoice · b67PayOneRow · b67PayEmployee · b67FlushWrites ·
-b67EmployeeOpenRows · b67EmployeeDebt · b68PayrollFor · buildPayroll ·
-clockCore · attEff · syncFutureExpenseForPayroll · b34TripCreate ·
-b34TripSetStatus · b34TripsTodayHtml · rTasks · moveTask ·
-ORDER_TYPES · B65_TYPES · B54_SKIP_ORDER · ORD_CLOSED_STATUSES ·
-B40_OUT_STATUSES · B40_RESERVED_STATUSES · sVal · sPick · w18Advance ·
-w18BoardCol · rLaundry · nobleMarkReady · nobleWeighRollup · nobleWeighFix ·
-b70Weighs · b70CartNeedsWeigh · nobleStageStart · nobleStageEnd ·
-nobleIntake · nobleMachineLoad · nobleOpenStarts · nobleDriverScan ·
-b49cAfterAdvance · b49eShipMode · b49eLegKind · b49fCloseLegs ·
-b40SplitLaundry · b40ItemBreakdown · b42ReportFault · b56IntakeOpen ·
-w17Desc · w19FreeCarts · floorAddCart · b49dResolveOrder · b49dAddCarts ·
-nobleWeigh · ordersDonutSvg · renderOrdersList.
+w24Stat · DELIVERY_STATUSES · DELIVERY_DFLT · B5_OPEN_STATUSES ·
+B38_OPEN_DELIV · B49E_LIVE_DELIV · b5MarkInTransit · b5RemoveFromRoute ·
+b5DriverOpenDeliveries · b5MyRoute · b5DoneToday · b49eLiveDeliv ·
+PAYROLL_STATUSES · TASK_STATUSES · PURCHASE_STATUSES · TRIP_STATUSES ·
+w23InvStat · w23InvActive · INVOICE_STATUSES · w22Stat · w22Known ·
+w22Reserving · ORDER_STATUSES · RESERVING_STATUSES · B44_PICK_STATUSES ·
+w17IsWash · w21IsRental · w15MachKey · w15TaskKg · w15WeightAudit ·
+w05Gate · w05Occupant · w08DetachMachine · w16OrderGate ·
+w16ActiveInvoiceOf · b54Ledger · b54RawOrderTotalAg · b54LedgerFE ·
+b54RawOrderTotalAgFE · b54LedgerAudit · b54Bump · b48BalancesAg ·
+b48BalancesAgFE · custBalance · b2CreditUsedAg · toAg · fromAg · nRound2 ·
+w10Cent · w10MulAg · w10PctAg · availableQty · reservedQty ·
+b48CommittedQty · b48FreeOnShelf · inLaundryQty · receiveReturn ·
+approveOrder · deliverOrder · b1CreateInvoice · b31EnsureInvoice ·
+b67PayOneRow · b67PayEmployee · b67FlushWrites · b68PayrollFor ·
+buildPayroll · clockCore · attEff · syncFutureExpenseForPayroll ·
+b34TripSetStatus · b34TripsTodayHtml · ORDER_TYPES · B65_TYPES ·
+B54_SKIP_ORDER · ORD_CLOSED_STATUSES · B40_OUT_STATUSES ·
+B40_RESERVED_STATUSES · sVal · sPick · w18Advance · w18BoardCol ·
+rLaundry · nobleMarkReady · nobleWeighRollup · nobleWeighFix · b70Weighs ·
+b70CartNeedsWeigh · nobleStageStart · nobleStageEnd · nobleIntake ·
+nobleMachineLoad · nobleOpenStarts · nobleDriverScan · b49cAfterAdvance ·
+b40SplitLaundry · b40ItemBreakdown · b42ReportFault · b42ScopeTypes ·
+b42InScope · b56IntakeOpen · w17Desc · w19FreeCarts · floorAddCart ·
+b49dResolveOrder · b49dAddCarts · nobleWeigh · ordersDonutSvg ·
+renderOrdersList · openDelivery · rDeliveries · portalOrderRow.
 
 --- בדיקות חובה ---
-· ⛔⛔ WASH-23ג: משלוח 'בוצע' מלוכלך אינו מופיע במסלול הנהג
-· ⛔⛔ WASH-23ג: משלוח 'מתוכנן' מלוכלך **כן** מופיע ומקבל שיבוץ
-· ⛔ WASH-23ג: החתימה ותעודת המשלוח לא נגעו (רגרסיה מלאה)
-· ⛔ WASH-23ג: B5_OPEN_STATUSES מושווה בצורה **אחת** בכל הקוד
-· ⛔ הכסף על סטטוס נקי לא זז (רגרסיה מלאה) + R6 בשלושת המקורות
-· ⛔ B71 · B72 · B73 · B74 · B75 · B76 · B77 · B78 לא נשברו
-· ⛔ הסורק הורחב ל-x.status==='אושר' ואין יותר חריגה
-· ⛔⛔ בקרה נגדית: הבדיקות החדשות הורצו מול הקוד הקודם ונכשלו
+· ⛔⛔ הצהרת תשלום 'אושר' מלוכלכת עדיין מזכה — R6 בשלושת המקורות
+· ⛔⛔ הוצאה עתידית 'שולם' מלוכלכת אינה חוזרת לתזרים (B43)
+· ⛔ רכב 'פעיל' מלוכלך עדיין ניתן לשיבוץ · רכב מושבת עדיין נחסם
+· ⛔ מכונה 'פעילה' מלוכלכת עדיין ניתנת לטעינה
+· ⛔ תקלה 'פתוחה' מלוכלכת עדיין נספרת ונחסמת לסגירה כפולה
+· ⛔ יחידה 'גרוט' מלוכלכת עדיין חסומה · יחידה תקינה לא הפכה לגרוטה
+· ⛔ R5 לא נשבר — תקלות רכב ומכבסה נשארו מופרדות
+· ⛔ B71–B79 לא נשברו (רגרסיה מלאה)
+· ⛔ לכל היפוך תנאי — בדיקה על **שני** הצדדים (מלכודת 4)
+· ⛔ בקרה נגדית: הרץ את הבדיקות החדשות מול הריפו המקורי; מי שלא
+  נכשלה שם אינה מודדת כלום
 ⚠ שכבה 2: אין להוסיף טענה ל-b61Tests() — הפריט אינו יכולת דפדפן.
 
 ⛔ אין בקוד history.back/go ולא תהיה. t01 ו-t02 סורקים ונכשלים.
@@ -1576,18 +1523,20 @@ nobleWeigh · ordersDonutSvg · renderOrdersList.
 ════════ פתיחה ════════
 משוך חמישה קבצים חיים מהריפו (git clone):
 index.html · קוד שרת.txt · PROGRESS.md · TASK_QUEUE.md · tests.js
-⚠ ודא: canary v4.78-B78 בממשק · קוד שרת.txt מתחיל ב-'// ===='.
-⚠⚠ ודא שקיימים בקובץ השרת: w24Stat · PAYROLL_STATUSES · TASK_STATUSES ·
-PURCHASE_STATUSES · TRIP_STATUSES · w23InvStat · w23InvActive ·
-INVOICE_STATUSES · w22Stat · w22Known · w22Reserving · w21IsRental ·
-w15MachKey · w05Gate · w16OrderGate · b67PayOneRow · b67EmployeeOpenRows ·
-b68PayrollFor · b34TripSetStatus · B5_OPEN_STATUSES.
-אם חסרים — אבי לא העלה את קובץ השרת של B78. עצור והתרע.
-⚠⚠ ודא שקיימים בממשק: w24Stat · ארבע הרשימות · w23InvStat ·
-w23InvActive · INVOICE_STATUSES · w22Stat · w22Reserving ·
-ORDER_STATUSES · RESERVING_STATUSES · B44_PICK_STATUSES · w21IsRental ·
-B5_OPEN_STATUSES · b67DraftRows · b67EmpDebt · b34TripsTodayHtml.
+⚠ ודא: canary v4.79-B79 בממשק · קוד שרת.txt מתחיל ב-'// ===='.
+⚠⚠ ודא שקיימים בשרת: DELIVERY_STATUSES · DELIVERY_DFLT · w24Stat ·
+B5_OPEN_STATUSES · B38_OPEN_DELIV · B49E_LIVE_DELIV · PAYROLL_STATUSES ·
+TASK_STATUSES · PURCHASE_STATUSES · TRIP_STATUSES · w23InvActive ·
+w22Stat · w21IsRental · b5MarkInTransit · b5DriverOpenDeliveries.
+⚠⚠ ודא שקיימים בממשק: DELIVERY_STATUSES · DELIVERY_DFLT · w24Stat ·
+B5_OPEN_STATUSES · b5MyRoute · b5DoneToday · openDelivery ·
+w23InvActive · w22Stat · B44_PICK_STATUSES · b67DraftRows.
+אם חסרים — אבי לא העלה את קבצי B79. עצור והתרע.
+⚠ npm i jsdom ואז node tests.js ← 628 בדיקות, 0 כשלים.
+⚠⚠ ודא שחלק 11 בקובץ הזה מדבר על B80. אם הוא מדבר על אצווה ישנה —
+אבי לא העלה את TASK_QUEUE.md. עצור והתרע. (קרה ב-B78.)
 
+תוספות/שינויים להיקף שסוכמו מעבר לחלק 11: אין.
 עבוד לפי שני השלבים (WORKING_PROTOCOL חלק 3).
 בסיום: הקבצים שנגעת בהם + tests.js + PROGRESS.md מלא +
 TASK_QUEUE.md מלא + HANDOFF עם OPENER לאצווה הבאה.
