@@ -134,6 +134,7 @@
 //             B76 — WASH-22: ציר הסטטוס של ההזמנה — canary v4.76-B76
 //             B77 — WASH-23: ציר הסטטוס של החשבונית — canary v4.77-B77
 //             B78 — WASH-23ב: ציר הסטטוס בשכר · משימות · רכש · נסיעות — canary v4.78-B78
+//             B79 — WASH-23ג: ציר הסטטוס של המשלוחים (deliveries) — canary v4.79-B79
 //                   • w22Stat/w22Known/w22Reserving — נקודת אמת אחת לסטטוס,
 //                     זהה תו-בתו בממשק (יש בדיקה). 35 אתרים בשרת + 34 בממשק.
 //                   • הבאג: הזמנה מאושרת שסטטוסה בגיליון נושא רווח קשיח לא
@@ -1187,7 +1188,7 @@ function b38PlannedDeliveries(o) {
 // B49e: נסיעה מבוטלת אינה "קיימת" לצורך תכנון — אחרת מעבר חזרה למשלוח (P3)
 // לא היה יוצר נסיעה מחדש לעולם. זו הייתה המלכודת המרכזית שזוהתה בתכנון.
 var B49E_LIVE_DELIV = ['מתוכנן', 'בדרך', 'בוצע'];
-function b49eLiveDeliv(d) { return B49E_LIVE_DELIV.indexOf(String(d.status)) > -1; }
+function b49eLiveDeliv(d) { return B49E_LIVE_DELIV.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1; }
 
 // B38: יוצר רק את מה שחסר. בטוח להרצה חוזרת.
 function b38EnsureOrderDeliveries(db, o) {
@@ -1219,7 +1220,7 @@ function b49eApplyLegMode(db, o, leg, user) {
   } else {
     (db.deliveries || []).forEach(function (d) {
       if (d.order_id !== o.id || String(d.kind) !== kind) return;
-      if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+      if (B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return;
       d.status = 'בוטל';
       d.eta_text = '';
       d.note = (d.note ? d.note + ' · ' : '') + 'בוטלה — ' + leg + ' באיסוף עצמי (' + String(user || '') + ')';
@@ -1303,7 +1304,7 @@ function b49fCloseLegs(db, orderId, kind, user, declared, ctx) {
   var stamp = String(user || '') + ' · ' + today();
   (db.deliveries || []).forEach(function (d) {
     if (d.order_id !== orderId || String(d.kind) !== String(kind)) return;
-    if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+    if (B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return;
     d.eta_text = '';
     if (b41DriverHandled(d)) {
       d.status = 'בוצע';
@@ -1387,7 +1388,7 @@ function b56CloseLaundryOrder(db, order) {
   if (openIntake) return false;
   var openLeg = (db.deliveries || []).some(function (d) {
     return String(d.order_id || '') === String(order.id) &&
-      B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1;
+      B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1;
   });
   if (openLeg) return false;
   order.status = 'הושלמה';
@@ -1446,7 +1447,7 @@ function bld01Candidates(db) {
     var mode = b49eShipMode(o, 'חזור');
     var openLegs = delivs.filter(function (d) {
       return String(d.order_id || '') === String(o.id) && sVal(d.kind) === kind &&
-        B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1;
+        B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1;
     });
     var needLeg = mode === B49E_SHIP && openLegs.length > 0;
     var needStatus = st !== 'הושלמה';
@@ -1545,7 +1546,7 @@ function b41IntakeState(db, orderId) {
   /* B64a: אותה הגדרה בדיוק כמו b41IntakeState בממשק — שני הצדדים לא יתפצלו. */
   var expects = b38PlannedDeliveries(o).some(function (pl) { return sVal(pl.kind) === 'איסוף'; });
   var picks = b41Pickups(db, orderId);
-  var open = picks.filter(function (d) { return B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1; });
+  var open = picks.filter(function (d) { return B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1; });
   var anyHandled = picks.some(b41DriverHandled);
   return {
     expects: expects, picks: picks, open: open, anyHandled: anyHandled,
@@ -1584,7 +1585,7 @@ function b38SyncOrderDeliveries(db, o, oldStart, oldEnd) {
   b38PlannedDeliveries(o).forEach(function (pl) { planned[pl.kind] = pl.date; });
   (db.deliveries || []).forEach(function (d) {
     if (d.order_id !== o.id) return;
-    if (B38_OPEN_DELIV.indexOf(String(d.status)) === -1) return;
+    if (B38_OPEN_DELIV.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return;
     var want = planned[String(d.kind)];
     if (!want) return;
     var relevant = (String(want) === String(o.start_date)) ? startMoved : endMoved;
@@ -2357,7 +2358,7 @@ function handle(action, p, db, user) {
       var closed41 = 0;
       (db.deliveries || []).forEach(function (d) {
         if (String(d.kind) !== 'איסוף') return;
-        if (B5_OPEN_STATUSES.indexOf(String(d.status)) === -1) return;
+        if (B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return;
         var o41 = (db.orders || []).find(function (x) { return x.id === d.order_id; });
         if (!o41 || ['הוחזרה', 'הושלמה'].indexOf(w22Stat(o41)) === -1) return;
         d.status = 'בוצע';
@@ -2421,7 +2422,7 @@ function handle(action, p, db, user) {
           if (!pl.date) return;
           (db.deliveries || []).forEach(function (d) {
             if (d.order_id !== o.id || String(d.kind) !== pl.kind) return;
-            if (B38_OPEN_DELIV.indexOf(String(d.status)) === -1) return;
+            if (B38_OPEN_DELIV.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return;
             if (String(d.date || '') !== String(pl.date)) { d.date = pl.date; fixedB38++; }
           });
         });
@@ -2564,13 +2565,13 @@ function handle(action, p, db, user) {
         // רק כשלא נותר עוד משלוח אספקה פתוח שלה (תמיכה במשלוחים מפוצלים בין נהגים).
         var dvSpec = db.deliveries.find(function (x) { return x.id === p.delivery_id; });
         if (!dvSpec) return { ok: false, error: 'משלוח לא נמצא' };
-        if (B5_OPEN_STATUSES.indexOf(dvSpec.status) > -1) {
+        if (B5_OPEN_STATUSES.indexOf(w24Stat(dvSpec, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1) {
           if (sigMissing(dvSpec)) return { ok: false, error: 'לא ניתן לסמן נמסר — למשלוח אין חתימת לקוח או צילום מסירה' };
           dvSpec.status = 'בוצע';
           if (!dvSpec.note_number) dvSpec.note_number = nextNumber(db, 'delivery_note', 3001);
         }
         var stillOpen = db.deliveries.some(function (d) {
-          return d.order_id === p.order_id && d.id !== p.delivery_id && d.kind !== 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1;
+          return d.order_id === p.order_id && d.id !== p.delivery_id && d.kind !== 'איסוף' && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1;
         });
         if (stillOpen) {
           writeTable('deliveries', db.deliveries);
@@ -2581,13 +2582,13 @@ function handle(action, p, db, user) {
         // B29: משלוח שכבר "בדרך" אצל הנהג — סגירה מהמשרד ברמת ההזמנה מותרת למנהל בלבד.
         // (הנהג עצמו סוגר עם delivery_id בענף שלמעלה, ולכן אינו מושפע.)
         var inTransitB29 = db.deliveries.filter(function (d) {
-          return d.order_id === p.order_id && d.kind !== 'איסוף' && String(d.status) === 'בדרך';
+          return d.order_id === p.order_id && d.kind !== 'איסוף' && w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT) === 'בדרך';
         });
         if (inTransitB29.length && String(p._verified_role || '') !== 'מנהל' && !isSuperAdmin(p._verified_employee_id))
           return { ok: false, error: 'המשלוח כבר בדרך אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד' };
         // סגירה מהמשרד ברמת ההזמנה — כל משלוחי האספקה הפתוחים חייבים חתימה/צילום (L6).
         var blocked = db.deliveries.filter(function (d) {
-          return d.order_id === p.order_id && d.kind !== 'איסוף' && B5_OPEN_STATUSES.indexOf(d.status) > -1 && sigMissing(d);
+          return d.order_id === p.order_id && d.kind !== 'איסוף' && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1 && sigMissing(d);
         });
         if (blocked.length) return { ok: false, error: 'לא ניתן לסמן כסופקה — למשלוח ' + blocked[0].id + ' אין חתימת לקוח או צילום מסירה (הוסף דרך כרטיס המשלוח)' };
         // B49e (P4+L6): רגל ההלוך באיסוף עצמי — אין רשומת משלוח, ולכן L6 לא היה חוסם דבר
@@ -2599,7 +2600,7 @@ function handle(action, p, db, user) {
       var r2 = deliverOrder(db, p.order_id);
       if (r2.ok) {
         writeTable('orders', db.orders);
-        db.deliveries.forEach(function (d) { if (d.order_id === p.order_id && d.kind === 'אספקה' && B5_OPEN_STATUSES.indexOf(d.status) > -1) { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
+        db.deliveries.forEach(function (d) { if (d.order_id === p.order_id && d.kind === 'אספקה' && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1) { d.status = 'בוצע'; if (!d.note_number) d.note_number = nextNumber(db, 'delivery_note', 3001); } });
         // B17-תיקון: אם התקבל delivery_id ספציפי — לסגור אותו בלי תלות ב-kind, כל עוד הוא פתוח.
         // מכסה משלוחים תקועים עם kind שאינו 'אספקה' (או ריק). (הסגירה עצמה כבר בוצעה למעלה ב-B19c.)
         writeTable('deliveries', db.deliveries);
@@ -2620,7 +2621,7 @@ function handle(action, p, db, user) {
       if (db.invoices.some(function (v) { return v.order_id === oc.id && w23InvActive(v); }))
         return { ok: false, error: 'קיימת חשבונית פתוחה — בטל אותה קודם' };
       oc.status = 'בוטלה'; writeTable('orders', db.orders);
-      db.deliveries.forEach(function (d) { if (d.order_id === oc.id && d.status === 'מתוכנן') d.status = 'בוטל'; });
+      db.deliveries.forEach(function (d) { if (d.order_id === oc.id && w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT) === 'מתוכנן') d.status = 'בוטל'; });
       writeTable('deliveries', db.deliveries);
       return { ok: true };
     }
@@ -2629,7 +2630,7 @@ function handle(action, p, db, user) {
     case 'splitDelivery': {
       var spDv = db.deliveries.find(function (x) { return x.id === p.delivery_id; });
       if (!spDv) return { ok: false, error: 'משלוח לא נמצא' };
-      if (spDv.status !== 'מתוכנן') return { ok: false, error: 'ניתן לפצל רק משלוח בסטטוס מתוכנן' };
+      if (w24Stat(spDv, DELIVERY_STATUSES, DELIVERY_DFLT) !== 'מתוכנן') return { ok: false, error: 'ניתן לפצל רק משלוח בסטטוס מתוכנן' };
       if (spDv.kind === 'איסוף') return { ok: false, error: 'פיצול אפשרי רק למשלוח אספקה' };
       if (!spDv.order_id) return { ok: false, error: 'למשלוח זה אין הזמנה מקושרת' };
       var spLines = db.orderLines.filter(function (l) { return l.order_id === spDv.order_id; });
@@ -3639,7 +3640,7 @@ function handle(action, p, db, user) {
       var myOrders = db.orders.filter(function (o) { return o.customer_id === pc.id; }).map(function (o) {
         // B5: מעקב משלוח — סטטוס + ETA טקסטואלי (D14). מציגים את המשלוח הפתוח האחרון, ואם אין — האחרון שבוצע.
         var oDelivs = db.deliveries.filter(function (d) { return d.order_id === o.id && d.kind !== 'איסוף'; });
-        var oOpen = oDelivs.filter(function (d) { return B5_OPEN_STATUSES.indexOf(d.status) > -1; });
+        var oOpen = oDelivs.filter(function (d) { return B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1; });
         var oPick = oOpen.length ? oOpen[oOpen.length - 1] : (oDelivs.length ? oDelivs[oDelivs.length - 1] : null);
         var oDrv = oPick && oPick.driver ? db.employees.find(function (e) { return e.name === oPick.driver; }) : null;
         // B2: נוספו id / number / payment_status לתצוגת סטטוס תשלום בפורטל (D11)
@@ -3647,7 +3648,7 @@ function handle(action, p, db, user) {
           // B55 (P4): ההזמנה היא מצב ומעקב בלבד. הכסף מוצג רק בטבלת החיובים,
           // כדי שלא יוצג ללקוח אותו סכום פעמיים בשתי הגדרות שונות.
           id: o.id, number: o.order_number || '', start: o.start_date, end: o.end_date, status: o.status, payment_status: o.payment_status || '',
-          delivery: oPick ? { status: oPick.status, eta_text: oPick.eta_text || '', driver_name: oPick.driver || '', driver_phone: (oPick.status === 'בדרך' && oDrv) ? oDrv.phone : '' } : null
+          delivery: oPick ? { status: w24Stat(oPick, DELIVERY_STATUSES, DELIVERY_DFLT), eta_text: oPick.eta_text || '', driver_name: oPick.driver || '', driver_phone: (w24Stat(oPick, DELIVERY_STATUSES, DELIVERY_DFLT) === 'בדרך' && oDrv) ? oDrv.phone : '' } : null
         };
       });
       // NC2: הכביסה של הלקוח בפורטל — שלב נוכחי, זמן משוער, משקל וחיוב
@@ -5289,6 +5290,20 @@ var PAYROLL_STATUSES  = ['טיוטה', 'אושר', 'שולם חלקית', 'שו�
 var TASK_STATUSES     = ['פתוחה', 'בתהליך', 'הושלמה'];
 var PURCHASE_STATUSES = ['טיוטה', 'התקבלה'];
 var TRIP_STATUSES     = ['מתוכננת', 'יצאה', 'הסתיימה', 'בוטלה'];
+/* ⭐⭐ B79 / WASH-23ג — ציר הסטטוס של המשלוחים.
+   הרשימה החמישית שעוברת דרך w24Stat. אין כאן שם עוזר חדש (R8).
+   ⛔ הכרעת אבי (18.08.2026, 2ב): סטטוס משלוח לא מוכר או ריק = 'מתוכנן',
+   כלומר **פתוח** — הנהג רואה אותו, והוא נספר כמשלוח שלא נסגר.
+   הנימוק: משלוח שנעלם בשקט הוא סחורה שלא הגיעה ואיש אינו יודע;
+   הזמנה שנתקעת עם הודעת שגיאה ברורה ניתנת לתיקון.
+   ⚠ המחיר שנמדד מראש: משלוח בסטטוס פגום בלי חתימה/צילום יחסום
+   סימון ההזמנה כ'סופקה' (השער בפונקציית markDelivered).
+   ⚠ 'התקבלה' נכלל ברשימה כסטטוס **מוכר וסגור** ובכוונה: הוא מופיע
+   בקוד הממשק כערך משלוח ותיק, ואילו הושאר מחוץ לרשימה הוא היה
+   נופל ל-dflt ונפתח מחדש. הכללתו משמרת בדיוק את ההתנהגות הקיימת.
+   ⛔ נרמול להשוואה בלבד — הערך בגיליון אינו משתנה. */
+var DELIVERY_STATUSES = ['מתוכנן', 'בדרך', 'בוצע', 'בוטל', 'הוסר ממסלול', 'התקבלה'];
+var DELIVERY_DFLT     = 'מתוכנן';
 function w24Stat(v, list, dflt){ var s = sVal(v && v.status); return sPick(s, list || []) || dflt || s; }
 
 /* ===== B64a: נרמול ערך טקסט מהגיליון לפני השוואה =====
@@ -7852,7 +7867,7 @@ function nobleDeliver(db, p, user) {
   // B19d (L6): אכיפה בצד השרת — גם משלוח מכבסה לא נסגר בלי חתימת לקוח או צילום מסירה.
   if (intake.delivery_id) {
     var dlvChk = db.deliveries.find(function (d) { return d.id === intake.delivery_id; });
-    if (dlvChk && B5_OPEN_STATUSES.indexOf(sVal(dlvChk.status)) > -1 && !String(dlvChk.signature_url || '').trim() && !String(dlvChk.photo_url || '').trim())
+    if (dlvChk && B5_OPEN_STATUSES.indexOf(w24Stat(dlvChk, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1 && !String(dlvChk.signature_url || '').trim() && !String(dlvChk.photo_url || '').trim())
       return { ok: false, error: 'לא ניתן לסמן נמסר — למשלוח אין חתימת לקוח או צילום מסירה' };
   }
   intake.status = 'נמסר';
@@ -7861,7 +7876,7 @@ function nobleDeliver(db, p, user) {
   nobleReleaseAll(db, intake, w, 'שוחרר במסירה ללקוח');
   if (intake.delivery_id) {
     var dlv = db.deliveries.find(function (d) { return d.id === intake.delivery_id; });
-    if (dlv && B5_OPEN_STATUSES.indexOf(sVal(dlv.status)) > -1) { dlv.status = 'בוצע'; if (!dlv.note_number) dlv.note_number = nextNumber(db, 'delivery_note', 3001); writeTable('deliveries', db.deliveries); }
+    if (dlv && B5_OPEN_STATUSES.indexOf(w24Stat(dlv, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1) { dlv.status = 'בוצע'; if (!dlv.note_number) dlv.note_number = nextNumber(db, 'delivery_note', 3001); writeTable('deliveries', db.deliveries); }
   }
   nobleEvent(db, {
     intake_id: intake.id, customer_id: intake.customer_id, cart_id: '',
@@ -9429,7 +9444,7 @@ function b5CanTouch(db, dlv, user) {
 var B5_OPEN_STATUSES = ['מתוכנן', 'בדרך'];
 function b5DriverOpenDeliveries(db, driverName) {
   return db.deliveries.filter(function (d) {
-    return sVal(d.driver) === sVal(driverName) && B5_OPEN_STATUSES.indexOf(sVal(d.status)) > -1;
+    return sVal(d.driver) === sVal(driverName) && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1;
   }).sort(function (a, b) {
     var ra = Number(a.route_order) || 999999, rb = Number(b.route_order) || 999999;
     if (ra !== rb) return ra - rb;
@@ -9456,7 +9471,7 @@ function b5MarkInTransit(db, p, user) {
   var dlv = db.deliveries.find(function (x) { return String(x.id) === String(p.delivery_id); });
   if (!dlv) return { ok: false, error: 'משלוח לא נמצא' };
   if (!b5CanTouch(db, dlv, user)) return { ok: false, error: 'אין הרשאה למשלוח זה' };
-  if (B5_OPEN_STATUSES.indexOf(dlv.status) === -1) return { ok: false, error: 'ניתן לסמן "בדרך" רק משלוח פתוח (מתוכנן/בדרך)' };
+  if (B5_OPEN_STATUSES.indexOf(w24Stat(dlv, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return { ok: false, error: 'ניתן לסמן "בדרך" רק משלוח פתוח (מתוכנן/בדרך)' };
   // B34: יציאה לדרך בלי סריקת העמסה — נרשמת (לא חוסמת). כשההגדרה scan_enforce='כן' זה נכנס למרכז האישורים.
   if (!dlv.scan_status) dlv.scan_status = 'ללא סריקה';
   dlv.status = 'בדרך';
@@ -9477,7 +9492,7 @@ function b5RemoveFromRoute(db, p, user) {
   var dlv = db.deliveries.find(function (x) { return String(x.id) === String(p.delivery_id); });
   if (!dlv) return { ok: false, error: 'משלוח לא נמצא' };
   if (!b5CanTouch(db, dlv, user)) return { ok: false, error: 'אין הרשאה למשלוח זה' };
-  if (B5_OPEN_STATUSES.indexOf(dlv.status) === -1) return { ok: false, error: 'ניתן להסיר רק משלוח פתוח (מתוכנן/בדרך)' };
+  if (B5_OPEN_STATUSES.indexOf(w24Stat(dlv, DELIVERY_STATUSES, DELIVERY_DFLT)) === -1) return { ok: false, error: 'ניתן להסיר רק משלוח פתוח (מתוכנן/בדרך)' };
   var reason = String(p.reason || '').trim();
   if (reason.length < 3) return { ok: false, error: 'יש לפרט את סיבת ההסרה (לפחות 3 תווים)' };
   dlv.status = 'הוסר ממסלול';
@@ -9682,7 +9697,7 @@ function b9ExceptionsDashboard(db) {
 
   // 3) משלוחים תקועים — סטטוס פתוח (מתוכנן/בדרך) אחרי תאריך היעד
   var stuckDeliveries = db.deliveries.filter(function (d) {
-    return B5_OPEN_STATUSES.indexOf(d.status) > -1 && d.date && daysOverdue(d.date) > 0;
+    return B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)) > -1 && d.date && daysOverdue(d.date) > 0;
   }).map(function (d) {
     var o = d.order_id ? db.orders.find(function (x) { return x.id === d.order_id; }) : null;
     var c = o ? db.customers.find(function (x) { return x.id === o.customer_id; }) : null;
@@ -9757,7 +9772,7 @@ function b10ApprovalsInbox(db) {
 
   // 3) הסרות כתובת ממסלול נהג שטרם טופלו (B5) — removal_ack='כן' מסמן שההנהלה טיפלה
   var addressRemovals = db.deliveries.filter(function (d) {
-    return d.status === 'הוסר ממסלול' && d.removal_ack !== 'כן';
+    return w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT) === 'הוסר ממסלול' && d.removal_ack !== 'כן';
   }).map(function (d) {
     var o = d.order_id ? db.orders.find(function (x) { return x.id === d.order_id; }) : null;
     var c = o ? db.customers.find(function (x) { return x.id === o.customer_id; }) : null;
@@ -9823,7 +9838,7 @@ function b10AckRemoval(db, p, user) {
     return { ok: false, error: 'סימון כטופל מותר למנהל/משרד בלבד' };
   var dlv = db.deliveries.find(function (x) { return String(x.id) === String(p.delivery_id); });
   if (!dlv) return { ok: false, error: 'משלוח לא נמצא' };
-  if (dlv.status !== 'הוסר ממסלול') return { ok: false, error: 'המשלוח אינו במצב "הוסר ממסלול"' };
+  if (w24Stat(dlv, DELIVERY_STATUSES, DELIVERY_DFLT) !== 'הוסר ממסלול') return { ok: false, error: 'המשלוח אינו במצב "הוסר ממסלול"' };
   dlv.removal_ack = 'כן';
   writeTable('deliveries', db.deliveries);
   return { ok: true, delivery: dlv, auditNote: 'B10 טופל: הסרת כתובת · משלוח ' + dlv.id + ' · ע"י ' + (user || '') };
