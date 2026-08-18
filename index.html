@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.78-B78 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.79-B79 · 18.08.2026</div>
   </div>
 </div>
 
@@ -1998,8 +1998,8 @@ function rDash(){
   var today = ymdLocal();
   var week = ymdLocal(new Date(Date.now()+6*864e5));
   var openOrd = DB.orders.filter(o=>['מאושרת','סופקה'].includes(w22Stat(o)));
-  var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date===today);
-  var delDue = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today).sort((a,b)=>a.date>b.date?1:-1);
+  var delToday = DB.deliveries.filter(d=>w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='מתוכנן' && d.date===today);
+  var delDue = DB.deliveries.filter(d=>w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='מתוכנן' && d.date<=today).sort((a,b)=>a.date>b.date?1:-1);
   var debt = DB.customers.reduce(function(s,c){ var b=custBalance(c.id); return s+(b>0?b:0); },0);
   var openTasks = DB.tasks.filter(t=>w24Stat(t,TASK_STATUSES)!=='הושלמה');
   var lateTasks = openTasks.filter(t=>t.due_date && t.due_date<today).sort((a,b)=>a.due_date>b.due_date?1:-1);
@@ -2889,7 +2889,7 @@ function openOrder(oid){
   var total = orderTotal(oid), bal = orderBalance(oid);
   var editable = (w22Stat(o)==='טיוטה'||w22Stat(o)==='הצעת מחיר');
   /* B29: משלוח שכבר "בדרך" אצל הנהג — סגירה מהמשרד מותרת למנהל בלבד (אכיפה גם בשרת) */
-  var inTransit = delivs.some(d=>d.kind!=='איסוף' && d.status==='בדרך');
+  var inTransit = delivs.some(d=>d.kind!=='איסוף' && w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בדרך');
   /* ===== B62/T2 — פעולה ראשית אחת גלויה, השאר ב-⋯ =====
      קודם כל פעולות הכרטיס ישבו בשורה אחת שטוחה (14 כפתורים במצבים מסוימים).
      כאן נשמר בדיוק אותו סט פעולות ואותם תנאי הרשאה — רק החלוקה השתנתה:
@@ -3069,6 +3069,20 @@ var PAYROLL_STATUSES  = ['טיוטה', 'אושר', 'שולם חלקית', 'שו�
 var TASK_STATUSES     = ['פתוחה', 'בתהליך', 'הושלמה'];
 var PURCHASE_STATUSES = ['טיוטה', 'התקבלה'];
 var TRIP_STATUSES     = ['מתוכננת', 'יצאה', 'הסתיימה', 'בוטלה'];
+/* ⭐⭐ B79 / WASH-23ג — ציר הסטטוס של המשלוחים.
+   הרשימה החמישית שעוברת דרך w24Stat. אין כאן שם עוזר חדש (R8).
+   ⛔ הכרעת אבי (18.08.2026, 2ב): סטטוס משלוח לא מוכר או ריק = 'מתוכנן',
+   כלומר **פתוח** — הנהג רואה אותו, והוא נספר כמשלוח שלא נסגר.
+   הנימוק: משלוח שנעלם בשקט הוא סחורה שלא הגיעה ואיש אינו יודע;
+   הזמנה שנתקעת עם הודעת שגיאה ברורה ניתנת לתיקון.
+   ⚠ המחיר שנמדד מראש: משלוח בסטטוס פגום בלי חתימה/צילום יחסום
+   סימון ההזמנה כ'סופקה' (השער בפונקציית markDelivered).
+   ⚠ 'התקבלה' נכלל ברשימה כסטטוס **מוכר וסגור** ובכוונה: הוא מופיע
+   בקוד הממשק כערך משלוח ותיק, ואילו הושאר מחוץ לרשימה הוא היה
+   נופל ל-dflt ונפתח מחדש. הכללתו משמרת בדיוק את ההתנהגות הקיימת.
+   ⛔ נרמול להשוואה בלבד — הערך בגיליון אינו משתנה. */
+var DELIVERY_STATUSES = ['מתוכנן', 'בדרך', 'בוצע', 'בוטל', 'הוסר ממסלול', 'התקבלה'];
+var DELIVERY_DFLT     = 'מתוכנן';
 function w24Stat(v, list, dflt){ var s = sVal(v && v.status); return sPick(s, list || []) || dflt || s; }
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
@@ -3724,7 +3738,7 @@ function b41IntakeState(oid){
      וכרטיס "בחר סיבה" **פשוט לא צויר** — לכן הכפתור לידו כן עבד. */
   var expects = b38PlannedForOrder(o).some(pl=>sVal(pl.kind)==='איסוף');
   var picks = (DB.deliveries||[]).filter(d=>d.order_id===oid && sVal(d.kind)==='איסוף');
-  var open = picks.filter(d=>B5_OPEN_STATUSES.indexOf(sVal(d.status))>-1);
+  var open = picks.filter(d=>B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1);
   var anyHandled = picks.some(b41DriverHandled);
   /* B49f: unhandled = נסיעות פתוחות שאיש לא תיעד — בדיוק אלה שההכרעה חלה עליהן.
      אותה הגדרה בדיוק כמו b41IntakeState בשרת, כדי ששני הצדדים לא יתפצלו. */
@@ -3842,7 +3856,7 @@ function b49fOrderLegOpen(o){
   var kind = b49eLegKind(o,'הלוך');
   return ((DB&&DB.deliveries)||[]).filter(function(d){
     return d.order_id===o.id && String(d.kind)===kind &&
-      B5_OPEN_STATUSES.indexOf(String(d.status))>-1 && !b41DriverHandled(d);
+      B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && !b41DriverHandled(d);
   });
 }
 /* תוספת אחידה לטוסט אחרי קליטה — אותו נוסח בשלושת המסלולים */
@@ -3873,19 +3887,19 @@ function dispatchLinesHtml(oid){
 function dispatchTodayHtml(){
   var t = todayYMD();
   var byDrv = function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')) || String(a.driver||'').localeCompare(String(b.driver||'')); };
-  var load = DB.deliveries.filter(d=>!isPickup(d) && B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)<=t && dYmd(d.date)!=='').sort(byDrv);
+  var load = DB.deliveries.filter(d=>!isPickup(d) && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && dYmd(d.date)<=t && dYmd(d.date)!=='').sort(byDrv);
   var backAll = DB.deliveries.filter(d=>isPickup(d) && dYmd(d.date)<=t && dYmd(d.date)!=='' &&
-      (B5_OPEN_STATUSES.includes(d.status) || (d.status==='בוצע' && dYmd(d.date)===t))).sort(byDrv);
+      (B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 || (w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בוצע' && dYmd(d.date)===t))).sort(byDrv);
   /* B39 (ליקוי 2): החזרה שכבר נקלטה יורדת מהרשימה הפעילה ועוברת לבלוק מקופל.
      "נקלטה" = רשומת האיסוף נסגרה (בוצע), או שההזמנה עצמה כבר בסטטוס
      הוחזרה/הושלמה — התנאי השני מכסה רשומות ישנות שנשארו פתוחות מלפני התיקון. */
   var back = backAll.filter(d=>!b41PickupReceived(d));       /* B41: הבדיקה עברה לפונקציה משותפת */
   var backDone = backAll.filter(b41PickupReceived);
-  var collectedOf = function(d){ return d.status==='בוצע' || !!d.photo_url; }; /* B30: נאסף = צולם ע"י הנהג או נקלט */
+  var collectedOf = function(d){ return w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בוצע' || !!d.photo_url; }; /* B30: נאסף = צולם ע"י הנהג או נקלט */
   var card = function(d, mode){
     var o = DB.orders.find(x=>x.id===d.order_id)||{};
     var late = dYmd(d.date)!=='' && dYmd(d.date)<t;
-    var doneP = d.status==='בוצע';
+    var doneP = w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בוצע';
     var colP = collectedOf(d);
     var backChip = doneP? '<span class="chip" style="background:var(--ok,#3a9d5c);color:#fff">✔ נקלט בשקילה</span>'
       : colP? '<span class="chip" style="background:#8a5a1f;color:#fff">🚚 נאסף — בדרך חזרה</span>'
@@ -3984,7 +3998,7 @@ function b49eProofsOf(o,leg){
 function b49eHasProof(o,leg){ return b49eProofsOf(o,leg).length>0; }
 function b38ReturnsNeedingAttention(){
   var t = todayYMD();
-  var OPEN = ['מתוכנן','בדרך'];
+  var OPEN = B5_OPEN_STATUSES;   /* ⭐ B79: רשימה כפולה אוחדה */
   var out = [];
   (DB.orders||[]).forEach(function(o){
     if(['מאושרת','סופקה'].indexOf(w22Stat(o))===-1) return;
@@ -3996,7 +4010,7 @@ function b38ReturnsNeedingAttention(){
         out.push({order:o, date:pl.date, kind:pl.kind, reason:'אין רשומת '+pl.kind+' להזמנה'});
         return;
       }
-      var open = recs.filter(function(d){ return OPEN.indexOf(String(d.status))>-1; });
+      var open = recs.filter(function(d){ return OPEN.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1; });
       if(!open.length) return;                            // כבר בוצע — תקין
       if(open.some(function(d){ return dYmd(d.date)!=='' && dYmd(d.date) <= t; })) return;  // כבר מופיע ברשימה
       out.push({order:o, date:pl.date, kind:pl.kind,
@@ -4011,7 +4025,7 @@ function b38ReturnsNeedingAttention(){
 function b38UnassignedToday(){
   var t = todayYMD();
   return (DB.deliveries||[]).filter(function(d){
-    return B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)!=='' && dYmd(d.date)<=t && !String(d.driver||'').trim();
+    return B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && dYmd(d.date)!=='' && dYmd(d.date)<=t && !String(d.driver||'').trim();
   }).sort(function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')); });
 }
 function b38UnassignedHtml(){
@@ -4034,7 +4048,7 @@ function b38UnassignedHtml(){
    כבר סימן כנאסף נשאר ב'בדרך'). התוצאה: הנסיעה ממשיכה להופיע כאן וגם
    במסלול של הנהג. הכפתור סוגר אותן ומנפיק מספר תעודה — בלי לגעת בהזמנה. */
 function b41StalePickups(){
-  return (DB.deliveries||[]).filter(d=>isPickup(d) && B5_OPEN_STATUSES.includes(d.status) && b41PickupReceived(d))
+  return (DB.deliveries||[]).filter(d=>isPickup(d) && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && b41PickupReceived(d))
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
 }
 function b41StaleHtml(){
@@ -4118,13 +4132,13 @@ var DELIV_TAB = 'today';
 function rDeliveries(){
   if(ROLE==='נהג') return rDriverRoute(); // B5: Driver-Lite — הנהג רואה רק את המסלול שלו
   /* B19d (L5): הרשימה הפתוחה כוללת גם משלוחים "בדרך" — לא רק "מתוכנן" */
-  var OPEN_ST = ['מתוכנן','בדרך'];
-  var openSup = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && !isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
+  var OPEN_ST = B5_OPEN_STATUSES;   /* ⭐ B79: רשימה כפולה אוחדה */
+  var openSup = DB.deliveries.filter(d=>OPEN_ST.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && !isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
   /* B41: איסוף שההזמנה שלו כבר הוחזרה אינו "פתוח" — הוא יורד לבלוק הריפוי מטה, אחרת
      הוא נשאר בתצוגה לנצח (וגם במסלול של הנהג) גם אחרי שההחזרה כבר נקלטה. */
-  var openPickAll = DB.deliveries.filter(d=>OPEN_ST.includes(d.status) && isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
+  var openPickAll = DB.deliveries.filter(d=>OPEN_ST.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && isPickup(d)).sort((a,b)=>a.date>b.date?1:-1);
   var openPick = openPickAll.filter(d=>!b41PickupReceived(d));
-  var done = DB.deliveries.filter(d=>!OPEN_ST.includes(d.status)).slice(-15).reverse();
+  var done = DB.deliveries.filter(d=>OPEN_ST.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))===-1).slice(-15).reverse();
   var tb = function(k,l){ return '<button class="btn '+(DELIV_TAB===k?'':'ghost')+' grow" onclick="DELIV_TAB=\''+k+'\';rDeliveries()">'+l+'</button>'; };
   var body;
   if(DELIV_TAB==='today') body = dispatchTodayHtml();
@@ -4187,7 +4201,7 @@ function b34TripAssignForm(tid){
   var tr = (DB.deliveryTrips||[]).find(x=>x.id===tid); if(!tr) return;
   var drv = (DB.employees||[]).find(e=>e.id===tr.driver_id)||{};
   /* משלוחים פתוחים לתאריך הנסיעה (או בלי נסיעה, או כבר בנסיעה זו) */
-  var cands = (DB.deliveries||[]).filter(d=>['מתוכנן','בדרך'].includes(d.status) && String(d.date||'')<=String(tr.date) &&
+  var cands = (DB.deliveries||[]).filter(d=>B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && String(d.date||'')<=String(tr.date) &&
     (!d.trip_id || String(d.trip_id)===String(tid)));
   var cur = cands.filter(d=>String(d.trip_id)===String(tid)).map(d=>String(d.id));
   openModal('<h2>שיבוץ משלוחים — נסיעה '+esc(tr.seq)+' · '+esc(drv.name||'')+'</h2>'+
@@ -4222,12 +4236,12 @@ var B5_OPEN_STATUSES = ['מתוכנן','בדרך'];
    סינון תצוגה בלבד — אף סטטוס בגיליון לא משתנה. */
 function b5MyRoute(){
   var t = todayYMD();
-  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && !b41PickupReceived(d) && dYmd(d.date)!=='' && dYmd(d.date)<=t)
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && !b41PickupReceived(d) && dYmd(d.date)!=='' && dYmd(d.date)<=t)
     .sort((a,b)=>{ var ra=Number(a.route_order)||999999, rb=Number(b.route_order)||999999; return ra!==rb?ra-rb:(a.id<b.id?-1:1); });
 }
 function b5MyFuture(){
   var t = todayYMD();
-  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.includes(d.status) && !b41PickupReceived(d) && dYmd(d.date)>t)
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))>-1 && !b41PickupReceived(d) && dYmd(d.date)>t)
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
 }
 var DRV_TAB = 'today';
@@ -4235,14 +4249,14 @@ var DRV_TAB = 'today';
    יראה מה נסגר ומה עוד נותר. סינון תצוגה בלבד; אין שינוי בנתונים או בסטטוסים. */
 function b5DoneToday(){
   var t = todayYMD();
-  return DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status) && dYmd(d.date)===t)
+  return DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))===-1 && dYmd(d.date)===t)
     .sort((a,b)=>(String(a.id)<String(b.id)?-1:1));
 }
 function rDriverRoute(){
   var mine = b5MyRoute();
   var doneT = b5DoneToday();
   var future = b5MyFuture();
-  var history = DB.deliveries.filter(d=>d.driver===USER && !B5_OPEN_STATUSES.includes(d.status))
+  var history = DB.deliveries.filter(d=>d.driver===USER && B5_OPEN_STATUSES.indexOf(w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT))===-1)
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,40);
   var tb = function(k,l,n){ return '<button class="btn '+(DRV_TAB===k?'':'ghost')+' grow" onclick="DRV_TAB=\''+k+'\';rDriverRoute()">'+l+(n?' ('+n+')':'')+'</button>'; };
   var body, head;
@@ -4288,13 +4302,14 @@ function driverStopCard(d,idx,total,mode){
       '<div class="sub">'+esc(d.date||'')+(addr?'<br>'+esc(addr):'')+(d.note?'<br>'+esc(d.note):'')+'</div></div></div>';
 
   var isNext = idx===0;
-  var band = d.status==='בדרך'? '' : 'calm';
-  var bandTxt = (d.status==='בדרך'?'בדרך':'מתוכנן')+(isNext?' · העצירה הבאה':'');
+  var dSt = w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT);   /* ⭐⭐ B79/WASH-23ג */
+  var band = dSt==='בדרך'? '' : 'calm';
+  var bandTxt = (dSt==='בדרך'?'בדרך':'מתוכנן')+(isNext?' · העצירה הבאה':'');
   /* פעולה ראשית אחת לפי מצב העצירה — זו הפעולה של הרגע הזה */
   var pri;
-  if(d.status!=='בדרך') pri = '<button class="btn pri" onclick="driverMarkTransit(\''+d.id+'\')">יצאתי לדרך</button>';
+  if(dSt!=='בדרך') pri = '<button class="btn pri" onclick="driverMarkTransit(\''+d.id+'\')">יצאתי לדרך</button>';
   else if(!pick) pri = '<button class="btn pri" style="background:var(--ok)" onclick="driverMarkDelivered(\''+d.id+'\')">סימון כנמסר</button>';
-  else if(d.photo_url||d.status==='בוצע') pri = '<span class="chip" style="background:var(--ok);color:#fff;flex:1;text-align:center;padding:10px">✔ נאסף — נקלט בשקילה במשרד</span>';
+  else if(d.photo_url||dSt==='בוצע') pri = '<span class="chip" style="background:var(--ok);color:#fff;flex:1;text-align:center;padding:10px">✔ נאסף — נקלט בשקילה במשרד</span>';
   else pri = '<button class="btn pri" style="background:var(--amber);color:#fff" onclick="driverCollectPickup(\''+d.id+'\')">איסוף — צילום חובה</button>';
 
   return '<div class="card banded"'+(isNext?' style="border-color:#C3CCD9"':'')+'>'+
@@ -4309,7 +4324,7 @@ function driverStopCard(d,idx,total,mode){
         (c&&c.phone?'<a class="btn ghost sm ico" href="tel:'+encodeURIComponent(c.phone)+'" title="חייג ללקוח" aria-label="חייג ללקוח">✆</a>':'')+
         moreMenu([
           gmapUrl?'<a class="btn" href="'+gmapUrl+'" target="_blank" rel="noopener">ניווט Google Maps</a>':'',
-          d.status==='בדרך'?'<button class="btn" onclick="closeMore();driverMarkTransit(\''+d.id+'\')">עדכן סטטוס ללקוח</button>':'',
+          dSt==='בדרך'?'<button class="btn" onclick="closeMore();driverMarkTransit(\''+d.id+'\')">עדכן סטטוס ללקוח</button>':'',
           '<button class="btn" onclick="closeMore();openDelivery(\''+d.id+'\')">פרטי המשלוח</button>',
           '<button class="btn" onclick="closeMore();driverLogCallForm(\''+d.id+'\')">תיעוד שיחה</button>',
           d.photo_url?'<a class="btn" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום מסירה</a>':'<button class="btn" onclick="closeMore();deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>',
@@ -4639,8 +4654,8 @@ function delivCard(d){
     '<div class="muted">'+esc(d.date)+'</div></div>'+
     (drv?contactBtns(drv.phone,''):'')+
     '<span class="chip '+esc(d.status)+'">'+esc(d.status)+'</span>'+
-    (d.status==='מתוכנן'?'<button class="btn ghost sm" onclick="driverForm(\''+d.id+'\')">'+(d.driver?'שינוי שיבוץ רכב/נהג':'שבץ נהג')+'</button>':'')+
-    (d.status==='בוצע'&&d.note_number?'<button class="btn ghost sm" onclick="printDeliveryNote(\''+d.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> תעודה '+d.note_number+'</button>':'')+
+    (w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='מתוכנן'?'<button class="btn ghost sm" onclick="driverForm(\''+d.id+'\')">'+(d.driver?'שינוי שיבוץ רכב/נהג':'שבץ נהג')+'</button>':'')+
+    (w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT)==='בוצע'&&d.note_number?'<button class="btn ghost sm" onclick="printDeliveryNote(\''+d.id+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> תעודה '+d.note_number+'</button>':'')+
     (d.photo_url?'<a class="btn ghost sm" href="'+esc(d.photo_url)+'" target="_blank">צפה בצילום</a>':'<button class="btn ghost sm" onclick="deliveryPhoto(\''+d.id+'\')">צילום מסירה</button>')+
     '</div></div>';
 }
@@ -4654,7 +4669,8 @@ function openDelivery(did){
   /* B32: היררכיה — הסטטוס הוא הדבר הראשי ויושב ברצועה עליונה; פרטי המשנה
      בטקסט אפור בלי צ'יפים כהים; פעולה ראשית אחת גלויה והשאר בתפריט "עוד". */
   var cRec = o.customer_id? DB.customers.find(x=>x.id===o.customer_id) : null;
-  var band = (d.status==='בוצע'||d.status==='התקבלה')? 'ok' : (d.status==='בדרך'? '' : 'calm');
+  var dSt = w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT);   /* ⭐⭐ B79/WASH-23ג */
+  var band = (dSt==='בוצע'||dSt==='התקבלה')? 'ok' : (dSt==='בדרך'? '' : 'calm');
   var isMgr = (ROLE==='מנהל'||ROLE==='משרד');
   /* B39 (ליקוי 1): קליטת החזרה ידנית — בלי לעבור למסך ההזמנה.
      עד כה הכפתור היחיד היה "לקליטת החזרה בשקילה", וכדי לקלוט בלי שקילה
@@ -4663,23 +4679,23 @@ function openDelivery(did){
      לא "קליטת החזרה" (שהיא מסלול ההשכרה ואינה חלה כאן). */
   var isWash49d = o.id && w17IsWash(o) && isReturn && ['מאושרת','סופקה'].indexOf(w22Stat(o))>-1;   /* ⭐ B75/WASH-21 */
   var wash49dIk = isWash49d? b49dIntakeOfOrder(o.id) : null;
-  var canRecv = isMgr && isReturn && !isWash49d && d.status!=='בוצע' && o.id && w22Stat(o)==='סופקה';
+  var canRecv = isMgr && isReturn && !isWash49d && dSt!=='בוצע' && o.id && w22Stat(o)==='סופקה';
   var recvBtn = canRecv? '<button class="btn pri" onclick="closeModal();returnForm(\''+o.id+'\')">קבל החזרה (ללא שקילה)</button>' : '';
   var pri = '';
   if(isWash49d && wash49dIk) pri = '<span class="chip" style="background:var(--ok);color:#fff;padding:9px 12px">✔ נקלטה במכבסה — '+esc(wash49dIk.id)+' · '+esc(wash49dIk.status)+'</span>';
   else if(isWash49d && b49dCanIntake()) pri = '<button class="btn pri" onclick="b49dGoIntake(\''+o.id+'\')">פתח קליטה במכבסה</button>';
   else if(!isMgr) pri = '';
   else if(canRecv) pri = recvBtn + ' <button class="btn ghost" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>';
-  else if(d.status==='מתוכנן') pri = '<button class="btn pri" onclick="driverForm(\''+d.id+'\')">שבץ נהג ורכב</button>';
+  else if(dSt==='מתוכנן') pri = '<button class="btn pri" onclick="driverForm(\''+d.id+'\')">שבץ נהג ורכב</button>';
   else if(d.note_number) pri = '<button class="btn pri" onclick="printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>';
-  else if(isReturn && d.status!=='בוצע') pri = '<button class="btn pri" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>';
+  else if(isReturn && dSt!=='בוצע') pri = '<button class="btn pri" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>';
   /* B32: פעולות ניהוליות מוסתרות מנהג — נשמרת הפרדת התפקידים של B17 */
   var mgr = isMgr;
   var more = moreMenu([
-    (mgr && d.status==='מתוכנן' && !isReturn && d.order_id)?'<button class="btn" onclick="closeMore();splitDeliveryForm(\''+d.id+'\')">פצל משלוח בין נהגים</button>':'',
-    (mgr && d.status!=='מתוכנן')?'<button class="btn" onclick="closeMore();driverForm(\''+d.id+'\')">שנה נהג ורכב</button>':'',
-    (mgr && d.note_number && (d.status==='מתוכנן'||canRecv))?'<button class="btn" onclick="closeMore();printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>':'',
-    (mgr && isReturn && !isWash49d && d.status!=='בוצע' && d.note_number)?'<button class="btn" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>':'',
+    (mgr && dSt==='מתוכנן' && !isReturn && d.order_id)?'<button class="btn" onclick="closeMore();splitDeliveryForm(\''+d.id+'\')">פצל משלוח בין נהגים</button>':'',
+    (mgr && dSt!=='מתוכנן')?'<button class="btn" onclick="closeMore();driverForm(\''+d.id+'\')">שנה נהג ורכב</button>':'',
+    (mgr && d.note_number && (dSt==='מתוכנן'||canRecv))?'<button class="btn" onclick="closeMore();printDeliveryNote(\''+d.id+'\')">הדפס תעודה '+esc(d.note_number)+'</button>':'',
+    (mgr && isReturn && !isWash49d && dSt!=='בוצע' && d.note_number)?'<button class="btn" onclick="closeModal();go(\'returns\')">לקליטת החזרה בשקילה</button>':'',
     (isWash49d && !wash49dIk && b49dCanIntake())?'<button class="btn" onclick="closeMore();b49dGoIntake(\''+o.id+'\')">פתח קליטה במכבסה</button>':'',
     (mgr && o.id)?'<button class="btn" onclick="closeMore();closeModal();openOrder(\''+o.id+'\')">פתח את ההזמנה</button>':'',
     (mgr && o.customer_id)?'<button class="btn" onclick="closeMore();closeModal();openCust(\''+esc(o.customer_id)+'\')">פתח כרטיס לקוח</button>':'',
@@ -4699,7 +4715,7 @@ function openDelivery(did){
       /* B49f: אישור הנהלה שהנסיעה בוצעה — הצהרה מתועדת, לא ראיה של הנהג */
       (String(d.trip_confirmed_by||'').trim()?'<br><span style="color:var(--amber);font-weight:600">✓ ההנהלה אישרה שהנסיעה בוצעה בפועל</span> · '+esc(d.trip_confirmed_by)+' <span class="muted">(הנהג לא תיעד בשטח)</span>':'')+
       /* B41: איסוף פתוח שהנהג לא נגע בו — נאמר מראש, לפני שנכנסים לקליטה */
-      ((isReturn && B5_OPEN_STATUSES.includes(d.status) && !d.manual_intake_reason && !b41DriverHandled(d))?
+      ((isReturn && B5_OPEN_STATUSES.indexOf(dSt)>-1 && !d.manual_intake_reason && !b41DriverHandled(d))?
         '<br><span style="color:var(--danger);font-weight:600">⚠ האיסוף לא תועד ע"י הנהג המשובץ</span> — קליטה דרך ההנהלה תדרוש פירוט סיבה':'')+
     '</div>'+
     (lines.length?'<h3 style="margin-top:16px">פריטים בהזמנה</h3><table><tr><th>פריט</th><th>כמות</th></tr>'+
@@ -4708,7 +4724,7 @@ function openDelivery(did){
     /* B39: אם זו החזרה שלא ניתן לקלוט — מסבירים למה, במקום להשאיר כפתור חסר */
     (isWash49d? '<div class="muted" style="margin-top:10px;font-size:12.5px">זו נסיעת איסוף של <b>הזמנת כביסה</b> — הכביסה נכנסת למכבסה דרך פתיחת קליטה ברצפת הייצור, לא דרך "קליטת החזרה" של ההשכרה.'+
       (wash49dIk?' הקליטה כבר נפתחה: '+esc(wash49dIk.id)+'.':' פתיחת הקליטה גם תסגור את נסיעת האיסוף הזו.')+'</div>':'')+
-    ((isMgr && isReturn && !isWash49d && d.status!=='בוצע' && !canRecv)?
+    ((isMgr && isReturn && !isWash49d && dSt!=='בוצע' && !canRecv)?
       '<div class="muted" style="margin-top:10px;font-size:12.5px">'+
       (o.id? (w22Stat(o)==='הוחזרה'||w22Stat(o)==='הושלמה'? 'ההחזרה כבר נקלטה — ההזמנה בסטטוס '+esc(o.status)+'.'
             : 'לא ניתן לקלוט החזרה: ההזמנה בסטטוס '+esc(o.status||'—')+' (נדרש "סופקה").')
@@ -7717,7 +7733,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.78-B78';
+var B61_CANARY = 'v4.79-B79';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -11913,9 +11929,10 @@ function renderPortal(){
 /* B5 (D14): שורת הזמנה בפורטל — כולל מעקב משלוח (סטטוס + ETA טקסטואלי, בלי GPS חי) */
 function portalOrderRow(o){
   var dHtml = '';
-  if(o.delivery && (o.delivery.status==='מתוכנן' || o.delivery.status==='בדרך')){
+  var pDlvSt = w24Stat(o.delivery, DELIVERY_STATUSES, DELIVERY_DFLT);   /* ⭐ B79: הפורטל */
+    if(o.delivery && (pDlvSt==='מתוכנן' || pDlvSt==='בדרך')){
     dHtml = '<div class="muted" style="font-size:12px;margin-top:3px">משלוח: <b>'+esc(o.delivery.eta_text || o.delivery.status)+'</b>'+
-      (o.delivery.status==='בדרך' && o.delivery.driver_phone? ' · <a href="tel:'+encodeURIComponent(o.delivery.driver_phone)+'">צור קשר עם הנהג</a>':'')+
+      (pDlvSt==='בדרך' && o.delivery.driver_phone? ' · <a href="tel:'+encodeURIComponent(o.delivery.driver_phone)+'">צור קשר עם הנהג</a>':'')+
       '</div>';
   }
   return '<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);font-size:13px"><div class="grow">'+esc(o.start)+' — '+esc(o.end)+(o.payment_status?'<br><span class="muted" style="font-size:11px">תשלום: '+esc(o.payment_status)+'</span>':'')+dHtml+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>';
