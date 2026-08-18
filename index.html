@@ -542,7 +542,7 @@ body.driver-mode .stop-done{padding:9px 13px!important}
     <div id="b58Load" style="display:none;margin-top:12px;font-size:13.5px;color:var(--muted);font-weight:400">
       <span class="b58-spin" aria-hidden="true"></span><span id="b58LoadTxt">טוען נתונים…</span>
     </div>
-    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.77-B77 · 18.08.2026</div>
+    <div class="muted" style="margin-top:14px;font-size:11.5px;font-weight:400">גרסה v4.78-B78 · 18.08.2026</div>
   </div>
 </div>
 
@@ -2001,7 +2001,7 @@ function rDash(){
   var delToday = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date===today);
   var delDue = DB.deliveries.filter(d=>d.status==='מתוכנן' && d.date<=today).sort((a,b)=>a.date>b.date?1:-1);
   var debt = DB.customers.reduce(function(s,c){ var b=custBalance(c.id); return s+(b>0?b:0); },0);
-  var openTasks = DB.tasks.filter(t=>t.status!=='הושלמה');
+  var openTasks = DB.tasks.filter(t=>w24Stat(t,TASK_STATUSES)!=='הושלמה');
   var lateTasks = openTasks.filter(t=>t.due_date && t.due_date<today).sort((a,b)=>a.due_date>b.due_date?1:-1);
   var inWash = DB.laundryTasks.filter(t=>t.stage!=='מוכן');
   var lateWash = inWash.filter(t=>t.target_date && t.target_date<today);
@@ -3041,6 +3041,35 @@ function w22Reserving(o){ return !!o && (RESERVING_STATUSES.indexOf(w22Stat(o)) 
 var INVOICE_STATUSES = ['פתוחה', 'שולמה', 'בוטלה'];
 function w23InvStat(v){ var s = sVal(v && v.status); return sPick(s, INVOICE_STATUSES) || s; }
 function w23InvActive(v){ return !!v && w23InvStat(v) !== 'בוטלה'; }
+
+/* ===== B78 / WASH-23ב: ציר הסטטוס בארבע הטבלאות שנותרו =====
+   B76 סגר את orders.status ו-B77 את invoices.status. אותה מחלקת כשל
+   בדיוק נשארה פתוחה ב-payroll · tasks · purchases · delivery_trips:
+   ערך שנקרא מהגיליון עם רווח נגרר, רווח קשיח (\u00A0) או תו כיווניות
+   בלתי נראה שובר השוואת מחרוזת מדויקת, **והכשל שקט**.
+   ⛔ הכבד מהארבעה: payroll.status הוא שער לפני כסף שיוצא בפועל.
+
+   ⭐ הכרעת אבי 18.08.2026 (1ב): **עוזר גנרי אחד**, לא ארבעה שמות.
+   ארבע הטבלאות קטנות ואף אחת אינה בספר החיובים — בניגוד ל-orders
+   ול-invoices, שכל אחת מהן נושאת הכרעה עסקית משלה ולכן קיבלה שם משלה.
+   ⛔ w24Stat היא נקודת האמת היחידה לסטטוס ארבע הטבלאות האלה, וחייבת
+   להישאר זהה תו-בתו ב-index.html ובקוד השרת (בדיקת גוף משווה).
+
+   ⭐ הכרעת אבי 18.08.2026 (2א): **סטטוס שכר לא מוכר או ריק = 'טיוטה'** —
+   כלומר חסום לתשלום, חסום לתלוש, ואינו נספר כחוב לעובד. בכסף שיוצא
+   הצד החוסם. זה ההפך מהכרעת B77 בחשבוניות ובכוונה: שם הצד הזהיר היה
+   'פעילה/מחייבת', כאן הצד הזהיר הוא 'חסום'.
+   ⛔ ההכרעה נאכפת דרך הארגומנט השלישי (dflt) ולא דרך פונקציה שנייה.
+   ⛔ לשלוש הטבלאות האחרות אין dflt — הן מחזירות את הערך המנורמל עצמו,
+   בדיוק כמו w23InvStat, ואסור למפות אותן לסטטוס מוכר.
+
+   ⛔ נרמול להשוואה בלבד — הערך הנשמר בגיליון אינו משתנה, והתצוגה
+   למשתמש ממשיכה להראות את הערך האמיתי כפי שהוא. */
+var PAYROLL_STATUSES  = ['טיוטה', 'אושר', 'שולם חלקית', 'שולם במלואו'];
+var TASK_STATUSES     = ['פתוחה', 'בתהליך', 'הושלמה'];
+var PURCHASE_STATUSES = ['טיוטה', 'התקבלה'];
+var TRIP_STATUSES     = ['מתוכננת', 'יצאה', 'הסתיימה', 'בוטלה'];
+function w24Stat(v, list, dflt){ var s = sVal(v && v.status); return sPick(s, list || []) || dflt || s; }
 /* התיאור החופשי — נורמול ונחתך ל-20 תווים. רשות: ריק הוא ערך תקין. */
 var W17_DESC_MAX = 20;
 function w17Desc(v){ return sVal(v).slice(0, W17_DESC_MAX); }
@@ -4117,7 +4146,7 @@ function rDeliveries(){
 /* ===== B34: נסיעות חלוקה — תכנון בהנהלה ===== */
 function b34TripsTodayHtml(){
   var t = todayYMD();
-  var trips = (DB.deliveryTrips||[]).filter(x=>String(x.date)>=t && x.status!=='בוטלה')
+  var trips = (DB.deliveryTrips||[]).filter(x=>String(x.date)>=t && w24Stat(x,TRIP_STATUSES)!=='בוטלה')
     .sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.seq||0)-Number(b.seq||0)).slice(0,12);
   if(!trips.length) return '';
   return '<div class="card" style="margin:8px 0"><b>נסיעות מתוכננות</b><table style="margin-top:6px"><tr><th>תאריך</th><th>נסיעה</th><th>נהג</th><th>יציאה</th><th>משלוחים</th><th>סטטוס</th><th></th></tr>'+
@@ -4125,11 +4154,11 @@ function b34TripsTodayHtml(){
       var drv = (DB.employees||[]).find(e=>e.id===tr.driver_id)||{};
       var cnt = (DB.deliveries||[]).filter(d=>String(d.trip_id)===String(tr.id)).length;
       return '<tr><td>'+esc(tr.date)+'</td><td>'+esc(tr.seq)+'</td><td>'+esc(drv.name||'')+'</td><td>'+esc(tr.planned_time||'—')+'</td><td>'+cnt+'</td>'+
-        '<td><span class="chip" style="background:'+(tr.status==='יצאה'?'var(--navy)':tr.status==='הסתיימה'?'var(--ok)':'var(--navy2)')+';color:#fff">'+esc(tr.status)+'</span></td>'+
+        '<td><span class="chip" style="background:'+(w24Stat(tr,TRIP_STATUSES)==='יצאה'?'var(--navy)':w24Stat(tr,TRIP_STATUSES)==='הסתיימה'?'var(--ok)':'var(--navy2)')+';color:#fff">'+esc(tr.status)+'</span></td>'+
         '<td class="row" style="gap:4px"><button class="btn ghost sm" onclick="b34TripAssignForm(\''+tr.id+'\')">שיבוץ</button>'+
-        (tr.status==='מתוכננת'?'<button class="btn ghost sm" onclick="b34DoTripStatus(\''+tr.id+'\',\'יצאה\')">יצאה</button>':'')+
-        (tr.status==='יצאה'?'<button class="btn ghost sm" onclick="b34DoTripStatus(\''+tr.id+'\',\'הסתיימה\')">סיום</button>':'')+
-        (tr.status==='מתוכננת'?'<button class="btn ghost sm" style="color:var(--danger)" onclick="b34DoTripStatus(\''+tr.id+'\',\'בוטלה\')">בטל</button>':'')+
+        (w24Stat(tr,TRIP_STATUSES)==='מתוכננת'?'<button class="btn ghost sm" onclick="b34DoTripStatus(\''+tr.id+'\',\'יצאה\')">יצאה</button>':'')+
+        (w24Stat(tr,TRIP_STATUSES)==='יצאה'?'<button class="btn ghost sm" onclick="b34DoTripStatus(\''+tr.id+'\',\'הסתיימה\')">סיום</button>':'')+
+        (w24Stat(tr,TRIP_STATUSES)==='מתוכננת'?'<button class="btn ghost sm" style="color:var(--danger)" onclick="b34DoTripStatus(\''+tr.id+'\',\'בוטלה\')">בטל</button>':'')+
         '</td></tr>';
     }).join('')+'</table></div>';
 }
@@ -4402,11 +4431,11 @@ function b34TripHeader(tr){
   var v = tr.vehicle_id? (DB.vehicles||[]).find(x=>x.id===tr.vehicle_id) : null;
   return '<div class="muted" style="margin:14px 0 6px;font-size:13.5px;font-weight:700">🚚 נסיעה '+esc(tr.seq||'')+
     (tr.planned_time?' · יציאה '+esc(tr.planned_time):'')+(v?' · '+esc(v.plate||''):'')+
-    (tr.status && tr.status!=='מתוכננת'?' · '+esc(tr.status):'')+'</div>';
+    (tr.status && w24Stat(tr,TRIP_STATUSES)!=='מתוכננת'?' · '+esc(tr.status):'')+'</div>';
 }
 function b34GroupByTrips(mine){
   var t = todayYMD();
-  var myTrips = (DB.deliveryTrips||[]).filter(x=>String(x.date)===t && x.status!=='בוטלה')
+  var myTrips = (DB.deliveryTrips||[]).filter(x=>String(x.date)===t && w24Stat(x,TRIP_STATUSES)!=='בוטלה')
     .sort((a,b)=>Number(a.seq||0)-Number(b.seq||0));
   if(!myTrips.length || !mine.some(d=>d.trip_id)) return null;
   var html = '';
@@ -6250,7 +6279,7 @@ function finLaundryHtml(){
     if(String(i.invoice_id||'').trim()) return false;
     if(!(Number(i.total_charge)>0)) return false;
     var oid = String(i.order_id||'').trim();
-    if(oid){ var o=(DB.orders||[]).find(x=>x.id===oid); if(o && sVal(o.status)!=='בוטלה') return false; }
+    if(oid){ var o=(DB.orders||[]).find(x=>x.id===oid); if(o && w22Stat(o)!=='בוטלה') return false; }   /* ⛔ B78/R6: w22Stat, לא sVal */
     return true;
   });
   var byCust = {};
@@ -6444,7 +6473,7 @@ function custTabOrders(cid){
   return '<div class="section-title"><h3>הזמנות ('+orders.length+')</h3></div>'+
     (orders.length? orders.map(function(o){ return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openOrder(\''+o.id+'\')"><div class="grow">'+(o.order_number?'#'+esc(o.order_number)+' · ':'')+esc(o.start_date)+' ← '+esc(o.end_date)+' · '+esc(o.type)+'</div><span class="chip '+esc(o.status)+'">'+esc(o.status)+'</span></div>'; }).join('') : '<div class="muted">אין הזמנות עדיין</div>')+
     '<div class="section-title" style="margin-top:10px"><h3>משימות מקושרות ('+lTasks.length+')</h3></div>'+
-    (lTasks.length? lTasks.map(function(L){ var t=(DB.tasks||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+L.otherId+'\')"><div class="grow">'+esc(t.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status||'')+'</span></div>'; }).join('') : '<div class="muted">אין משימות מקושרות</div>');
+    (lTasks.length? lTasks.map(function(L){ var t=(DB.tasks||[]).find(x=>x.id===L.otherId)||{}; return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+L.otherId+'\')"><div class="grow">'+esc(t.title||L.otherId)+(L.note?' <span class="muted">· '+esc(L.note)+'</span>':'')+'</div><span class="chip '+(w24Stat(t,TASK_STATUSES)==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status||'')+'</span></div>'; }).join('') : '<div class="muted">אין משימות מקושרות</div>');
 }
 /* טאב: חובות ותשלומים */
 function custTabFinance(cid){
@@ -7057,8 +7086,8 @@ function rPurchasing(){
       var total = lines.reduce((s,l)=>s+Number(l.qty)*Number(l.unit_cost),0);
       return '<div class="card"><div class="row"><div class="grow"><b>'+esc(supp(p.supplier_id))+'</b> · '+esc(p.date)+
         '<div class="muted">'+lines.map(l=>esc(item(l.item_id))+'×'+l.qty).join(', ')+' · '+ils(total)+'</div></div>'+
-        '<span class="chip '+esc(p.status)+'">'+esc(p.status)+'</span>'+
-        (p.status==='טיוטה'?'<button class="btn ghost sm" onclick="purLineForm(\''+p.id+'\')">+ שורה</button><button class="btn sm" onclick="doReceivePur(\''+p.id+'\')">קבל למלאי</button>':'')+tagBtn('purchase',p.id)+
+        '<span class="chip '+esc(w24Stat(p,PURCHASE_STATUSES))+'">'+esc(p.status)+'</span>'+
+        (w24Stat(p,PURCHASE_STATUSES)==='טיוטה'?'<button class="btn ghost sm" onclick="purLineForm(\''+p.id+'\')">+ שורה</button><button class="btn sm" onclick="doReceivePur(\''+p.id+'\')">קבל למלאי</button>':'')+tagBtn('purchase',p.id)+
         '</div>'+linksSection('purchase',p.id)+'</div>';
     }).join(''):'<div class="card empty">אין הזמנות רכש</div>');
 }
@@ -7688,7 +7717,7 @@ function b65WidthSummary(){
 
 /* מקור אמת יחיד ל-canary. הבדיקה t01 בספריית tests/ נכשלת אם המחרוזת
    שעל מסך הכניסה אינה זהה לערך הזה — כך אי אפשר לשכוח לעדכן אחד מהם. */
-var B61_CANARY = 'v4.77-B77';
+var B61_CANARY = 'v4.78-B78';
 var B61_RES = null, B61_BUSY = false, B61_COPIED = false;
 
 /* ---------- זיהוי הסביבה — הנתונים שחסרים לי היום לגמרי ---------- */
@@ -10064,10 +10093,10 @@ function payrollRowHtml(p, e){
       var b68mark = b68dup? ' <span class="chip" style="background:var(--danger);color:#fff" title="קיימת עוד שורת שכר לאותו עובד באותו חודש">כפולה</span>' : '';
       return '<tr'+(b68dup?' style="background:#fff5f5"':'')+'><td>'+b67EmpNameCell(e)+b68mark+'</td><td>'+(glob?'<span class="chip מאושרת">גלובלי</span>':'<span class="muted">שעתי</span>')+'</td><td>'+p.hours+'</td><td>'+(glob?'<span class="muted">—</span>':ils(p.hourly_rate))+'</td><td>'+ils(p.base_pay)+'</td>'+
       '<td class="tot"><b>'+ils(p.total)+'</b></td><td>'+ils(paid)+'</td><td'+(remaining>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(remaining)+'</td>'+
-      '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[p.status]||'')+'">'+esc(p.status)+'</span></td>'+
+      '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[w24Stat(p,PAYROLL_STATUSES,'טיוטה')]||'')+'">'+esc(p.status)+'</span></td>'+
       // B17: לנהג — רק הדפסת המסמך הפנימי, בלי כפתורי ניהול
       '<td>'+(ROLE==='נהג'?
-        (p.status!=='טיוטה'?'<button class="btn ghost sm" onclick="printPayslip(\''+p.id+'\')">הדפסה</button>':'<span class="muted" style="font-size:11px">טרם אושר</span>'):
+        (w24Stat(p,PAYROLL_STATUSES,'טיוטה')!=='טיוטה'?'<button class="btn ghost sm" onclick="printPayslip(\''+p.id+'\')">הדפסה</button>':'<span class="muted" style="font-size:11px">טרם אושר</span>'):
         '<button class="btn sm" onclick="payrollDetail(\''+p.id+'\')">פרטים / תשלום</button>')+'</td></tr>';
 }
 // תצוגה מקדימה של השכר — חישוב לבדיקת ההנהלה בלבד.
@@ -10122,7 +10151,7 @@ function payrollDetail(pid){
     (adj.length?'<div class="card"><table><tr><th>סוג</th><th>קטגוריה</th><th>סכום</th><th>הערה</th></tr>'+
       adj.map(a=>'<tr><td>'+esc(a.type)+'</td><td>'+esc(a.category)+'</td><td>'+(a.type==='ניכוי'?'-':'')+ils(a.amount)+'</td><td>'+esc(a.note||'')+'</td></tr>').join('')+'</table></div>':
       '<div class="card empty">אין תוספות/ניכויים</div>')+
-    (p.status!=='שולם במלואו'?'<div class="row" style="margin-top:8px;gap:6px">'+
+    (w24Stat(p,PAYROLL_STATUSES,'טיוטה')!=='שולם במלואו'?'<div class="row" style="margin-top:8px;gap:6px">'+
       '<select id="f_padjtype" style="width:auto"><option value="תוספת">תוספת</option><option value="ניכוי">ניכוי</option></select>'+
       '<select id="f_padjcat" style="width:auto">'+PAYROLL_CATEGORIES.map(c=>'<option>'+c+'</option>').join('')+'</select>'+
       '<input id="f_padjamt" type="number" min="0" placeholder="סכום" style="width:100px">'+
@@ -10136,7 +10165,7 @@ function payrollDetail(pid){
         return '<tr><td>'+esc(x.paid_at)+'</td><td>'+ils(x.amount)+'</td><td>'+esc(x.method)+'</td><td>'+esc(x.note||'')+'</td>'+
           '<td><button class="btn ghost sm" onclick="payDocsForm(\'payroll\',\''+x.id+'\',\'payroll\',\''+pid+'\')">'+(d.length?d.length+' מצורפות':'הוסף')+'</button></td></tr>';
       }).join('')+'</table></div>':'')+
-    (p.status==='טיוטה'?'<button class="btn" style="margin-top:10px" onclick="doApprovePayroll(\''+pid+'\')">אשר שכר</button>':
+    (w24Stat(p,PAYROLL_STATUSES,'טיוטה')==='טיוטה'?'<button class="btn" style="margin-top:10px" onclick="doApprovePayroll(\''+pid+'\')">אשר שכר</button>':
       (remaining>0.01?
         '<fieldset style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px">'+
         '<legend style="font-weight:700;font-size:13px;padding:0 6px">תשלום שכר</legend>'+
@@ -10386,7 +10415,7 @@ function b68OffsetForm(eid){
   var over = b68EmpOverpay(eid);
   if(over<=0.005) return toast('אין יתרת חובה לעובד זה');
   var months = (DB.payroll||[]).filter(function(p){
-    return sVal(p.employee_id)===sVal(eid) && sVal(p.status)!=='שולם במלואו';
+    return sVal(p.employee_id)===sVal(eid) && w24Stat(p,PAYROLL_STATUSES,'טיוטה')!=='שולם במלואו';
   }).map(function(p){ return sVal(p.month); });
   months = months.filter(function(m,i){ return months.indexOf(m)===i; }).sort().reverse();
   openModal('<h2>קיזוז יתרת חובה — '+esc(b67EmpName(eid))+'</h2>'+
@@ -10435,7 +10464,7 @@ function b68DelPayroll(pid){
 
 /* ---- טיוטות: נגזרות מ-DB.payroll, לתצוגה בלבד ---- */
 function b67DraftRows(){
-  return (DB.payroll||[]).filter(function(p){ return sVal(p.status)==='טיוטה' && Number(p.total||0)>0; })
+  return (DB.payroll||[]).filter(function(p){ return w24Stat(p,PAYROLL_STATUSES,'טיוטה')==='טיוטה' && Number(p.total||0)>0; })
     .slice().sort(function(a,b){ return String(b.month||'').localeCompare(String(a.month||'')); });
 }
 function b67DraftTotal(){
@@ -10486,7 +10515,7 @@ function b67EmpMonthRows(empId){
     .slice().sort(function(a,b){ return String(a.month||'').localeCompare(String(b.month||'')); })
     .map(function(p){
       var paid = payrollPaid(p.id);
-      var draft = sVal(p.status)==='טיוטה';
+      var draft = w24Stat(p,PAYROLL_STATUSES,'טיוטה')==='טיוטה';
       return { pr:p, paid:paid, draft:draft,
         remaining: draft? 0 : Math.round((Number(p.total||0)-paid)*100)/100 };
     });
@@ -10537,7 +10566,7 @@ function b67EmpView(empId, notice){
           '<td class="tot">'+ils(p.total)+'</td><td>'+ils(r.paid)+'</td>'+
           '<td'+(r.remaining>0.005?' style="color:var(--danger);font-weight:700"':'')+'>'+
             (r.draft? '<span class="muted">— אינו חוב</span>' : ils(r.remaining))+'</td>'+
-          '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[sVal(p.status)]||'')+'">'+esc(p.status)+'</span></td></tr>';
+          '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[w24Stat(p,PAYROLL_STATUSES,'טיוטה')]||'')+'">'+esc(p.status)+'</span></td></tr>';
       }).join('')+'</table></div>'
       : '<div class="card empty">אין רשומות שכר לעובד זה</div>')+
     '<p class="muted" style="font-size:12px;margin-top:8px">לחיצה על שורת חודש פותחת את פירוט השכר של אותו חודש.</p>'+
@@ -10988,7 +11017,7 @@ var TASK_COLS = ['פתוחה','בתהליך','הושלמה'];
 var PRIO_COLOR = {'דחופה':'var(--danger)','רגילה':'var(--navy2)','נמוכה':'#94A3B8'};
 function rTasks(){
   var cols = TASK_COLS.map(function(st){
-    var tks = DB.tasks.filter(t=>t.status===st);
+    var tks = DB.tasks.filter(t=>w24Stat(t,TASK_STATUSES)===st);
     return '<div class="kcol"><h3>'+st+'<span class="cnt">'+tks.length+'</span></h3>'+
       tks.map(function(t){
         var a = DB.employees.find(e=>e.id===t.assignee_id)||{};
@@ -11048,8 +11077,8 @@ async function openTask(tid){
     '<div class="doc-meta" style="margin-bottom:8px">אחראי: '+(a.name?esc(a.name):'—')+(t.due_date?' · יעד: '+esc(t.due_date):'')+
     '<br>נוצרה ע"י '+esc(t.created_by)+' · '+esc(fmtTs(t.created_at))+'</div>'+
     (mt?'<div style="margin-bottom:10px"><span class="chip" style="background:var(--navy2);cursor:pointer" title="פתח את הפגישה" onclick="openMeeting(\''+t.meeting_id+'\')">נוצרה מתוך פגישה: '+esc(mt.title)+' ↗</span></div>':'')+
-    (t.status==='הושלמה'&&t.completion_note?'<div class="card" style="background:var(--linen);margin-bottom:12px"><b>סיכום ביצוע:</b> '+esc(t.completion_note)+(t.completed_at?' <span class="muted">('+esc(fmtTs(t.completed_at))+')</span>':'')+'</div>':'')+
-    '<div class="row" style="margin-bottom:12px">'+TASK_COLS.filter(s=>s!==t.status).map(s=>'<button class="btn ghost sm" onclick="doMoveTask(\''+tid+'\',\''+s+'\')">העבר ל'+s+'</button>').join('')+
+    (w24Stat(t,TASK_STATUSES)==='הושלמה'&&t.completion_note?'<div class="card" style="background:var(--linen);margin-bottom:12px"><b>סיכום ביצוע:</b> '+esc(t.completion_note)+(t.completed_at?' <span class="muted">('+esc(fmtTs(t.completed_at))+')</span>':'')+'</div>':'')+
+    '<div class="row" style="margin-bottom:12px">'+TASK_COLS.filter(s=>s!==w24Stat(t,TASK_STATUSES)).map(s=>'<button class="btn ghost sm" onclick="doMoveTask(\''+tid+'\',\''+s+'\')">העבר ל'+s+'</button>').join('')+
     (ROLE==='מנהל'?' <button class="btn ghost sm" style="color:var(--danger)" title="מחיקת משימה כולל הערות ותיוגים (קוד מנהל)" onclick="delTaskFull(\''+tid+'\')">מחק משימה</button>':'')+'</div>'+
     todoSectionHtml(tid, comments)+
     '<h3>הערות ומעקב</h3>'+
@@ -11125,7 +11154,7 @@ function calEvents(){
       });
     });
   });
-  DB.tasks.filter(t=>t.status!=='הושלמה'&&t.due_date).forEach(function(t){
+  DB.tasks.filter(t=>w24Stat(t,TASK_STATUSES)!=='הושלמה'&&t.due_date).forEach(function(t){
     events.push({date:t.due_date, label:'משימה: '+t.title, color:'var(--navy2)', click:"openTask('"+t.id+"')"});
   });
   DB.meetings.forEach(function(m){
@@ -11210,7 +11239,7 @@ function rCalendarDraw(hebItems){
   var hebEnd = hebFmt(lastDate,{month:'long',year:'numeric'});
   if(hebEnd && hebEnd!==hebRange) hebRange = hebFmt(first,{month:'long'})+'–'+hebEnd;
   var gregTitle = new Intl.DateTimeFormat('he',{month:'long',year:'numeric'}).format(first);
-  var overdue = DB.tasks.filter(t=>t.status!=='הושלמה'&&t.due_date&&t.due_date<today);
+  var overdue = DB.tasks.filter(t=>w24Stat(t,TASK_STATUSES)!=='הושלמה'&&t.due_date&&t.due_date<today);
   var cells = '';
   ['א','ב','ג','ד','ה','ו','ש'].forEach(d=>{ cells += '<div class="calhead">'+d+'</div>'; });
   for(var i=0;i<startOffset;i++) cells += '<div></div>';
@@ -11357,7 +11386,7 @@ async function openMeeting(mid){
     '<button class="btn ghost sm" onclick="printMeeting(\''+mid+'\')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> הדפס פרוטוקול</button>'+notesBtn('meeting',mid)+tagBtn('meeting',mid)+
     (ROLE==='מנהל'?' <button class="btn ghost sm" style="color:var(--danger)" title="מחיקת פגישה ופרוטוקול כולל תיוגים (קוד מנהל)" onclick="delMeetingFull(\''+mid+'\')">מחק פגישה</button>':'')+'</div>'+linksSection('meeting',mid)+
     '<h3>משימות מהאסיפה ('+tasks.length+')</h3>'+
-    (tasks.length? tasks.map(t=>'<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+t.id+'\')"><div class="grow">'+esc(t.title)+'</div><span class="chip '+(t.status==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status)+'</span></div>').join(''):'<div class="muted">אין משימות עדיין</div>')+
+    (tasks.length? tasks.map(t=>'<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+t.id+'\')"><div class="grow">'+esc(t.title)+'</div><span class="chip '+(w24Stat(t,TASK_STATUSES)==='הושלמה'?'הושלמה':'מאושרת')+'">'+esc(t.status)+'</span></div>').join(''):'<div class="muted">אין משימות עדיין</div>')+
     '<div style="margin-top:12px"><h3>+ משימה חדשה מהאסיפה</h3>'+
     '<div class="row" style="margin-top:6px"><input id="f_mtask" class="grow" placeholder="מה סוכם לביצוע?">'+
     '<select id="f_mtassign" style="width:auto"><option value="">אחראי</option>'+DB.employees.filter(e=>e.active!=='לא').map(e=>'<option value="'+e.id+'">'+esc(e.name)+'</option>').join('')+'</select>'+
@@ -14871,13 +14900,13 @@ function empTabPayroll(eid){
   return rows.length? '<div class="card"><table><tr><th>חודש</th><th>שעות</th><th>סה"כ</th><th>שולם</th><th>יתרה</th><th>סטטוס</th><th></th></tr>'+
     rows.map(function(p){var paid=payrollPaid(p.id); var remaining=Math.round((Number(p.total)-paid)*100)/100;
       return '<tr><td>'+esc(p.month)+'</td><td>'+p.hours+'</td><td class="tot">'+ils(p.total)+'</td><td>'+ils(paid)+'</td><td'+(remaining>0.01?' style="color:var(--danger);font-weight:700"':'')+'>'+ils(remaining)+'</td>'+
-      '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[p.status]||'')+'">'+esc(p.status)+'</span></td>'+
+      '<td><span class="chip '+({'טיוטה':'טיוטה','אושר':'מאושרת','שולם חלקית':'סופקה','שולם במלואו':'הושלמה'}[w24Stat(p,PAYROLL_STATUSES,'טיוטה')]||'')+'">'+esc(p.status)+'</span></td>'+
       '<td>'+(ROLE!=='נהג'?'<button class="btn ghost sm" onclick="payrollDetail(\''+p.id+'\')">פרטים</button>':'')+'</td></tr>';}).join('')+'</table></div>'
     : '<div class="card empty">אין נתוני שכר עדיין</div>';
 }
 function empTabTasks(eid){
   var rows = (DB.tasks||[]).filter(t=>t.assignee_id===eid).slice().sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
-  return rows.length? '<div class="card">'+rows.map(function(t){return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+t.id+'\')"><div class="grow">'+esc(t.title)+(t.due_date?' · '+esc(t.due_date):'')+'</div><span class="chip '+esc(t.status)+'">'+esc(t.status)+'</span></div>';}).join('')+'</div>'
+  return rows.length? '<div class="card">'+rows.map(function(t){return '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="openTask(\''+t.id+'\')"><div class="grow">'+esc(t.title)+(t.due_date?' · '+esc(t.due_date):'')+'</div><span class="chip '+esc(w24Stat(t,TASK_STATUSES))+'">'+esc(t.status)+'</span></div>';}).join('')+'</div>'
     : '<div class="card empty">אין משימות מוקצות לעובד זה</div>';
 }
 function empTabNotes(eid){
