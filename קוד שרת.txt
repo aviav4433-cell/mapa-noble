@@ -1384,7 +1384,10 @@ var B56_CLOSED_INTAKE = 'נמסר';
 function b56IntakeOpen(ik) { return sVal(ik && ik.status) !== B56_CLOSED_INTAKE; }
 function b56CloseLaundryOrder(db, order) {
   if (!order || sVal(order.type) !== 'כביסה') return false;
-  if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(sVal(order.status)) === -1) return false;
+  /* ⭐ B82/W23-שאריות: w22Stat היא נקודת האמת לציר סטטוס ההזמנה (B76). כאן נשאר
+     sVal גולמי בעוד התאום המדויק ב-bld01Candidates תוקן ב-B78 — אותה רשימת
+     ליטרלים בדיוק, שני מסלולים. ⛔ אין דפוס שני לאותו ציר (R8). */
+  if (['מאושרת', 'סופקה', 'הוחזרה'].indexOf(w22Stat(order)) === -1) return false;
   var openIntake = (db.laundryIntakes || []).some(function (ik) {
     return String(ik.order_id || '') === String(order.id) && b56IntakeOpen(ik);
   });
@@ -1464,7 +1467,9 @@ function bld01Candidates(db) {
       order_id: o.id, order_number: o.order_number || '', customer_id: o.customer_id,
       status: st, end_date: o.end_date || '', ship_back: mode,
       intakes: mine.length, delivered_ts: (last && last.delivered_ts) || '',
-      open_legs: openLegs.map(function (d) { return { id: d.id, date: d.date || '', status: sVal(d.status), driver: d.driver || '' }; }),
+      /* ⭐ B82/W23-שאריות: הסינון למעלה כבר עובר w24Stat — שדה התצוגה הציג sVal
+         גולמי, ולכן האבחון הראה סטטוס אחר ממה שפעולת הריפוי פועלת לפיו. */
+      open_legs: openLegs.map(function (d) { return { id: d.id, date: d.date || '', status: w24Stat(d, DELIVERY_STATUSES, DELIVERY_DFLT), driver: d.driver || '' }; }),
       will_close_leg: needLeg ? 1 : 0, will_close_order: needStatus ? 1 : 0
     });
   });
@@ -6247,7 +6252,8 @@ function w16OrderGate(db, orderId, what) {
   if (!oid) return { ok: true, order: null };            // קליטה פנימית — אין הזמנה
   var o = (db.orders || []).find(function (x) { return String(x.id) === oid; });
   if (!o) return { ok: false, error: 'ההזמנה של הקליטה לא נמצאה (' + oid + ')' };
-  if (B49D_ORDER_OPEN.indexOf(sVal(o.status)) === -1)
+  /* ⭐ B82/W23-שאריות: שער קליטת הכביסה עובר ל-w22Stat (B76) כמו כל שאר הציר. */
+  if (B49D_ORDER_OPEN.indexOf(w22Stat(o)) === -1)
     return { ok: false, error: 'ההזמנה ' + (o.order_number ? '#' + o.order_number : o.id) + ' בסטטוס ' +
       (o.status || '—') + ' — אין ' + (what || 'לקלוט אליה כביסה') + '. נדרש "מאושרת" או "סופקה"' };
   var inv = w16ActiveInvoiceOf(db, o.id);
@@ -6368,6 +6374,30 @@ function b49dAddCarts(db, p, user) {
 var CHARGE_SOURCES = ['השכרה', 'כביסה', 'חוסרים', 'משלוח', 'כללי'];
 // הזמנות שאינן נספרות כחוב (זהה להגדרה שהייתה ב-b43Receivables/b2CreditUsedAg)
 var B54_SKIP_ORDER = ['בוטלה', 'טיוטה', 'הצעת מחיר'];
+
+/* ============================================================
+   B82 / BLD-06 (DEC-04) — שיוך תשלום לחוב
+   ------------------------------------------------------------
+   ⚠ R9: מחצית מ-BLD-06 כבר הייתה בנויה. b2ProcessPayment מקצה FIFO
+   מהישן לחדש מאז D15, ומסך הגבייה במשרד כבר גובה מול מסמך בודד
+   (collectPayForm עם docKind/docId). מה שלא היה קיים הוא מסלול
+   **הצהרת התשלום**: b55EnsureDocsForDebt הפיקה חשבונית ל**כל** החוב
+   הפתוח גם כשהתקבל חלק זעיר ממנו — הלקוח קיבל מסמכי מס על חוב שלא
+   שילם — ולא הייתה דרך לכוון תשלום למסמך מסוים.
+   ⛔ אין כאן מסלול כתיבה שני (R8): ההקצאה, הקבלה והאידמפוטנטיות
+   נשארות ב-b2ProcessPayment בדיוק כפי שהיו. הבחירה רק מצמצמת את
+   רשימת החובות שהמנוע הקיים עובר עליה.
+   ⛔ שתי הפונקציות זהות תו-בתו בין קוד השרת ל-index.html.
+   ============================================================ */
+function b82DebtSort(o) { return String((o && (o.created_at || o.start_date)) || ''); }
+function b82ParseTarget(v) {
+  var s = sVal(v);
+  var i = s.indexOf(':');
+  if (i < 1) return null;
+  var kind = s.slice(0, i), id = sVal(s.slice(i + 1));
+  if (['order', 'invoice'].indexOf(kind) === -1 || !id) return null;
+  return { kind: kind, id: id };
+}
 
 // C10: תשלום נספר רק אם הוא נגבה. status ריק = נגבה (תאימות היסטורית).
 function b54PayCounts(p) { return w25Usable(p, PAYMENT_STATUSES, 'שולם'); }
@@ -7004,17 +7034,33 @@ function b55SysMessage(db, customerId, subject, body, refType, refId, user) {
 //  נסגר הפער — ההזמנות והחיובים הידניים הפתוחים מקבלים מסמך, ואז
 //  b2ProcessPayment יודע לגבות אותם.
 // ------------------------------------------------------------
-function b55EnsureDocsForDebt(db, customerId, invoiceType, user) {
+function b55EnsureDocsForDebt(db, customerId, invoiceType, user, opts) {
   var made = [];
   var type = invoiceType || 'חשבונית מס';
-  (db.orders || []).filter(function (o) {
+  /* ⭐ B82/BLD-06 (DEC-04): הפקה סלקטיבית. עד כאן הופקה חשבונית לכל החוב הפתוח
+     גם כשהתקבל חלק זעיר ממנו, והלקוח קיבל מסמכי מס על חוב שלא שילם.
+     opts.target — מסמך יחיד · opts.capAg — עד כמה שהתשלום מכסה, מהישן לחדש.
+     ⛔ בלי opts ההתנהגות זהה למה שהייתה — כל קורא אחר אינו מושפע. */
+  var tgt = b82ParseTarget(opts && opts.target);
+  var capAg = (opts && Number(opts.capAg) > 0) ? Math.round(Number(opts.capAg)) : 0;
+  if (tgt && tgt.kind === 'invoice') return made;   // החשבונית שנבחרה כבר קיימת — אין מה להפיק
+  var openOrders = (db.orders || []).filter(function (o) {
     return o.customer_id === customerId && B54_SKIP_ORDER.indexOf(w22Stat(o)) === -1
       && b2OrderBalanceAg(db, o.id) > 1
       && !(db.invoices || []).some(function (v) { return v.order_id === o.id && w23InvActive(v); });
-  }).forEach(function (o) {
+  });
+  if (tgt) openOrders = openOrders.filter(function (o) { return String(o.id) === tgt.id; });
+  openOrders.sort(function (a, b) { return b82DebtSort(a) < b82DebtSort(b) ? -1 : 1; });
+  var left = capAg;
+  openOrders.forEach(function (o) {
+    if (capAg && left <= 0) return;
+    var balAg = b2OrderBalanceAg(db, o.id);   /* ⛔ נמדד לפני ההפקה — ההפקה מוסיפה מע"מ ומשנה את היתרה */
     var r = b1CreateInvoice(db, { order_id: o.id, invoice_type: type, allocation_number: '' }, user);
     if (r && r.ok) made.push({ number: r.invoice.number, type: r.invoice.type, url: r.invoice.pdf_url || '' });
+    left -= balAg;
   });
+  /* מסמך נבחר, או שהתשלום כוסה כולו — אין להפיק חשבונית לחיובים הידניים */
+  if (tgt || (capAg && left <= 0)) return made;
   var chIds = (db.charges || []).filter(function (ch) {
     return ch.customer_id === customerId && w24Stat(ch, CHARGE_STATUSES, CHARGE_DFLT) !== 'בוטל'
       && !String(ch.invoice_id || '').trim() && !String(ch.order_id || '').trim()
@@ -7175,11 +7221,15 @@ function b55ConfirmDeclaration(db, p, user) {
     (d.check_number ? ' · שיק ' + d.check_number : '');
 
   // הפקת מסמכים חסרים — כולל חיובים ידניים שאינם גבילים בלעדיהם
-  var made = b55EnsureDocsForDebt(db, c.id, p.invoice_type || 'חשבונית מס', user);
+  /* ⭐ B82/BLD-06: מפיקים רק את המסמכים שהתשלום הזה באמת מכסה, או רק את המסמך
+     שנבחר. p.debt_target ריק = ההתנהגות הוותיקה: החוב הישן ביותר קודם. */
+  var made = b55EnsureDocsForDebt(db, c.id, p.invoice_type || 'חשבונית מס', user,
+    { target: p.debt_target, capAg: toAg(amt) });
 
   var r = b2ProcessPayment(db, {
     customer_id: c.id, order_id: '', order_amount_ag: 0, debt_amount_ag: toAg(amt),
-    method: method, note: note, date: p.date || today(), txn_id: d.txn_id
+    method: method, note: note, date: p.date || today(), txn_id: d.txn_id,
+    debt_target: p.debt_target
   }, user || '');
   if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'הגבייה נכשלה', docs_created: made.length };
 
@@ -8910,15 +8960,25 @@ function b2ProcessPayment(db, p, user) {
       return x.customer_id === cust.id && ['בוטלה', 'טיוטה', 'הצעת מחיר'].indexOf(w22Stat(x)) === -1 && (!o || x.id !== o.id);
     }).forEach(function (x) {
       var b = b2OrderBalanceAg(db, x.id);
-      if (b > 0) debts.push({ kind: 'order', id: x.id, label: 'הזמנה ' + (x.order_number || x.id), bal: b, sort: String(x.created_at || x.start_date || '') });
+      if (b > 0) debts.push({ kind: 'order', id: x.id, label: 'הזמנה ' + (x.order_number || x.id), bal: b, sort: b82DebtSort(x) });
     });
     db.invoices.filter(function (v) { return v.customer_id === cust.id && !v.order_id && w23InvActive(v); }).forEach(function (v) {
       var b = b2InvoiceBalanceAg(db, v);
       if (b > 0) debts.push({ kind: 'invoice', id: v.id, label: 'חשבונית ' + v.number, bal: b, sort: String(v.date || '') });
     });
     debts.sort(function (a, b) { return a.sort < b.sort ? -1 : 1; });
+    /* ⭐ B82/BLD-06: ברירת המחדל נשארת FIFO — הישן קודם, בדיוק כמו עד היום.
+       נבחר מסמך מסוים? הרשימה מצטמצמת אליו וכל שאר המסלול זהה (R8). */
+    var b82Tgt = b82ParseTarget(p.debt_target);
+    if (b82Tgt) {
+      var b82Picked = debts.filter(function (d) { return d.kind === b82Tgt.kind && String(d.id) === b82Tgt.id; });
+      if (!b82Picked.length) return { ok: false, error: 'המסמך שנבחר לשיוך התשלום אינו פתוח לגבייה — רענן ובחר מסמך אחר' };
+      debts = b82Picked;
+    }
     var debtTotal = debts.reduce(function (s, d) { return s + d.bal; }, 0);
-    if (debtAg > debtTotal) return { ok: false, error: 'קיזוז החוב גבוה מהחוב הניתן לגבייה (₪' + agIls(debtTotal) + '). חיוב ידני שטרם הופקה לו חשבונית אינו ניתן לגבייה — הפק לו חשבונית קודם.' };
+    if (debtAg > debtTotal) return { ok: false, error: b82Tgt
+      ? ('הסכום גבוה מיתרת המסמך שנבחר (₪' + agIls(debtTotal) + ')')
+      : 'קיזוז החוב גבוה מהחוב הניתן לגבייה (₪' + agIls(debtTotal) + '). חיוב ידני שטרם הופקה לו חשבונית אינו ניתן לגבייה — הפק לו חשבונית קודם.' };
   }
 
   var rcptNum = nextNumber(db, 'receipt', 5001);
