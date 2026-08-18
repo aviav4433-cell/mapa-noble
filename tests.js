@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.76-B76', 'ה-canary לא עודכן ל-B76');
+      t.eq(inJs, 'v4.77-B77', 'ה-canary לא עודכן ל-B77');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.76-B76 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.77-B77 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.76-B76', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.76-B76/g) || []).length, 2,
+      t.has(s, 'v4.77-B77', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.77-B77/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7682,344 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.76-B76 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.77-B77 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.76-B76/g) || []).length, 2,
+      t.eq((s.match(/v4\.77-B77/g) || []).length, 2,
+        '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+/* ============================================================
+   B77 / WASH-23 — ציר הסטטוס של החשבונית
+   ------------------------------------------------------------
+   ⛔⛔ WASH-23 נוגע ב**כסף ישיר**, ולא במלאי כמו WASH-22. חשבונית
+   שסטטוסה בגיליון מלוכלך ('בוטלה' + רווח קשיח) נחשבה **פעילה**:
+   הלקוח הוצג כחייב על מסמך שבוטל, והמסמך חסם הפקת חשבונית שנייה.
+   ⚠ הכרעת אבי 18.08.2026 (1א): סטטוס חשבונית **לא מוכר** ו**ריק**
+   נחשבים פעילים — הצד הזהיר, וזו גם ההתנהגות שהייתה.
+   ⚠ הכרעת אבי 18.08.2026 (2א): עוזר אחד — w23InvStat + w23InvActive,
+   זהים תו-בתו בשני הקבצים, בדיוק כמו w22Stat.
+   ⛔ בדיקת R6 בשלושת המקורות היא לב האצווה: b48BalancesAg (שרת) ·
+   b48BalancesAgFE/custBalance (ממשק) · b2CreditUsedAg (מנוע האשראי).
+   ⭐ נלווה: דליפת WASH-22 שנמצאה כאן — B44_PICK_STATUSES השווה
+   o.status גולמי בארבעה אתרים בממשק ולכן חסם ליקוט של הזמנה תקינה.
+   ============================================================ */
+
+const B77 = {
+  DIRTY_CANCEL: ['בוטלה\u00A0', ' בוטלה', 'בוטלה ', '\u200Eבוטלה'],
+  DIRTY_OPEN: ['פתוחה\u00A0', ' פתוחה', '\u200Fפתוחה'],
+  UNKNOWN: ['מבוטל', 'ממתינה', ''],
+
+  /* חשבונית חופשית (בלי order_id) על 1,000 ₪ נטו — נכנסת לספר
+     כשורה סינתטית, ולכן היא מדידה ישירה של "כמה הלקוח חייב". */
+  invDb(srv, status) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 1000000 }];
+    db.invoices = [{ id: 'IV1', number: '5001', order_id: '', customer_id: 'C1',
+      date: '2026-08-01', subtotal: 1000, vat_rate: 18, vat: 180, total: 1180,
+      status: status, type: 'חשבונית' }];
+    return db;
+  },
+  money(srv, db) {
+    srv.b54Bump();
+    const bal = srv.b48BalancesAg(db)['C1'] || 0;
+    const used = srv.b2CreditUsedAg(db, 'C1');
+    const open = srv.b54CustomerOpenAg(db)['C1'] || 0;
+    srv.b54Bump();
+    return { bal: bal, used: used, open: open };
+  },
+  /* הממשק — אותה חשבונית בדיוק, ישר על DB.
+     ⚠ לקח B74: המטמון יושב על אובייקט ה-DB עצמו. בלי מחיקה, המדידה
+     השנייה מודדת את התוצאה של הראשונה ו"עוברת" בלי לבדוק כלום. */
+  uiSet(w, status) {
+    w.DB.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 1000000 }];
+    w.DB.orders = []; w.DB.orderLines = []; w.DB.payments = [];
+    w.DB.laundryTasks = []; w.DB.laundryIntakes = []; w.DB.charges = []; w.DB.settings = [];
+    w.DB.invoices = [{ id: 'IV1', number: '5001', order_id: '', customer_id: 'C1',
+      date: '2026-08-01', subtotal: 1000, vat_rate: 18, vat: 180, total: 1180,
+      status: status, type: 'חשבונית' }];
+    delete w.DB._b54Ledger; delete w.DB._b48Bal;
+    return w.b48BalancesAgFE()['C1'] || 0;
+  },
+  /* הזמנה מאושרת + חשבונית — לבדיקת שער ההפקה ושער העדכון */
+  orderDb(srv, invStatus) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.customers = [{ id: 'C1', name: 'מלון הים', active: 'כן', credit_limit: 1000000 }];
+    db.items = [{ id: 'IT1', name: 'מגבת', active: 'כן', rent_price: 25, weight_kg: 0.5 }];
+    db.stockMoves = [{ id: 'SM1', item_id: 'IT1', qty: 100, warehouse_id: '' }];
+    db.orders = [{ id: 'O1', order_number: '1001', customer_id: 'C1', type: 'השכרה',
+      status: 'מאושרת', start_date: '2026-09-01', end_date: '2026-09-05',
+      warehouse_id: '', delivery_fee: 0, shortage_charge: 0 }];
+    db.orderLines = [{ id: 'OL1', order_id: 'O1', item_id: 'IT1', qty: 10, unit_price: 25, returned_qty: '' }];
+    db.invoices = [{ id: 'IV1', number: '5001', order_id: 'O1', customer_id: 'C1',
+      date: '2026-08-01', subtotal: 250, vat_rate: 18, vat: 45, total: 295,
+      status: invStatus, type: 'חשבונית' }];
+    return db;
+  },
+  /* חתימת גוף פונקציה מקוד המקור, בלי הערות.
+     ⚠ לקח B75: H.stripComments נתקע במצב מחרוזת בקוד השרת — חותכים
+     בתוך הגוף שחולץ בלבד, לא על הקובץ כולו. */
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return String(s || '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' '); }
+};
+
+SPECS.push({
+  file: 't23-b77-srv',
+  title: 'B77 — WASH-23 — ציר הסטטוס של החשבונית בשרת: כסף · שערים · R6',
+  needs: 'server',
+  requires: ['w23InvStat', 'w23InvActive', 'INVOICE_STATUSES', 'w22Stat', 'w16ActiveInvoiceOf',
+             'b54Ledger', 'b54CustomerOpenAg', 'b48BalancesAg', 'b2CreditUsedAg', 'b54Bump',
+             'b1CreateInvoice', 'sVal', 'sPick', 'toAg', 'fromAg'],
+
+  tests: {
+
+    /* ================= העוזר עצמו ================= */
+
+    '⛔⛔ WASH-23: סטטוס חשבונית מלוכלך מזוהה כמבוטל': (t, { srv }) => {
+      t.eq(srv.w23InvActive({ status: 'בוטלה' }), false, 'קו הבסיס נשבר — בוטלה נקייה נחשבת פעילה');
+      B77.DIRTY_CANCEL.forEach(st => {
+        t.eq(srv.w23InvActive({ status: st }), false,
+          '⛔⛔ סטטוס ' + JSON.stringify(st) + ' נחשב פעיל — זה WASH-23 עצמו');
+        t.eq(srv.w23InvStat({ status: st }), 'בוטלה',
+          '⛔ w23InvStat לא נרמל את ' + JSON.stringify(st));
+      });
+      B77.DIRTY_OPEN.forEach(st => {
+        t.eq(srv.w23InvStat({ status: st }), 'פתוחה', '⛔ w23InvStat לא נרמל את ' + JSON.stringify(st));
+        t.eq(srv.w23InvActive({ status: st }), true, '⛔ חשבונית פתוחה מלוכלכת הפסיקה להיות פעילה');
+      });
+    },
+
+    '⭐ הכרעת אבי 1א: סטטוס לא מוכר וסטטוס ריק — חשבונית פעילה': (t, { srv }) => {
+      B77.UNKNOWN.forEach(st => {
+        t.eq(srv.w23InvActive({ status: st }), true,
+          '⛔⛔ סטטוס ' + JSON.stringify(st) + ' הפך למבוטל — הכרעת אבי הייתה "פעילה"');
+      });
+      t.eq(srv.w23InvActive(null), false, 'חשבונית שאינה קיימת אינה פעילה');
+      t.eq(srv.w23InvActive(undefined), false, 'חשבונית שאינה קיימת אינה פעילה');
+    },
+
+    '⛔ w23InvStat מחזירה את הערך המנורמל עצמו כשאין התאמה': (t, { srv }) => {
+      t.eq(srv.w23InvStat({ status: ' מבוטל\u00A0' }), 'מבוטל',
+        '⛔⛔ סטטוס לא מוכר מופה לסטטוס אחר או רוקן — אסור');
+      t.eq(srv.w23InvStat({ status: '' }), '', 'סטטוס ריק חייב להישאר ריק');
+      t.eq(srv.w23InvStat(null), '', 'חשבונית חסרה מחזירה מחרוזת ריקה');
+    },
+
+    /* ================= הכסף ================= */
+
+    '⛔⛔ WASH-23 — הכסף: חשבונית מבוטלת מלוכלכת אינה מחייבת את הלקוח': (t, { srv }) => {
+      const cancelled = B77.money(srv, B77.invDb(srv, 'בוטלה'));
+      t.eq(cancelled.bal, 0, 'קו הבסיס נשבר — בוטלה נקייה כן חייבה את הלקוח');
+      B77.DIRTY_CANCEL.forEach(st => {
+        const got = B77.money(srv, B77.invDb(srv, st));
+        t.eq(got.bal, 0,
+          '⛔⛔ הלקוח חויב ב-' + got.bal + ' אגורות על חשבונית מבוטלת עם סטטוס ' +
+          JSON.stringify(st) + ' — זה הכסף של WASH-23');
+        t.eq(got.used, 0, '⛔⛔ מנוע האשראי ספר חוב על חשבונית מבוטלת מלוכלכת');
+        t.eq(got.open, 0, '⛔⛔ ספר החיובים ספר חשבונית מבוטלת מלוכלכת');
+      });
+    },
+
+    '⛔ WASH-23 — הכסף על סטטוס נקי לא זז (רגרסיה מלאה)': (t, { srv }) => {
+      ['פתוחה', 'שולמה'].forEach(st => {
+        const g = B77.money(srv, B77.invDb(srv, st));
+        t.eq(g.bal, 118000, '⛔ היתרה זזה על סטטוס נקי ' + st + ' — התקבל ' + g.bal);
+        t.eq(g.used, 118000, '⛔ מנוע האשראי זז על סטטוס נקי ' + st);
+        t.eq(g.open, 118000, '⛔ ספר החיובים זז על סטטוס נקי ' + st);
+      });
+      const dirtyOpen = B77.money(srv, B77.invDb(srv, 'פתוחה\u00A0'));
+      t.eq(dirtyOpen.bal, 118000, '⛔ חשבונית פתוחה מלוכלכת הפסיקה לחייב');
+    },
+
+    '⭐ סטטוס לא מוכר: הלקוח חייב — ולא נעלם בשקט': (t, { srv }) => {
+      B77.UNKNOWN.forEach(st => {
+        const g = B77.money(srv, B77.invDb(srv, st));
+        t.eq(g.bal, 118000,
+          '⛔⛔ חוב של 1,180 ₪ נעלם על סטטוס ' + JSON.stringify(st) + ' — הכרעת אבי הייתה "פעילה"');
+      });
+    },
+
+    '⛔⛔ R6 — שלושת מקורות הכסף מסכימים, נקי ומלוכלך': (t, { srv }) => {
+      ['פתוחה', 'פתוחה\u00A0', ' פתוחה', 'שולמה', 'בוטלה', 'בוטלה\u00A0',
+       ' בוטלה', '\u200Eבוטלה', 'מבוטל', ''].forEach(st => {
+        const g = B77.money(srv, B77.invDb(srv, st));
+        t.eq(g.bal, g.used,
+          '⛔⛔ R6 נשבר: b48BalancesAg=' + g.bal + ' מול b2CreditUsedAg=' + g.used +
+          ' על סטטוס ' + JSON.stringify(st));
+        t.eq(g.bal, g.open,
+          '⛔⛔ R6 נשבר: b48BalancesAg=' + g.bal + ' מול b54CustomerOpenAg=' + g.open +
+          ' על סטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    /* ================= השערים ================= */
+
+    '⛔⛔ חשבונית מבוטלת מלוכלכת אינה חוסמת הפקה חדשה (WASH-16 לא נשבר)': (t, { srv }) => {
+      B77.DIRTY_CANCEL.concat(['בוטלה']).forEach(st => {
+        const db = B77.orderDb(srv, st);
+        const r = srv.b1CreateInvoice(db, { order_id: 'O1' }, 'מנהל');
+        t.eq(r.ok, true,
+          '⛔⛔ הפקת חשבונית נחסמה בגלל חשבונית מבוטלת עם סטטוס ' +
+          JSON.stringify(st) + ' — ' + (r && r.error));
+      });
+    },
+
+    '⛔ חשבונית פעילה כן חוסמת הפקה שנייה — גם כשהסטטוס מלוכלך': (t, { srv }) => {
+      ['פתוחה', 'פתוחה\u00A0', ' שולמה', 'מבוטל', ''].forEach(st => {
+        const db = B77.orderDb(srv, st);
+        const r = srv.b1CreateInvoice(db, { order_id: 'O1' }, 'מנהל');
+        t.eq(r.ok, false,
+          '⛔⛔ הופקה חשבונית שנייה להזמנה שכבר יש לה חשבונית פעילה (סטטוס ' +
+          JSON.stringify(st) + ') — כפל חיוב');
+      });
+    },
+
+    '⛔ w16ActiveInvoiceOf ממשיך למצוא חשבונית פעילה ומדלג על מבוטלת מלוכלכת': (t, { srv }) => {
+      t.ok(srv.w16ActiveInvoiceOf(B77.orderDb(srv, 'פתוחה\u00A0'), 'O1'),
+        '⛔ חשבונית פתוחה מלוכלכת לא נמצאה');
+      t.eq(srv.w16ActiveInvoiceOf(B77.orderDb(srv, ' בוטלה'), 'O1'), null,
+        '⛔ חשבונית מבוטלת מלוכלכת נחשבה פעילה בשער B75');
+    },
+
+    /* ================= שומרי מקור ================= */
+
+    '⛔⛔ ההשוואה הגולמית לא חוזרת לספר החיובים ולא לשערי החשבונית': (t, { H }) => {
+      const sv = H.serverSrc();
+      const led = B77.noCmt(B77.body(sv, 'b54Ledger'));
+      t.ok(led, 'b54Ledger נעלם מקוד השרת');
+      t.has(led, 'w23InvActive', '⛔⛔ ספר החיובים אינו עובר דרך w23InvActive');
+      t.hasNot(led, "v.status !== 'בוטלה'", '⛔⛔ השוואת סטטוס חשבונית גולמית חזרה ל-b54Ledger');
+      t.has(led, 'B54_SKIP_ORDER.indexOf(w22Stat(o))', '⛔ B76 נשבר — ספר החיובים חזר להשוואה גולמית של סטטוס הזמנה');
+      const cr = B77.noCmt(B77.body(sv, 'b1CreateInvoice'));
+      t.ok(cr, 'b1CreateInvoice נעלם מקוד השרת');
+      t.has(cr, 'w23InvActive', '⛔⛔ שער הפקת החשבונית אינו עובר דרך w23InvActive');
+      t.has(cr, 'w22Stat', '⛔ B76 נשבר — שער ההפקה חזר להשוואה גולמית של סטטוס הזמנה');
+      const ac = B77.noCmt(B77.body(sv, 'w16ActiveInvoiceOf'));
+      t.has(ac, 'w23InvActive', '⛔ w16ActiveInvoiceOf אינו עובר דרך w23InvActive');
+    },
+
+    '⛔⛔ אין יותר השוואת סטטוס חשבונית גולמית בקוד השרת': (t, { H }) => {
+      const sv = H.stripComments(H.serverSrc());
+      const bad = (sv.match(/\b(?:v|x|iv|ivL|iv2|inv|inv2|invO|oInv|cv|rec43)\.status\s*(?:===|!==)\s*'בוטלה'/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס חשבונית גולמיות בשרת: ' + bad.join(' · '));
+    }
+  }
+});
+
+SPECS.push({
+  file: 't23-b77-ui',
+  title: 'B77 — WASH-23 — ציר הסטטוס של החשבונית בממשק: R6 · זהות תו-בתו · שער הליקוט',
+  needs: 'ui',
+  requires: ['w23InvStat', 'w23InvActive', 'INVOICE_STATUSES', 'w22Stat',
+             'b54LedgerFE', 'b48BalancesAgFE', 'custBalance', 'b61Tests',
+             'B44_PICK_STATUSES', 'sVal', 'sPick'],
+
+  tests: {
+
+    '⛔⛔ WASH-23 בממשק: חשבונית מבוטלת מלוכלכת אינה מחייבת': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      t.eq(B77.uiSet(w, 'בוטלה'), 0, 'קו הבסיס נשבר — בוטלה נקייה חייבה את הלקוח בממשק');
+      B77.DIRTY_CANCEL.forEach(st => {
+        const ag = B77.uiSet(w, st);
+        t.eq(ag, 0,
+          '⛔⛔ הממשק הציג חוב של ' + ag + ' אגורות על חשבונית מבוטלת עם סטטוס ' + JSON.stringify(st));
+      });
+      t.eq(B77.uiSet(w, 'פתוחה\u00A0'), 118000, '⛔ חשבונית פתוחה מלוכלכת הפסיקה לחייב בממשק');
+    },
+
+    '⛔⛔ R6 בממשק: custBalance מסכים עם השרת על כל סטטוס חשבונית': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['פתוחה', 'פתוחה\u00A0', ' פתוחה', 'שולמה', 'בוטלה', 'בוטלה\u00A0',
+       ' בוטלה', '\u200Eבוטלה', 'מבוטל', ''].forEach(st => {
+        const feAg = B77.uiSet(w, st);
+        const svAg = B77.money(srv, B77.invDb(srv, st)).bal;
+        t.eq(feAg, svAg,
+          '⛔⛔ R6 נשבר: הממשק ' + feAg + ' מול השרת ' + svAg +
+          ' על סטטוס ' + JSON.stringify(st));
+        t.eq(w.custBalance('C1'), svAg / 100,
+          '⛔⛔ custBalance נבדל מהשרת על סטטוס ' + JSON.stringify(st));
+        t.eq(w.w23InvStat({ status: st }), srv.w23InvStat({ status: st }),
+          '⛔⛔ w23InvStat נבדל בין הקבצים על ' + JSON.stringify(st));
+        t.eq(w.w23InvActive({ status: st }), srv.w23InvActive({ status: st }),
+          '⛔⛔ w23InvActive נבדל בין הקבצים על ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔⛔ w23InvStat · w23InvActive · INVOICE_STATUSES זהים תו-בתו': (t, { H }) => {
+      const sv = H.serverSrc(), ui = H.uiScript();
+      const rxS = /function\s+w23InvStat\s*\(v\)\s*\{[^}]*\}/;
+      const rxA = /function\s+w23InvActive\s*\(v\)\s*\{[^}]*\}/;
+      [['w23InvStat', rxS], ['w23InvActive', rxA]].forEach(pair => {
+        const a = (sv.match(pair[1]) || [])[0], b = (ui.match(pair[1]) || [])[0];
+        t.ok(a, pair[0] + ' אינו קיים בקוד השרת');
+        t.ok(b, pair[0] + ' אינו קיים ב-index.html');
+        t.eq(a, b, '⛔⛔ ' + pair[0] + ' התפצל בין הקבצים — הממשק והשרת יסווגו חשבונית אחרת');
+      });
+      const rxL = /var\s+INVOICE_STATUSES\s*=\s*\[[^\]]*\]/;
+      const a = (sv.match(rxL) || [])[0], b = (ui.match(rxL) || [])[0];
+      t.ok(a, 'INVOICE_STATUSES אינו קיים בקוד השרת');
+      t.ok(b, 'INVOICE_STATUSES אינו קיים ב-index.html');
+      t.eq(a.replace(/\s+/g, ' '), b.replace(/\s+/g, ' '), '⛔⛔ INVOICE_STATUSES התפצל בין הקבצים');
+    },
+
+    '⛔⛔ ספר החיובים בממשק אינו חוזר להשוואה גולמית': (t, { H }) => {
+      const ui = H.uiScript();
+      const led = B77.noCmt(B77.body(ui, 'b54LedgerFE'));
+      t.ok(led, 'b54LedgerFE נעלם מהממשק');
+      t.has(led, 'w23InvActive', '⛔⛔ ספר החיובים בממשק אינו עובר דרך w23InvActive');
+      t.hasNot(led, "v.status!=='בוטלה'", '⛔⛔ השוואת סטטוס חשבונית גולמית חזרה ל-b54LedgerFE');
+      t.has(led, 'B54_SKIP_ORDER.indexOf(w22Stat(o))', '⛔ B76 נשבר בממשק');
+      const code = H.stripComments(ui);
+      /* ⚠ x מוחרג בכוונה: x.status!=='בוטלה' בממשק הוא deliveryTrips (WASH-24, B78) */
+      const bad = (code.match(/\b(?:v|iv|cv|inv)\.status\s*(?:===|!==)\s*'בוטלה'/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס חשבונית גולמיות בממשק: ' + bad.join(' · '));
+    },
+
+    /* ⭐ דליפת WASH-22 שנמצאה באצווה הזו */
+    '⭐ דליפת WASH-22: שער הליקוט עובר דרך w22Stat': (t, { H }) => {
+      const code = H.stripComments(H.uiScript());
+      const bad = (code.match(/B44_PICK_STATUSES\.(?:indexOf|includes)\(\s*\w+\.status\s*\)/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ שער הליקוט עדיין משווה o.status גולמי ב-' + bad.length + ' אתרים — הזמנה תקינה לא תלוקט');
+      t.eq((code.match(/B44_PICK_STATUSES\.(?:indexOf|includes)\(w22Stat\(/g) || []).length, 4,
+        '⛔ ארבעת אתרי שער הליקוט אינם עוברים דרך w22Stat');
+    },
+
+    '⭐ ליקוט אפשרי בהזמנה מאושרת עם סטטוס מלוכלך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      ['מאושרת', 'מאושרת\u00A0', ' מאושרת', 'סופקה', 'סופקה '].forEach(st => {
+        t.ok(w.B44_PICK_STATUSES.indexOf(w.w22Stat({ status: st })) > -1,
+          '⛔⛔ שער הליקוט דחה סטטוס ' + JSON.stringify(st));
+      });
+      ['טיוטה', 'הצעת מחיר', 'בוטלה', 'הושלמה', 'סטטוס לא מוכר', ''].forEach(st => {
+        t.eq(w.B44_PICK_STATUSES.indexOf(w.w22Stat({ status: st })) > -1, false,
+          '⛔⛔ שער הליקוט רוכך וקיבל סטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-23 אינו יכולת דפדפן': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const names = w.b61Tests().map(x => x.n).join(' | ');
+      t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
+    },
+
+    '⛔ canary v4.77-B77 בשני המקומות בממשק': (t, { H }) => {
+      const s = H.indexSrc();
+      t.eq((s.match(/v4\.77-B77/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
