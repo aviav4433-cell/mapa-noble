@@ -1812,7 +1812,7 @@ SPECS.push({
       const inHtml = (s.match(/גרסה\s+(v[\d.]+-B\d+[a-z]?)/) || [])[1];
       const inJs = (s.match(/B61_CANARY\s*=\s*'([^']+)'/) || [])[1];
       t.eq(inHtml, inJs, 'שני ה-canary אינם תואמים');
-      t.eq(inJs, 'v4.78-B78', 'ה-canary לא עודכן ל-B78');
+      t.eq(inJs, 'v4.79-B79', 'ה-canary לא עודכן ל-B78');
     },
 
     'שכבה 2 קיבלה את הטענות של B62 ו-B63': (t, { w, srv, H }) => {
@@ -7298,10 +7298,10 @@ SPECS.push({
       });
     },
 
-    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.79-B79 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.has(s, 'v4.78-B78', '⛔ ה-canary לא עודכן');
-      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
+      t.has(s, 'v4.79-B79', '⛔ ה-canary לא עודכן');
+      t.eq((s.match(/v4\.79-B79/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -7682,9 +7682,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-22') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-22 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.79-B79 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
+      t.eq((s.match(/v4\.79-B79/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8017,9 +8017,9 @@ SPECS.push({
       t.ok(names.indexOf('WASH-23') === -1, '⛔ נוספה טענה לשכבה 2 עבור WASH-23 — הוא נבדק בשכבה 1');
     },
 
-    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.79-B79 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
+      t.eq((s.match(/v4\.79-B79/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
     }
   }
@@ -8511,10 +8511,402 @@ SPECS.push({
         '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ב הוא לוגיקת שרת/ממשק, לא יכולת דפדפן');
     },
 
-    '⛔ canary v4.78-B78 בשני המקומות בממשק': (t, { H }) => {
+    '⛔ canary v4.79-B79 בשני המקומות בממשק': (t, { H }) => {
       const s = H.indexSrc();
-      t.eq((s.match(/v4\.78-B78/g) || []).length, 2,
+      t.eq((s.match(/v4\.79-B79/g) || []).length, 2,
         '⛔ ה-canary אינו מופיע בדיוק פעמיים (מסך כניסה + B61_CANARY)');
+    }
+  }
+});
+
+
+/* ============================================================================
+   חלק t25 — B79 · WASH-23ג · ציר הסטטוס של המשלוחים
+   ============================================================================
+   B76 סגר את orders · B77 את invoices · B78 את payroll/tasks/purchases/
+   deliveryTrips. כאן נסגרת הטבלה הכבדה שנותרה: deliveries.
+
+   ⚠ R9 — הפריט נרשם ב-HANDOFF כ-32 אתרים; הקוד החי נתן ~60
+   (19 בשרת · 41 בממשק). הסיבה: לא שלוש צורות השוואה אלא **חמש** —
+   B5_OPEN_STATUSES · B38_OPEN_DELIV · B49E_LIVE_DELIV · ליטרל
+   ['מתוכנן','בדרך'] · ומשתני OPEN/OPEN_ST מקומיים.
+
+   ⛔⛔ הכרעת אבי 2ב (18.08.2026): סטטוס משלוח לא מוכר או ריק = 'מתוכנן',
+   כלומר **פתוח**. זה ההפך מהמצב הקודם (לא-מוכר נחשב סגור), ולכן
+   הבדיקות כאן מודדות שינוי התנהגות אמיתי ולא טאוטולוגיה.
+   ============================================================================ */
+
+const B79 = {
+  dirty(v) { return [v + '\u00A0', ' ' + v, v + ' ', '\u200E' + v]; },
+  /* ⛔ ערכים שאינם ברשימה כלל — עליהם חלה הכרעת 2ב.
+     ⚠ 'התקבלה' אינו כאן בכוונה: הוא כן ברשימה, כסטטוס סגור. */
+  UNKNOWN: ['', 'נמסר', 'מתוכננת', 'בוצעה', 'סגור'],
+
+  dlvDb(srv, status, over) {
+    const db = H.emptyDb(srv);
+    db.settings = [];
+    db.employees = [{ id: 'DR1', name: 'נהג א', active: 'כן', role: 'נהג' },
+                    { id: 'MG1', name: 'מנהל', active: 'כן', role: 'מנהל' }];
+    db.customers = [{ id: 'C1', name: 'לקוח א', active: 'כן' }];
+    db.orders = [{ id: 'O1', customer_id: 'C1', status: 'מאושרת', type: 'השכרה',
+      start_date: '2026-08-01', end_date: '2026-08-30', total: 1000 }];
+    db.orderLines = [];
+    db.deliveries = [Object.assign({ id: 'D1', order_id: 'O1', kind: 'אספקה',
+      date: '2026-08-18', driver: 'נהג א', status: status, note: '',
+      note_number: '', vehicle_id: '', photo_url: '', route_order: 1,
+      eta_text: '', signature_url: '', trip_id: '', scan_status: '' }, over || {})];
+    return db;
+  },
+
+  body(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) return null;
+    let d = 0, started = false;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') { d++; started = true; }
+      else if (src[j] === '}') { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    return null;
+  },
+  noCmt(s) { return s ? s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '') : s; }
+};
+
+SPECS.push({
+  file: 't25-b79-srv',
+  title: 'B79 — WASH-23ג — ציר הסטטוס של המשלוחים (שרת)',
+  needs: 'server',
+  requires: ['w24Stat', 'DELIVERY_STATUSES', 'DELIVERY_DFLT', 'B5_OPEN_STATUSES',
+             'B38_OPEN_DELIV', 'B49E_LIVE_DELIV', 'b5MarkInTransit', 'b5RemoveFromRoute',
+             'b5DriverOpenDeliveries', 'b49eLiveDeliv', 'sVal', 'sPick',
+             'w22Stat', 'w23InvActive', 'handle'],
+
+  tests: {
+
+    /* ================= העוזר והרשימה ================= */
+
+    '⛔ w24Stat מנרמל את חמשת סטטוסי המשלוח לערך הקנוני': (t, { srv }) => {
+      ['מתוכנן', 'בדרך', 'בוצע', 'בוטל', 'הוסר ממסלול'].forEach(st => {
+        B79.dirty(st).concat([st]).forEach(v => {
+          t.eq(srv.w24Stat({ status: v }, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT), st,
+            '⛔ w24Stat לא ניקה סטטוס משלוח ' + JSON.stringify(v));
+        });
+      });
+    },
+
+    '⛔⛔ הכרעת אבי 2ב: סטטוס משלוח לא מוכר או ריק = מתוכנן (פתוח)': (t, { srv }) => {
+      B79.UNKNOWN.forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT), 'מתוכנן',
+          '⛔⛔ סטטוס משלוח לא מוכר ' + JSON.stringify(st) + ' לא נחשב פתוח — סחורה עלולה להיעלם בשקט');
+        t.ok(srv.B5_OPEN_STATUSES.indexOf(
+          srv.w24Stat({ status: st }, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT)) > -1,
+          '⛔⛔ משלוח בסטטוס ' + JSON.stringify(st) + ' אינו נספר כפתוח');
+      });
+      t.eq(srv.w24Stat(null, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT), 'מתוכנן',
+        '⛔ רשומת משלוח חסרה לא נחשבה פתוחה');
+    },
+
+    '⛔⛔ התקבלה נשאר סטטוס מוכר וסגור — אין רגרסיה על נתונים ותיקים': (t, { srv }) => {
+      B79.dirty('התקבלה').concat(['התקבלה']).forEach(st => {
+        t.eq(srv.w24Stat({ status: st }, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT), 'התקבלה',
+          '⛔⛔ התקבלה נפל ל-dflt ונפתח מחדש — סטטוס ' + JSON.stringify(st));
+        t.eq(srv.B5_OPEN_STATUSES.indexOf(
+          srv.w24Stat({ status: st }, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT)), -1,
+          '⛔⛔ משלוח בסטטוס התקבלה נחשב פתוח — משלוחים ישנים חזרו למסלול');
+      });
+    },
+
+    '⛔ שלוש רשימות הסטטוס לא שינו ערך': (t, { srv }) => {
+      t.eq(srv.B5_OPEN_STATUSES.join('|'), 'מתוכנן|בדרך', '⛔ B5_OPEN_STATUSES שונתה');
+      t.eq(srv.B38_OPEN_DELIV.join('|'), 'מתוכנן|בדרך', '⛔ B38_OPEN_DELIV שונתה');
+      t.eq(srv.B49E_LIVE_DELIV.join('|'), 'מתוכנן|בדרך|בוצע', '⛔ B49E_LIVE_DELIV שונתה');
+      t.eq(srv.DELIVERY_DFLT, 'מתוכנן', '⛔⛔ ברירת המחדל שונתה — הכרעת אבי 2ב נשברה');
+    },
+
+    /* ================= ⛔⛔ מסלול הנהג ================= */
+
+    '⛔⛔ משלוח בסטטוס מלוכלך נשאר במסלול הנהג': (t, { srv }) => {
+      B79.dirty('מתוכנן').concat(B79.dirty('בדרך')).forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        t.eq(srv.b5DriverOpenDeliveries(db, 'נהג א').length, 1,
+          '⛔⛔ משלוח בסטטוס ' + JSON.stringify(st) + ' נעלם ממסלול הנהג');
+      });
+    },
+
+    '⛔⛔ משלוח בסטטוס לא מוכר נכנס למסלול הנהג (הכרעה 2ב)': (t, { srv }) => {
+      B79.UNKNOWN.forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        t.eq(srv.b5DriverOpenDeliveries(db, 'נהג א').length, 1,
+          '⛔⛔ משלוח בסטטוס ' + JSON.stringify(st) + ' לא הוצג לנהג — סחורה שלא הגיעה ואיש אינו יודע');
+      });
+    },
+
+    '⛔ משלוח סגור מלוכלך אינו במסלול — לא רככנו לצד השני': (t, { srv }) => {
+      B79.dirty('בוצע').concat(B79.dirty('בוטל'), B79.dirty('התקבלה'),
+        ['בוצע', 'בוטל', 'הוסר ממסלול']).forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        t.eq(srv.b5DriverOpenDeliveries(db, 'נהג א').length, 0,
+          '⛔ משלוח סגור בסטטוס ' + JSON.stringify(st) + ' חזר למסלול הנהג');
+      });
+    },
+
+    '⛔⛔ יצאתי לדרך עובד על סטטוס מלוכלך ועל סטטוס לא מוכר': (t, { srv }) => {
+      B79.dirty('מתוכנן').concat(B79.UNKNOWN).forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        const r = srv.b5MarkInTransit(db, { delivery_id: 'D1' }, 'נהג א');
+        t.eq(r.ok, true,
+          '⛔⛔ הנהג לא יכול לצאת לדרך על סטטוס ' + JSON.stringify(st) + ' — ' + (r && r.error));
+        t.eq(db.deliveries[0].status, 'בדרך', '⛔ הסטטוס לא נכתב כ־בדרך');
+      });
+    },
+
+    '⛔ יצאתי לדרך נדחה על משלוח סגור — השער לא רוכך': (t, { srv }) => {
+      B79.dirty('בוצע').concat(['בוצע', 'בוטל', 'התקבלה']).forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        t.eq(srv.b5MarkInTransit(db, { delivery_id: 'D1' }, 'נהג א').ok, false,
+          '⛔ משלוח סגור (' + JSON.stringify(st) + ') סומן בדרך');
+      });
+    },
+
+    '⛔ הסרה ממסלול עובדת על סטטוס מלוכלך': (t, { srv }) => {
+      B79.dirty('מתוכנן').forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        const r = srv.b5RemoveFromRoute(db, { delivery_id: 'D1', reason: 'הלקוח סגור' }, 'נהג א');
+        t.eq(r.ok, true, '⛔ הסרה ממסלול נכשלה על ' + JSON.stringify(st) + ' — ' + (r && r.error));
+        t.eq(db.deliveries[0].status, 'הוסר ממסלול', '⛔ הסטטוס לא נכתב');
+      });
+    },
+
+    '⛔ הוסר ממסלול מלוכלך מזוהה באישור ההנהלה': (t, { srv }) => {
+      B79.dirty('הוסר ממסלול').concat(['הוסר ממסלול']).forEach(st => {
+        const db = B79.dlvDb(srv, st, { removal_ack: '' });
+        const r = srv.handle('b5AckRemoval', { delivery_id: 'D1' }, db, 'מנהל');
+        t.ne(r.error, 'המשלוח אינו במצב "הוסר ממסלול"',
+          '⛔ אישור ההסרה נדחה על סטטוס מלוכלך ' + JSON.stringify(st));
+      });
+    },
+
+    /* ================= ⛔⛔ שער המסירה — כאן נמצא המחיר ================= */
+
+    '⛔⛔ משלוח פתוח מלוכלך בלי חתימה חוסם סימון כסופקה': (t, { srv }) => {
+      B79.dirty('מתוכנן').concat(B79.UNKNOWN).forEach(st => {
+        const db = B79.dlvDb(srv, st, { signature_url: '', photo_url: '' });
+        const r = srv.handle('deliverOrder',
+          { order_id: 'O1', _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, false,
+          '⛔⛔ הזמנה סומנה כסופקה למרות משלוח פתוח (' + JSON.stringify(st) + ') בלי הוכחת מסירה');
+      });
+    },
+
+    '⭐ אותו משלוח עם חתימה — נסגר ומקבל מספר תעודה': (t, { srv }) => {
+      B79.dirty('מתוכנן').concat(B79.UNKNOWN).forEach(st => {
+        const db = B79.dlvDb(srv, st, { signature_url: 'sig' });
+        const r = srv.handle('deliverOrder',
+          { order_id: 'O1', _verified_role: 'מנהל' }, db, 'מנהל');
+        t.eq(r.ok, true, '⛔ מסירה נכשלה על ' + JSON.stringify(st) + ' — ' + (r && r.error));
+        t.eq(db.deliveries[0].status, 'בוצע',
+          '⛔⛔ המשלוח בסטטוס ' + JSON.stringify(st) + ' לא נסגר — יישאר פתוח לנצח');
+        t.ok(db.deliveries[0].note_number, '⛔ לא הופק מספר תעודת משלוח');
+      });
+    },
+
+    '⛔ פיצול משלוח מותר על מתוכנן מלוכלך ונדחה על בדרך': (t, { srv }) => {
+      B79.dirty('מתוכנן').forEach(st => {
+        const db = B79.dlvDb(srv, st);
+        const r = srv.handle('splitDelivery',
+          { delivery_id: 'D1', driver: 'נהג א' }, db, 'מנהל');
+        t.ne(r.error, 'ניתן לפצל רק משלוח בסטטוס מתוכנן',
+          '⛔ פיצול נדחה על מתוכנן מלוכלך ' + JSON.stringify(st));
+      });
+      const db2 = B79.dlvDb(srv, 'בדרך\u00A0');
+      t.eq(srv.handle('splitDelivery', { delivery_id: 'D1', driver: 'נהג א' }, db2, 'מנהל').error,
+        'ניתן לפצל רק משלוח בסטטוס מתוכנן',
+        '⛔ פוצל משלוח שכבר בדרך — השער רוכך');
+    },
+
+    '⛔ b49eLiveDeliv מזהה משלוח חי מלוכלך': (t, { srv }) => {
+      B79.dirty('בוצע').concat(B79.dirty('מתוכנן'), B79.UNKNOWN).forEach(st => {
+        t.eq(srv.b49eLiveDeliv({ status: st }), true,
+          '⛔ משלוח חי בסטטוס ' + JSON.stringify(st) + ' נחשב מת — b49e יבנה רגל כפולה');
+      });
+      t.eq(srv.b49eLiveDeliv({ status: 'בוטל\u00A0' }), false,
+        '⛔ משלוח מבוטל מלוכלך נחשב חי');
+    },
+
+    /* ================= ⛔⛔ R6 — הכסף לא זז ================= */
+
+    '⛔⛔ R6: שלושת מקורות הכסף מחזירים אותו מספר בכל סטטוס משלוח': (t, { srv }) => {
+      const bal = st => {
+        const db = B79.dlvDb(srv, st, { signature_url: 'sig' });
+        db.invoices = [{ id: 'IV1', order_id: 'O1', customer_id: 'C1',
+          date: '2026-08-01', subtotal: 1000, vat: 180, total: 1180, status: 'פתוחה' }];
+        db.payments = [];
+        return { a: srv.b48BalancesAg(db)['C1'] || 0, b: srv.b2CreditUsedAg(db, 'C1') };
+      };
+      const base = bal('מתוכנן');
+      t.eq(base.a, base.b, '⛔⛔ R6 נשבר על סטטוס נקי');
+      t.eq(base.a, 118000, '⛔ קו הבסיס השתנה — היתרה אינה ברוטו 118000');
+      B79.dirty('מתוכנן').concat(B79.dirty('בוצע'), B79.UNKNOWN, ['התקבלה']).forEach(st => {
+        const r = bal(st);
+        t.eq(r.a, r.b, '⛔⛔ R6 נשבר על סטטוס משלוח ' + JSON.stringify(st));
+        t.eq(r.a, base.a,
+          '⛔⛔ היתרה זזה בגלל סטטוס משלוח ' + JSON.stringify(st) + ' — משלוח אינו מקור כסף');
+      });
+    },
+
+    /* ================= סורק המקור ================= */
+
+    '⛔⛔ אין יותר השוואת סטטוס משלוח גולמית בקוד השרת': (t, { H }) => {
+      const sv = B79.noCmt(H.serverSrc());
+      const bad = (sv.match(
+        /\b(?:d|dlv|dvSpec|spDv|oPick|dlvChk|d49f)\.status\s*(?:===|!==)\s*'(?:מתוכנן|בדרך|בוצע|בוטל|הוסר ממסלול|התקבלה)'/g) || [])
+        .concat(sv.match(
+          /(?:B5_OPEN_STATUSES|B38_OPEN_DELIV|B49E_LIVE_DELIV)\.indexOf\(\s*(?:String\()?\s*\w+\.status/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' השוואות סטטוס משלוח גולמיות בשרת: ' + bad.join(' · '));
+    },
+
+    '⛔ כל קריאה עם DELIVERY_STATUSES מעבירה גם את ברירת המחדל': (t, { H }) => {
+      [['השרת', H.serverSrc()], ['הממשק', H.uiScript()]].forEach(([who, src]) => {
+        const calls = src.match(/w24Stat\([^)]*DELIVERY_STATUSES[^)]*\)/g) || [];
+        t.ok(calls.length > 15, '⛔ ' + who + ': נמצאו רק ' + calls.length + ' קריאות — הסורק אינו מודד');
+        const bad = calls.filter(c => c.indexOf('DELIVERY_DFLT') === -1);
+        t.eq(bad.length, 0,
+          '⛔⛔ ' + who + ': ' + bad.length + ' קריאות בלי DELIVERY_DFLT — הכרעת 2ב לא תחול שם: ' + bad.join(' · '));
+      });
+    }
+  }
+});
+
+SPECS.push({
+  file: 't25-b79-ui',
+  title: 'B79 — WASH-23ג — ציר הסטטוס של המשלוחים (ממשק): זהות תו-בתו · איחוד הרשימות',
+  needs: 'ui',
+  requires: ['w24Stat', 'DELIVERY_STATUSES', 'DELIVERY_DFLT', 'B5_OPEN_STATUSES',
+             'b5MyRoute', 'b5DoneToday', 'openDelivery', 'rDeliveries', 'w22Stat'],
+
+  tests: {
+
+    '⛔⛔ DELIVERY_STATUSES ו-DELIVERY_DFLT זהים תו-בתו בין הקבצים': (t, { H }) => {
+      const sv = H.serverSrc(), ui = H.uiScript();
+      ['DELIVERY_STATUSES', 'DELIVERY_DFLT'].forEach(v => {
+        const re = new RegExp('var\\s+' + v + '\\s*=[^;]*;');
+        const a = (sv.match(re) || [])[0], b = (ui.match(re) || [])[0];
+        t.ok(a, '⛔⛔ ' + v + ' חסר בקוד השרת');
+        t.ok(b, '⛔⛔ ' + v + ' חסר ב-index.html');
+        t.eq(a.replace(/\s+/g, ' '), b.replace(/\s+/g, ' '),
+          '⛔⛔ ' + v + ' התפצל בין הקבצים — הממשק והשרת יסווגו משלוח אחרת');
+      });
+    },
+
+    '⛔⛔ הממשק מסכים עם השרת על כל סטטוס משלוח': (t, { w, srv }) => {
+      ['מתוכנן', 'בדרך', 'בוצע', 'בוטל', 'הוסר ממסלול', 'התקבלה']
+        .reduce((acc, st) => acc.concat(B79.dirty(st), [st]), [])
+        .concat(B79.UNKNOWN).forEach(st => {
+          t.eq(w.w24Stat({ status: st }, w.DELIVERY_STATUSES, w.DELIVERY_DFLT),
+               srv.w24Stat({ status: st }, srv.DELIVERY_STATUSES, srv.DELIVERY_DFLT),
+            '⛔⛔ הממשק והשרת נחלקו על סטטוס משלוח ' + JSON.stringify(st));
+        });
+    },
+
+    '⛔⛔ מסלול הנהג בממשק: מלוכלך ולא-מוכר נשארים, סגור יורד': (t, { w, srv, H }) => {
+      H.login(w, 'נהג', srv, { user: 'נהג א' });
+      const set = st => {
+        w.DB.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה',
+          date: w.todayYMD(), driver: 'נהג א', status: st, route_order: 1 }];
+        w.DB.orders = [{ id: 'O1', customer_id: 'C1', status: 'מאושרת', type: 'השכרה' }];
+        w.DB.customers = [{ id: 'C1', name: 'לקוח א' }];
+      };
+      B79.dirty('מתוכנן').concat(B79.dirty('בדרך'), B79.UNKNOWN).forEach(st => {
+        set(st);
+        t.eq(w.b5MyRoute().length, 1,
+          '⛔⛔ משלוח בסטטוס ' + JSON.stringify(st) + ' נעלם ממסלול הנהג בממשק');
+        t.eq(w.b5DoneToday().length, 0,
+          '⛔ משלוח פתוח בסטטוס ' + JSON.stringify(st) + ' הופיע כ"בוצע היום"');
+      });
+      B79.dirty('בוצע').concat(['בוצע', 'התקבלה', 'בוטל']).forEach(st => {
+        set(st);
+        t.eq(w.b5MyRoute().length, 0,
+          '⛔ משלוח סגור בסטטוס ' + JSON.stringify(st) + ' נשאר במסלול');
+        t.eq(w.b5DoneToday().length, 1,
+          '⛔⛔ משלוח סגור בסטטוס ' + JSON.stringify(st) + ' לא הופיע ב"בוצעו היום" — קדימות אופרטורים');
+      });
+    },
+
+    '⛔ מסך המשלוחים: מלוכלך בפתוחות, סגור בהיסטוריה': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      const render = st => {
+        w.DB.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה',
+          date: '2026-08-18', driver: 'נהג א', status: st }];
+        w.DB.orders = [{ id: 'O1', customer_id: 'C1', status: 'מאושרת', type: 'השכרה' }];
+        w.DB.customers = [{ id: 'C1', name: 'לקוח א' }];
+        w.DELIV_TAB = 'open';
+        w.go('deliveries');
+        return w.document.getElementById('app').innerHTML;
+      };
+      B79.dirty('מתוכנן').concat(B79.UNKNOWN).forEach(st => {
+        t.has(render(st), 'אספקות פתוחות</h3><span class="muted">1',
+          '⛔ משלוח בסטטוס ' + JSON.stringify(st) + ' לא נספר כאספקה פתוחה');
+      });
+      B79.dirty('בוצע').concat(['התקבלה']).forEach(st => {
+        t.has(render(st), 'אספקות פתוחות</h3><span class="muted">0',
+          '⛔ משלוח סגור בסטטוס ' + JSON.stringify(st) + ' נספר כפתוח');
+      });
+    },
+
+    '⛔ כרטיס המשלוח: כפתורי מתוכנן מופיעים על סטטוס מלוכלך': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      B79.dirty('מתוכנן').concat(B79.UNKNOWN).forEach(st => {
+        w.DB.deliveries = [{ id: 'D1', order_id: 'O1', kind: 'אספקה',
+          date: '2026-08-18', driver: '', status: st, note_number: 'NT1' }];
+        w.DB.orders = [{ id: 'O1', customer_id: 'C1', status: 'מאושרת', type: 'השכרה' }];
+        w.DB.customers = [{ id: 'C1', name: 'לקוח א' }];
+        w.DB.orderLines = [];
+        w.openDelivery('D1');
+        const html = w.document.getElementById('modal').innerHTML;
+        t.has(html, 'שבץ נהג ורכב',
+          '⛔ הפעולה הראשית של משלוח מתוכנן נעלמה על סטטוס ' + JSON.stringify(st));
+        t.has(html, 'פצל משלוח בין נהגים',
+          '⛔ פיצול המשלוח נעלם על סטטוס ' + JSON.stringify(st));
+        t.hasNot(html, 'שנה נהג ורכב',
+          '⛔ המשלוח בסטטוס ' + JSON.stringify(st) + ' נחשב לא-מתוכנן');
+      });
+    },
+
+    '⛔ הפורטל: משלוח בדרך מלוכלך מציג את שורת הנהג': (t, { w, srv, H }) => {
+      H.login(w, 'מנהל', srv);
+      B79.dirty('בדרך').concat(['בדרך']).forEach(st => {
+        const html = w.portalOrderRow({ id: 'O1', status: 'מאושרת', type: 'השכרה',
+          start_date: '2026-08-01', end_date: '2026-08-30', total: 1000,
+          delivery: { status: st, eta_text: 'עצירה 2 מתוך 4',
+            driver_name: 'נהג א', driver_phone: '0500000000' } });
+        t.has(html, 'צור קשר עם הנהג',
+          '⛔ הפורטל לא הציג את הנהג על סטטוס ' + JSON.stringify(st));
+      });
+    },
+
+    '⛔⛔ אין יותר השוואת סטטוס משלוח גולמית בממשק': (t, { H }) => {
+      const ui = B79.noCmt(H.uiScript());
+      const bad = (ui.match(
+        /\b(?:d|dSt2|dlv|o\.delivery)\.status\s*(?:===|!==)\s*'(?:מתוכנן|בדרך|בוצע|בוטל|הוסר ממסלול|התקבלה)'/g) || [])
+        .concat(ui.match(/B5_OPEN_STATUSES\.(?:includes|indexOf)\(\s*(?:String\(|sVal\()?\s*\w+\.status/g) || [])
+        .concat(ui.match(/(?<!=\s)\[\s*'מתוכנן'\s*,\s*'בדרך'\s*\]/g) || []);
+      t.eq(bad.length, 0,
+        '⛔⛔ נותרו ' + bad.length + ' אתרים גולמיים בממשק: ' + bad.join(' · '));
+    },
+
+    '⛔ שלוש הרשימות הכפולות אוחדו — אין רשימת סטטוס משלוח רביעית': (t, { w, H }) => {
+      const ui = B79.noCmt(H.uiScript());
+      t.eq((ui.match(/=\s*\[\s*'מתוכנן'\s*,\s*'בדרך'\s*\]/g) || []).length, 1,
+        '⛔ יש יותר מהגדרה אחת של רשימת המשלוחים הפתוחים — הכפילות חזרה');
+      t.eq(w.B5_OPEN_STATUSES.join('|'), 'מתוכנן|בדרך', '⛔ B5_OPEN_STATUSES בממשק שונתה');
+      t.eq(w.DELIVERY_DFLT, 'מתוכנן', '⛔⛔ ברירת המחדל בממשק שונתה — הכרעת 2ב נשברה');
+    },
+
+    '⛔ שכבה 2 לא נגעה — WASH-23ג אינו יכולת דפדפן': (t, { H }) => {
+      const b61 = B79.noCmt(B79.body(H.uiScript(), 'b61Tests'));
+      t.ok(b61, 'b61Tests נעלם מהממשק');
+      t.hasNot(b61, 'DELIVERY_STATUSES',
+        '⛔ נוספה טענת דפדפן ל-b61Tests — WASH-23ג הוא לוגיקת שרת/ממשק');
     }
   }
 });
