@@ -146,6 +146,11 @@
 //                     סכימה (אין ב-units תאריך שינוי סטטוס ואין unit_id
 //                     באף טבלה) — נרשמה כ-BLD-10ב וחסומה באישור אבי.
 //                   ⛔ אין שינוי סכימה. ⛔ אין להריץ setupDatabase.
+//             B85 — גיבוי יומי: ברירת מחדל backup_keep_count 30→1 (הכרעת אבי,
+//                   15.09.2026) — עותק חי אחד + עותק גיבוי אחד שמתחלף בכל
+//                   ריצה יומית. rotate הקיים כבר מטפל בניקוי העותקים
+//                   הישנים בריצה הבאה (03:00) — אין קוד ניקוי חדש. אין
+//                   שינוי סכימה. — canary v4.85-B85
 //             B80 — WASH-23ג חלק ב': ציר הסטטוס בטבלאות הכסף (charges · payments ·
 //                   paymentDeclarations · futureExpenses · creditProfiles) ובשערי הציוד
 //                   (vehicles · machines) — canary v4.81-B81
@@ -9648,9 +9653,11 @@ function b4RunNow(db, user) {
 
 // גיבוי יומי — עותק מלא של הגיליון לתיקיית גיבוי ב-Drive, עם rotate לפי backup_keep_count.
 // רץ מחוץ ל-doPost (טריגר) — אינו כותב לטבלאות עסקיות, לכן לא נדרשת LockService.
+// ברירת מחדל 1 (הכרעת אבי, 15.09.2026): עותק חי אחד + עותק גיבוי אחד שמתחלף בכל ריצה יומית.
+// אפשר לעקוף לפי הצורך דרך שורת settings בשם backup_keep_count.
 function b4DailyBackup() {
   var db = loadDb();
-  var keep = Number(b2Setting(db, 'backup_keep_count')) || 30;
+  var keep = Number(b2Setting(db, 'backup_keep_count')) || 1;
   var folderId = b2Setting(db, 'backup_folder_id');
   var folder = null;
   if (folderId) { try { folder = DriveApp.getFolderById(folderId); } catch (e) { folder = null; } }
