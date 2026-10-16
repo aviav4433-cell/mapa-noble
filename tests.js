@@ -11383,6 +11383,110 @@ SPECS.push({
 });
 
 
+/* ============================================================
+   B86 — SEC-01: סגירת פרצת סיסמת המערכת (doPost)
+   סביבה טרייה לכל בדיקה: route מוחלף במרגל, ContentService מחזיר את הטקסט.
+   ============================================================ */
+const B86 = {
+  OLD_PW: 'IMHKK8uQWY2hshWAxav0FHgjac9hrqkzrPJwysFJ',
+  ctx(H) {
+    const c = H.loadServer();
+    c.__routed = [];
+    c.route = (a, p, u) => { c.__routed.push({ a, p: JSON.parse(JSON.stringify(p)), u }); return { ok: true, routed: 1 }; };
+    c.ContentService = { createTextOutput: s => ({ setMimeType: () => ({ s }) }), MimeType: { JSON: 'json' } };
+    c.b52VerifyKioskToken = tk => (tk === 'KGOOD' ? 'H1' : '');
+    c.b52DeviceKey = h => 'DEV-' + h;
+    return c;
+  },
+  post(c, body) { return JSON.parse(c.doPost({ postData: { contents: JSON.stringify(body) } }).s); },
+  session(c, tk, sd) { c.CacheService.getScriptCache().put('session_' + tk, JSON.stringify(sd)); }
+};
+SPECS.push({
+  file: 't31-b86-srv',
+  title: 'B86 — SEC-01: אין כניסה בלי סשן, אין התחזות דרך ה-payload',
+  needs: 'server',
+  requires: ['doPost', 'route', 'B52_KIOSK_ACTIONS'],
+  tests: {
+    '[מודד] ⛔⛔ הסיסמה הישנה בלי טוקן נדחית בנוסח המדויק ולא מגיעה ל-route': (t, { H }) => {
+      const c = B86.ctx(H);
+      const out = B86.post(c, { user: 'אבי', action: 'getAll', password: B86.OLD_PW, payload: {} });
+      t.eq(JSON.stringify(out), JSON.stringify({ ok: false, error: 'סיסמה שגויה' }),
+        '⛔⛔ הסיסמה הדלופה עדיין פותחת את המערכת');
+      t.eq(c.__routed.length, 0, '⛔⛔ הבקשה הגיעה ל-route בלי סשן');
+      const out2 = B86.post(c, { user: 'אבי', action: 'b2SetCreditLimit', password: B86.OLD_PW, payload: { customer_id: 'C1', limit: 999999 } });
+      t.eq(out2.error, 'סיסמה שגויה', '⛔⛔ פעולת כסף של מנהל עברה עם הסיסמה הדלופה');
+      t.eq(c.__routed.length, 0, '⛔⛔ פעולת כסף הגיעה ל-route');
+    },
+    '[מודד] ⛔⛔ הערך הישן ומשתנה PASSWORD אינם קיימים בקוד': (t, { H }) => {
+      const src = H.serverSrc();
+      t.hasNot(src, B86.OLD_PW, '⛔⛔ הסיסמה הדלופה עדיין בקוד השרת');
+      t.hasNot(H.indexSrc(), B86.OLD_PW, '⛔⛔ הסיסמה הדלופה בממשק');
+      t.no(/\bvar\s+PASSWORD\b/.test(H.stripComments ? H.stripComments(src) : src), '⛔⛔ המשתנה PASSWORD עדיין מוגדר');
+    },
+    '[מודד] ⛔⛔ _verified_role מזויף בבקשת פורטל נמחק לפני route': (t, { H }) => {
+      const c = B86.ctx(H);
+      B86.post(c, { action: 'portalGetData', payload: { code: 'X', _verified_role: 'מנהל', _verified_employee_id: 'E1', _kiosk_device: 'D' } });
+      t.eq(c.__routed.length, 1, 'פעולת הפורטל לא נותבה כלל — הבדיקה לא מוכיחה דבר');
+      const p = c.__routed[0].p;
+      t.no('_verified_role' in p, '⛔⛔ תפקיד מזויף עבר מהלקוח');
+      t.no('_verified_employee_id' in p, '⛔⛔ מזהה עובד מזויף עבר מהלקוח');
+      t.no('_kiosk_device' in p, '⛔⛔ מזהה מכשיר קיוסק מזויף עבר מהלקוח');
+      t.eq(c.__routed[0].u, 'פורטל', '⛔ הפורטל נותב בשם אחר');
+    },
+    '[מודד] ⛔ משתמש מחובר אינו יכול לזייף _kiosk_device': (t, { H }) => {
+      const c = B86.ctx(H);
+      B86.session(c, 'T1', { employee_id: 'E2', role: 'עובד רצפה', name: 'דני' });
+      B86.post(c, { action: 'b52KioskClock', payload: { token: 'T1', pin: '1', _kiosk_device: 'DEV-FAKE' } });
+      t.eq(c.__routed.length, 1, 'הבקשה לא נותבה');
+      t.no('_kiosk_device' in c.__routed[0].p, '⛔ מכשיר קיוסק מזויף עבר בסשן רגיל');
+    },
+    '[שומר] ⛔⛔ סשן תקף עובר, והזהות נלקחת מהסשן ולא מהלקוח': (t, { H }) => {
+      const c = B86.ctx(H);
+      B86.session(c, 'T1', { employee_id: 'E2', role: 'נהג', name: 'דני' });
+      B86.post(c, { user: 'אבי', action: 'getAll', payload: { token: 'T1', _verified_role: 'מנהל', _verified_employee_id: 'E1' } });
+      t.eq(c.__routed.length, 1, '⛔⛔ סשן תקף נדחה — כניסה רגילה שבורה');
+      const r = c.__routed[0];
+      t.eq(r.u, 'דני', '⛔⛔ שם המשתמש נלקח מ-req.user ולא מהסשן');
+      t.eq(r.p._verified_role, 'נהג', '⛔⛔ התפקיד אינו מהסשן');
+      t.eq(r.p._verified_employee_id, 'E2', '⛔⛔ מזהה העובד אינו מהסשן');
+      /* טוקן ברמת הבקשה (req.token) — גם הוא נתמך */
+      B86.post(c, { action: 'getAll', token: 'T1', payload: {} });
+      t.eq(c.__routed.length, 2, '⛔ req.token הפסיק לעבוד');
+    },
+    '[שומר] ⛔⛔ טוקן שפג / לא קיים / חסר → אותו נוסח (הממשק מחדש סשן לפיו)': (t, { H }) => {
+      const c = B86.ctx(H);
+      [{ token: 'EXPIRED' }, {}].forEach(pl => {
+        const out = B86.post(c, { user: 'אבי', action: 'getAll', payload: pl });
+        t.eq(out.error, 'סיסמה שגויה', '⛔⛔ נוסח הדחייה השתנה — חידוש "זכור אותי" בממשק יישבר');
+        t.eq(out.ok, false, '⛔⛔ בקשה בלי סשן עברה');
+      });
+      t.eq(c.__routed.length, 0, '⛔⛔ בקשה בלי סשן הגיעה ל-route');
+    },
+    '[שומר] ⛔⛔ ארבע פעולות הכניסה (כולל "זכור אותי") עובדות בלי סשן': (t, { H }) => {
+      const c = B86.ctx(H);
+      ['login', 'validateToken', 'loginByRemember', 'rememberLogin'].forEach(a => {
+        const out = B86.post(c, { action: a, payload: {} });
+        t.eq(out.routed, 1, '⛔⛔ ' + a + ' נחסמה — אי אפשר להתחבר');
+      });
+      t.eq(c.__routed.length, 4, '⛔⛔ לא כל פעולות הכניסה נותבו');
+    },
+    '[שומר] ⛔⛔ קיוסק: טוקן רשום עובר עם מכשיר מהשרת, לא רשום נדחה': (t, { H }) => {
+      const c = B86.ctx(H);
+      B86.post(c, { action: 'b52KioskClock', payload: { kiosk_token: 'KGOOD', pin: '7' } });
+      t.eq(c.__routed.length, 1, '⛔⛔ הקיוסק הרשום נחסם');
+      t.eq(c.__routed[0].u, 'קיוסק', '⛔ הקיוסק נותב בשם אחר');
+      t.eq(c.__routed[0].p._kiosk_device, 'DEV-H1', '⛔⛔ מזהה המכשיר לא נקבע מהטוקן');
+      t.no('kiosk_token' in c.__routed[0].p, '⛔ טוקן המכשיר דלף ל-handle');
+      const bad = B86.post(c, { action: 'b52KioskClock', payload: { kiosk_token: 'KBAD', pin: '7' } });
+      t.eq(bad.error, 'הטאבלט אינו רשום — פנה למנהל', '⛔ נוסח הדחייה של קיוסק לא רשום השתנה');
+      t.eq(c.__routed.length, 1, '⛔⛔ קיוסק לא רשום הגיע ל-route');
+      B86.post(c, { action: 'checkVersion', payload: { kiosk_token: 'KGOOD' } });
+      t.eq(c.__routed.length, 2, '⛔ checkVersion של הקיוסק נחסם');
+    }
+  }
+});
+
+
 (function main() {
   const t0 = Date.now();
   console.log('\n' + '='.repeat(62));
